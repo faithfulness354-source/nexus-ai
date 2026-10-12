@@ -10,7 +10,7 @@ import { FantasyBanner } from '@/components/gallery/fantasy-banner';
 import { ImportModal } from '@/components/character/import-modal';
 import { Button } from '@/components/ui/button';
 import { useAccess } from '@/components/billing/access-provider';
-import { writeNsfwView } from '@/lib/nsfw-view';
+import { useNsfwView } from '@/lib/nsfw-view';
 
 export function GalleryPage() {
   const [characters, setCharacters] = useState<any[]>([]);
@@ -19,10 +19,9 @@ export function GalleryPage() {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [selectedTag, setSelectedTag] = useState('');
-  // Always starts OFF (never restored); enabling goes through the age gate + subscriber check.
-  const [nsfwEnabled, setNsfwEnabled] = useState(false);
+  const nsfwEnabled = useNsfwView();
   const [importOpen, setImportOpen] = useState(false);
-  const { status: access, requestNsfw } = useAccess();
+  const { status: access } = useAccess();
   // 'mine' = My Characters (owned by the viewer); deep-linkable via ?view=mine.
   // Tab stays 'all' until the URL is read so the server and client markup match.
   const [view, setView] = useState<'all' | 'mine'>('all');
@@ -55,26 +54,6 @@ export function GalleryPage() {
     const url = new URL(window.location.href);
     if (v === 'mine') url.searchParams.set('view', 'mine'); else url.searchParams.delete('view');
     window.history.replaceState(null, '', url.toString());
-  }
-
-  // Drop back to SFW if the viewer loses entitlement (sign-out, downgrade).
-  useEffect(() => {
-    if (access && !access.can.nsfw) {
-      writeNsfwView(false);
-      setNsfwEnabled(false);
-    }
-  }, [access]);
-
-  async function handleNsfwToggle(v: boolean) {
-    setSelectedTag('');
-    if (!v) {
-      writeNsfwView(false);
-      setNsfwEnabled(false);
-      return;
-    }
-    const allowed = await requestNsfw();
-    writeNsfwView(allowed);
-    setNsfwEnabled(allowed);
   }
 
   useEffect(() => {
@@ -169,9 +148,6 @@ export function GalleryPage() {
             onSearchChange={setSearch}
             selectedTag={selectedTag}
             onTagChange={setSelectedTag}
-            nsfwEnabled={nsfwEnabled}
-            onNsfwToggle={handleNsfwToggle}
-            showNsfwToggle={view !== 'mine'}
             allTags={allTags}
             searchInHeader
           />

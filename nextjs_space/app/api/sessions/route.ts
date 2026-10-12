@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getDefaultSessionTarget } from '@/lib/llm/resolve';
 import { getViewer, unauthorized, canViewNsfw, nsfwLocked } from '@/lib/access';
+import { nsfwToggleFromRequest } from '@/lib/nsfw-pref';
 import { canViewCharacter } from '@/lib/card-visibility';
+import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureGreeting } from '@/lib/greeting';
 import { syncChatToCloud } from '@/lib/supabase/sync';
 
@@ -14,13 +16,13 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const characterId = url.searchParams.get('characterId');
     const nsfw = url.searchParams.get('nsfw');
+    const showNsfw = nsfwToggleFromRequest(request) && canViewNsfw(viewer);
     // Own chats; admins also see legacy chats created before accounts existed.
     const where: any = viewer.isAdmin ? { OR: [{ userId: viewer.user.id }, { userId: null }] } : { userId: viewer.user.id };
     if (characterId) where.characterId = characterId;
-    if (nsfw === 'true') {
-      if (!canViewNsfw(viewer)) return NextResponse.json([]);
+    if (nsfw === 'true' && showNsfw) {
       where.character = { is: { nsfw: true } };
-    } else if (nsfw === 'false') {
+    } else if (!showNsfw || nsfw === 'false') {
       where.character = { is: { nsfw: false } };
     }
 
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
     if (!character || !canViewCharacter({ isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id }, character)) {
       return NextResponse.json({ error: 'Character not found' }, { status: 404 });
     }
-    if (character.nsfw && !canViewNsfw(viewer)) return nsfwLocked();
+    if ((character.nsfw || characterImpliesNsfw(character)) && !(nsfwToggleFromRequest(request) && canViewNsfw(viewer))) return nsfwLocked();
 
     // New sessions always start on Google Gemini (the primary provider)
     const target = await getDefaultSessionTarget();

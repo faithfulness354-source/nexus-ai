@@ -7,6 +7,7 @@ import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
+import { nsfwToggleFromRequest } from '@/lib/nsfw-pref';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -24,9 +25,10 @@ export async function GET(request: NextRequest) {
     const tag = url.searchParams.get('tag') ?? '';
     const nsfw = url.searchParams.get('nsfw');
     const mine = url.searchParams.get('mine') === 'true';
-
-    const where: any = {};
     const viewer = await getViewer();
+    // Adult cards stay out of every list until the profile setting is on and the account may view them.
+    const showNsfw = nsfw === 'true' && nsfwToggleFromRequest(request) && canViewNsfw(viewer);
+    const where: any = {};
     if (mine) {
       if (!viewer) return unauthorized();
       where.ownerId = viewer.user.id;
@@ -46,9 +48,8 @@ export async function GET(request: NextRequest) {
     where.tags = { contains: tag, mode: 'insensitive' };
 
     }
-    // Safe by default on the public browse page. My Characters shows every card the owner made.
-    const sfwBrowse = !mine && (nsfw !== 'true' || !canViewNsfw(viewer));
-    if (sfwBrowse) where.nsfw = false;
+    // Safe by default on every list, including My Characters and search.
+    if (!showNsfw) where.nsfw = false;
 
     let characters = await prisma.character.findMany({
       where,
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       characters.flatMap(({ _count, ...c }) => {
         const flagged = c.nsfw || characterImpliesNsfw(c);
-        if (sfwBrowse && flagged) return [];
+        if (!showNsfw && flagged) return [];
         const editable = !!viewer && canEditCharacter(viewer, c);
         return [{
           id: c.id,

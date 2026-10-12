@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, forbidden, canEditCharacter, can, canViewNsfw, nsfwLocked } from '@/lib/access';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { nsfwToggleFromRequest } from '@/lib/nsfw-pref';
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
@@ -61,7 +62,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     if (!canViewCharacter(viewer ? { isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id } : null, character)) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    if ((character.nsfw || characterImpliesNsfw(character)) && !canViewNsfw(viewer)) return nsfwLocked();
+    if ((character.nsfw || characterImpliesNsfw(character)) && !(nsfwToggleFromRequest(_request) && canViewNsfw(viewer))) return nsfwLocked();
     const includeAudio = !!viewer && canEditCharacter(viewer, character);
     return NextResponse.json(presentCharacter(character, includeAudio));
   } catch (err: any) {

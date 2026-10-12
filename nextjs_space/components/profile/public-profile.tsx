@@ -8,6 +8,7 @@ import { CharacterCard } from '@/components/gallery/character-card';
 import { ACCENT_THEMES, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
 import { useAccess } from '@/components/billing/access-provider';
+import { useNsfwView } from '@/lib/nsfw-view';
 
 export interface ProfileCharacter {
   id: string; name: string; title?: string; summary: string; creator?: string; tags: string[];
@@ -42,8 +43,11 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
   compact?: boolean;
 }) {
   const { status: access } = useAccess();
+  const showNsfw = useNsfwView();
   const [owned, setOwned] = useState(creations);
   const canEdit = (c: ProfileCharacter) => !!access?.isCreatorAdmin || (!!access?.userId && c.ownerId === access.userId);
+  const visibleOwned = showNsfw ? owned : owned.filter((c) => !c.nsfw);
+  const visiblePinned = showNsfw ? pinned : pinned.filter((c) => !c.nsfw);
 
   // Re-apply the full server list when the profile changes so a short first paint cannot stick.
   useEffect(() => {
@@ -51,8 +55,8 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
   }, [profile.username, creations]);
   const theme = ACCENT_THEMES[isAccentTheme(profile.accentTheme) ? profile.accentTheme : 'OBSIDIAN'];
   const name = profile.displayName || profile.username || 'Creator';
-  const pinnedIds = new Set(pinned.map((c) => c.id));
-  const rest = owned.filter((c) => !pinnedIds.has(c.id));
+  const pinnedIds = new Set(visiblePinned.map((c) => c.id));
+  const rest = visibleOwned.filter((c) => !pinnedIds.has(c.id));
 
   return (
     <div style={{ ['--profile-accent' as any]: theme.accent, ['--profile-glow' as any]: theme.glow }}>
@@ -110,13 +114,13 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
         </div>
       )}
 
-      {pinned.length > 0 && (
+      {visiblePinned.length > 0 && (
         <Section title="Pinned" icon={Pin} accent={theme.accent} compact={compact}>
-          {pinned.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
+          {visiblePinned.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
         </Section>
       )}
       <Section title={`Creations (${rest.length})`} icon={Sparkles} accent={theme.accent} compact={compact}>
-        {rest.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">{pinned.length ? 'All creations are pinned above.' : 'No public characters yet.'}</p> : rest.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
+        {rest.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">{visiblePinned.length ? 'All creations are pinned above.' : 'No public characters yet.'}</p> : rest.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
       </Section>
     </div>
   );

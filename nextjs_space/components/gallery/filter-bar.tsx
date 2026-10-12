@@ -9,10 +9,6 @@ interface FilterBarProps {
   onSearchChange: (s: string) => void;
   selectedTag: string;
   onTagChange: (t: string) => void;
-  nsfwEnabled: boolean;
-  onNsfwToggle: (v: boolean) => void;
-  /** Browse keeps the switch. Profile and My Characters hide it. */
-  showNsfwToggle?: boolean;
   allTags: string[];
   /** Search lives in the top bar on desktop; only render it here below md. */
   searchInHeader?: boolean;
@@ -41,7 +37,7 @@ export function SearchInput({ value, onChange, className }: { value: string; onC
   );
 }
 
-export function FilterBar({ search, onSearchChange, selectedTag, onTagChange, nsfwEnabled, onNsfwToggle, allTags, searchInHeader, showNsfwToggle = true }: FilterBarProps) {
+export function FilterBar({ search, onSearchChange, selectedTag, onTagChange, allTags, searchInHeader }: FilterBarProps) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
@@ -51,28 +47,6 @@ export function FilterBar({ search, onSearchChange, selectedTag, onTagChange, ns
           className={cn('w-full sm:flex-1', searchInHeader && 'md:hidden')}
         />
         {searchInHeader && <div className="hidden md:block flex-1" />}
-
-        {showNsfwToggle && <div role="radiogroup" aria-label="Content visibility" className="flex h-10 shrink-0 rounded-full bg-secondary/80 p-1">
-          {[
-            { label: 'SFW', value: false },
-            { label: 'NSFW', value: true },
-          ].map((opt) => (
-            <button
-              key={opt.label}
-              role="radio"
-              aria-checked={nsfwEnabled === opt.value}
-              onClick={() => onNsfwToggle(opt.value)}
-              className={cn(
-                'px-3.5 rounded-full text-xs font-bold transition-colors',
-                nsfwEnabled === opt.value
-                  ? opt.value ? 'bg-rose-600 text-white' : 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>}
 
         {/* Tag filter */}
         <Select value={selectedTag || ALL} onValueChange={(v) => onTagChange(v === ALL ? '' : v)}>

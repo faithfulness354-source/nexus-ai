@@ -1,9 +1,10 @@
 export const dynamic = 'force-dynamic';
 import { prisma } from '@/lib/db';
-import { getViewer, unauthorized, json, can, type Viewer } from '@/lib/access';
+import { getViewer, unauthorized, json, can, canViewNsfw, type Viewer } from '@/lib/access';
 import { ACCENT_THEMES, USERNAME_RE, isAccentTheme } from '@/lib/profile';
 import { profileStats, profileBadges, findUserByUsername, pinIds } from '@/lib/profile-server';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { readNsfwToggle } from '@/lib/nsfw-pref';
 
 const MAX_PINS = 6;
 
@@ -11,8 +12,9 @@ async function payload(viewer: Viewer) {
   const userId = viewer.user.id;
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const stats = await profileStats(userId);
+  const showNsfw = await readNsfwToggle() && canViewNsfw(viewer);
   const characters = await prisma.character.findMany({
-    where: { ownerId: userId },
+    where: { ownerId: userId, ...(showNsfw ? {} : { nsfw: false }) },
     select: { id: true, name: true, avatar: true, title: true, nsfw: true, summary: true, personality: true, scenario: true, initialMessage: true, tags: true, banner: true, creator: true, ownerId: true, visibility: true, moderated: true },
     orderBy: { updatedAt: 'desc' },
     take: 200,
@@ -31,12 +33,16 @@ async function payload(viewer: Viewer) {
     stats,
     badges: profileBadges(user, stats),
     vipThemes: can(viewer, 'vipThemes'),
-    characters: characters.map((c) => ({
-      id: c.id, name: c.name, avatar: c.avatar, title: c.title, summary: c.summary, banner: c.banner,
-      creator: c.creator, ownerId: c.ownerId, visibility: c.visibility, moderated: c.moderated,
-      nsfw: c.nsfw || characterImpliesNsfw(c),
-      tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
-    })),
+    characters: characters.flatMap((c) => {
+      const flagged = c.nsfw || characterImpliesNsfw(c);
+      if (!showNsfw && flagged) return [];
+      return [{
+        id: c.id, name: c.name, avatar: c.avatar, title: c.title, summary: c.summary, banner: c.banner,
+        creator: c.creator, ownerId: c.ownerId, visibility: c.visibility, moderated: c.moderated,
+        nsfw: flagged,
+        tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      }];
+    }),
   };
 }
 

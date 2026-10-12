@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { UserPlus } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { useNsfwView } from '@/lib/nsfw-view';
 
 interface CharacterGridProps {
   characters: any[];
@@ -20,6 +21,8 @@ interface CharacterGridProps {
 const GRID = 'grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4';
 
 export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdmin, emptyTitle, emptyHint }: CharacterGridProps) {
+  const showNsfw = useNsfwView();
+  const visible = showNsfw ? (characters ?? []) : (characters ?? []).filter((character) => !character?.nsfw);
   if (loading) {
     return (
       <div className={GRID}>
@@ -38,7 +41,7 @@ export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdm
     );
   }
 
-  if ((characters?.length ?? 0) === 0) {
+  if ((visible?.length ?? 0) === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
@@ -55,7 +58,7 @@ export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdm
 
   return (
     <div className={GRID}>
-      {characters.map((char: any) => (
+      {visible.map((char: any) => (
         <CharacterCard
           key={char.id}
           {...char}

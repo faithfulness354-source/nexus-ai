@@ -4,21 +4,33 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Search } from 'lucide-react';
 import { CharacterAvatar } from '@/components/character/character-avatar';
 import { cn } from '@/lib/utils';
+import { subscribeNsfwView, readNsfwView } from '@/lib/nsfw-view';
 
 export interface PickableCharacter { id: string; name: string; avatar: string | null }
 
 let cache: Promise<PickableCharacter[]> | null = null;
+if (typeof window !== 'undefined') {
+  subscribeNsfwView(() => { cache = null; });
+}
 export function loadCharacters(): Promise<PickableCharacter[]> {
-  cache ??= fetch('/api/characters')
+  cache ??= fetch(`/api/characters?nsfw=${readNsfwView() ? 'true' : 'false'}`)
     .then((r) => (r.ok ? r.json() : []))
-    .then((d: any) => (Array.isArray(d) ? d.map((c: any) => ({ id: c.id, name: c.name, avatar: c.avatar ?? null })) : []))
+    .then((d: any) => (Array.isArray(d) ? d.filter((c: any) => readNsfwView() || !c?.nsfw).map((c: any) => ({ id: c.id, name: c.name, avatar: c.avatar ?? null })) : []))
     .catch((err) => { console.error('Failed to load characters', err); cache = null; return []; });
   return cache;
 }
 
 export function useCharacters() {
   const [list, setList] = useState<PickableCharacter[]>([]);
-  useEffect(() => { loadCharacters().then(setList); }, []);
+  useEffect(() => {
+    let cancel = false;
+    const load = () => {
+      loadCharacters().then((rows) => { if (!cancel) setList(rows); });
+    };
+    load();
+    const unsubscribe = subscribeNsfwView(load);
+    return () => { cancel = true; unsubscribe(); };
+  }, []);
   return list;
 }
 

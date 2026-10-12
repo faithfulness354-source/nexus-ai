@@ -15,6 +15,8 @@ import { PublicProfile, type ProfileCharacter } from '@/components/profile/publi
 import { ACCENT_THEMES, USERNAME_RE, type AccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
 import { useAccess } from '@/components/billing/access-provider';
+import { NsfwContentSetting } from '@/components/settings/nsfw-content-setting';
+import { subscribeNsfwView } from '@/lib/nsfw-view';
 
 interface ProfileState {
   username: string | null;
@@ -41,10 +43,16 @@ export function ProfileHub() {
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/profile')
-      .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d?.error); return d; })
-      .then((d) => { setP(d); setSavedUsername(d.username); })
-      .catch((err) => { console.error(err); toast.error(err?.message ?? 'Failed to load profile'); });
+    let cancel = false;
+    function load() {
+      fetch('/api/profile')
+        .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d?.error); return d; })
+        .then((d) => { if (!cancel) { setP(d); setSavedUsername(d.username); } })
+        .catch((err) => { console.error(err); if (!cancel) toast.error(err?.message ?? 'Failed to load profile'); });
+    }
+    load();
+    const unsubscribe = subscribeNsfwView(load);
+    return () => { cancel = true; unsubscribe(); };
   }, []);
 
   if (!p) return <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
@@ -122,6 +130,8 @@ export function ProfileHub() {
           <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}Save profile</Button>
         </div>
       </div>
+
+      <NsfwContentSetting />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-5 min-w-0">

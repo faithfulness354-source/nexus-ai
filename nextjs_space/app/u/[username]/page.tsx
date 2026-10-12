@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { getViewer, canViewNsfw, canEditCharacter } from '@/lib/access';
 import { findUserByUsername, profileStats, profileBadges, pinIds } from '@/lib/profile-server';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { readNsfwToggle } from '@/lib/nsfw-pref';
 import { AppHeader } from '@/components/layout/app-header';
 import { PublicProfile } from '@/components/profile/public-profile';
 
@@ -21,13 +22,14 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
 
   const viewer = await getViewer();
   const seeAll = !!viewer && (viewer.isCreatorAdmin || viewer.user.id === user.id);
+  const showNsfw = await readNsfwToggle() && canViewNsfw(viewer);
   const stats = await profileStats(user.id, { publicOnly: !seeAll });
   const rows = await prisma.character.findMany({
     // Visitors only see published cards. The author and the creator admin also see drafts, unlisted, and moderated cards.
     where: {
       ownerId: user.id,
       ...(seeAll ? {} : { visibility: 'PUBLIC' as const, moderated: false }),
-      ...(canViewNsfw(viewer) ? {} : { nsfw: false }),
+      ...(showNsfw ? {} : { nsfw: false }),
     },
     orderBy: { updatedAt: 'desc' },
     include: { _count: { select: { sessions: true } } },
@@ -35,7 +37,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
   });
   const creations = rows.flatMap((c) => {
     const flagged = c.nsfw || characterImpliesNsfw(c);
-    if (!canViewNsfw(viewer) && flagged) return [];
+    if (!showNsfw && flagged) return [];
     return [{
       id: c.id, name: c.name, title: c.title, summary: c.summary, creator: c.creator, tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       avatar: c.avatar, banner: c.banner, nsfw: flagged, chatCount: c._count.sessions, ownerId: c.ownerId,
