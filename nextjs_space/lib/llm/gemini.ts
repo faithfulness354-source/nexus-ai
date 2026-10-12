@@ -1,3 +1,4 @@
+import 'server-only';
 import { LLMMessage, DEFAULT_MODEL, GEMINI_FALLBACK_MODELS } from '../types';
 import { isOpenAIProxy, lastRoleIndex, normalizeProviderMessages, usableImages, type ProviderImage } from './messages';
 import { streamOpenAICompatible } from './openai-compatible';

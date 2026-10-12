@@ -1,10 +1,10 @@
+import 'server-only';
 import { PrismaClient } from '@prisma/client';
 
 const SLOW_QUERY_MS = 800;
 const CLIENT_BUILD = 2;
 
 function createRealClient() {
-  if (!process.env.DATABASE_URL) process.env.DATABASE_URL = 'file:./dev.db';
   return new PrismaClient().$extends({
     query: {
       $allModels: {

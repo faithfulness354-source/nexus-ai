@@ -1,12 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { TermsOfServiceModal } from '@/components/TermsOfServiceModal';
+
+const PUBLIC_LEGAL = new Set(['/terms', '/privacy', '/guidelines', '/dmca']);
 
 /** Locks the signed-in app until this account has accepted the Terms of Service. */
 export function TermsOfServiceGate({ children }: { children: React.ReactNode }) {
   const { status } = useSession();
+  const pathname = usePathname();
   const [accepted, setAccepted] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -29,7 +33,7 @@ export function TermsOfServiceGate({ children }: { children: React.ReactNode }) 
     };
   }, [status]);
 
-  const locked = status === 'authenticated' && accepted === false;
+  const locked = status === 'authenticated' && accepted === false && !PUBLIC_LEGAL.has(pathname);
 
   return (
     <>

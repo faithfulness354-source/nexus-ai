@@ -1,3 +1,4 @@
+import 'server-only';
 import { LLMMessage, ProviderConfigData, GenSettings, DEFAULT_MODEL, PROVIDER_MODELS, normalizeProvider, usableGeminiModel } from '../types';
 import { resolveCustomModel, resolveOpenRouterModel, sanitizeChatHistory, type ProviderImage } from './messages';
 import { streamOpenAICompatible } from './openai-compatible';

@@ -1,3 +1,4 @@
+import 'server-only';
 import { prisma } from '@/lib/db';
 import { DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, isGeminiModel, usableGeminiModel } from '@/lib/types';
 import { resolveCustomModel, resolveOpenRouterModel } from '@/lib/llm/messages';

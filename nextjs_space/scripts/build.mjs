@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 
-if (!process.env.DATABASE_URL) {
+// Prisma can parse the schema only when DATABASE_URL is present. This file runs
+// during `npm run build`, and it must not replace a live URL.
+if (!process.env.DATABASE_URL?.trim()) {
   process.env.DATABASE_URL = 'file:./dev.db';
 }
 

@@ -1,3 +1,4 @@
+import 'server-only';
 import { LLMMessage } from '../types';
 import { lastRoleIndex, normalizeProviderMessages, usableImages, type ProviderImage } from './messages';
 

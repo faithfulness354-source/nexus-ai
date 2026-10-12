@@ -1,3 +1,4 @@
+import 'server-only';
 import { LLMMessage } from '../types';
 import { openAIChatBody, resolveOpenRouterModel, type ProviderImage } from './messages';
 

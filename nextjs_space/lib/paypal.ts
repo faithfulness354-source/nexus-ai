@@ -1,3 +1,4 @@
+import 'server-only';
 import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
