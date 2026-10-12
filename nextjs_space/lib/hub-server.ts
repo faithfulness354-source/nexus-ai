@@ -1,0 +1,52 @@
+const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
+const int = (v: unknown, def: number, min: number, max: number) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+};
+const ids = (v: unknown) =>
+  Array.isArray(v) ? (Array.from(new Set(v.filter((x) => typeof x === 'string'))) as string[]).slice(0, 200) : [];
+
+export function lorebookInput(body: any) {
+  const scope = ['GLOBAL', 'CHARACTER', 'PERSONA'].includes(body?.scope) ? body.scope : 'GLOBAL';
+  return {
+    name: str(body?.name, 80).trim(),
+    description: str(body?.description, 2000),
+    scope,
+    characterIds: scope === 'CHARACTER' ? ids(body?.characterIds) : [],
+    personaIds: scope === 'PERSONA' ? ids(body?.personaIds) : [],
+    enabled: body?.enabled !== false,
+  };
+}
+
+export function entriesInput(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 500).map((e: any, i: number) => ({
+    title: str(e?.title, 120),
+    keys: (Array.isArray(e?.keys) ? e.keys : [])
+      .filter((k: unknown) => typeof k === 'string')
+      .map((k: string) => k.trim().slice(0, 80))
+      .filter(Boolean)
+      .slice(0, 30),
+    content: str(e?.content, 8000),
+    order: int(e?.order, 100 + i, 0, 10000),
+    priority: int(e?.priority, 50, 0, 100),
+    depth: int(e?.depth, 4, 1, 50),
+    enabled: e?.enabled !== false,
+  }));
+}
+
+export function scriptInput(body: any) {
+  const kind = body?.kind === 'PROMPT' ? 'PROMPT' : 'REGEX';
+  const placement = ['PRE', 'POST', 'DISPLAY'].includes(body?.placement) ? body.placement : 'DISPLAY';
+  return {
+    name: str(body?.name, 80).trim(),
+    kind,
+    findPattern: str(body?.findPattern, 500),
+    flags: str(body?.flags, 8).replace(/[^gimsuy]/g, '') || 'g',
+    replaceWith: str(body?.replaceWith, 2000),
+    placement,
+    promptText: str(body?.promptText, 8000),
+    enabled: body?.enabled !== false,
+    order: int(body?.order, 100, 0, 10000),
+  };
+}

@@ -1,0 +1,379 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+
+
+  
+}
+
+datasource db {
+    provider = "sqlite"
+    url      = env("DATABASE_URL")
+}
+
+enum CardVisibility {
+  PRIVATE
+  PUBLIC
+  UNLISTED
+}
+
+model Character {
+  id              String        @id @default(cuid())
+  name            String
+  title           String        @default("")
+  summary         String        
+  personality     String        
+  scenario        String        
+  initialMessage  String        
+  exampleDialogue String        
+  customRules     String        
+  systemPrompt    String        
+  creatorNotes    String        
+  tags            String
+  avatar          String?
+  banner          String?
+  /// Local track under /audio (public/audio) or a direct audio URL. Editable by the card creator or an admin.
+  audioUrl        String        @default("")
+  creator         String        @default("Anonymous")
+  nsfw            Boolean       @default(false)
+  /// Visual reference gallery: [{ id, label, url, cloud_storage_path, isPublic }]
+  gallery         Json          @default("[]")
+  sceneImages     Boolean       @default(true)
+  /// Drafts stay private until the author publishes. Unlisted cards are link-only.
+  visibility      CardVisibility @default(PRIVATE)
+  /// Creator/admin takedown. Hidden from browse, search, and everyone except the owner and the creator admin.
+  moderated       Boolean        @default(false)
+  /// Account that created the card. Null for legacy cards (only the creator admin can edit those).
+  ownerId         String?
+  owner           User?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sessions        ChatSession[]
+}
+
+model ChatSession {
+  id                      String              @id @default(cuid())
+  characterId             String
+  character               Character           @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  title                   String              @default("New Chat")
+  model                   String              @default("gemini-flash-latest")
+  provider                String              @default("GEMINI")
+  branchedFromSessionId   String?
+  branchedAtMessageIndex  Int?
+  /// Owner of the chat. Null for legacy chats (visible to admins only).
+  userId                  String?
+  user                    User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Persona chosen with the in-chat quick switcher (overrides bound/default persona).
+  personaId               String?
+  /// Rolling memory summary of messages older than the paid-tier raw history window.
+  memorySummary           String              @default("") 
+  /// Number of leading messages already folded into memorySummary.
+  memorySummaryUpTo       Int                 @default(0)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  messages                Message[]
+  meterStates             MeterState[]
+  generationSettings      GenerationSettings?
+}
+
+model Message {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        MessageRole
+  content     String      
+  model       String?
+  tokenCount  Int         @default(0)
+  editHistory Json        @default("[]")
+  createdAt   DateTime    @default(now())
+  index       Int
+  /// Soft-deleted turns stay in the table and are excluded from chat context.
+  deleted     Boolean     @default(false)
+
+  @@index([sessionId, index])
+}
+
+model MeterState {
+  id           String      @id @default(cuid())
+  sessionId    String
+  session      ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messageIndex Int
+  metersJson   Json
+  createdAt    DateTime    @default(now())
+
+  @@index([sessionId, messageIndex])
+}
+
+model ProviderConfig {
+  id           String   @id @default(cuid())
+  provider     Provider @unique
+  apiKey       String?
+  baseUrl      String?
+  defaultModel String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model GenerationSettings {
+  id               String      @id @default(cuid())
+  sessionId        String      @unique
+  session          ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  temperature      Float       @default(0.8)
+  topP             Float       @default(0.95)
+  frequencyPenalty Float       @default(0.0)
+  presencePenalty  Float       @default(0.0)
+  maxTokens        Int         @default(2048)
+  forbiddenWords   String
+  updatedAt        DateTime    @updatedAt
+}
+
+model User {
+  id                   String        @id @default(cuid())
+  name                 String?
+  email                String        @unique
+  emailVerified        DateTime?
+  /// Set when the user accepts the Terms of Service and confirms they are 18+.
+  termsAcceptedAt      DateTime?
+  image                String?
+  password             String?
+  role                 UserRole      @default(USER)
+  isWhitelisted        Boolean       @default(false)
+  tier                 Tier          @default(FREE)
+  stripeCustomerId     String?       @unique
+  stripeSubscriptionId String?       @unique
+  subscriptionStatus   String?
+  currentPeriodEnd     DateTime?
+  /// PayPal Subscriptions (the active billing provider).
+  paypalSubscriptionId String?
+  /// Credits used on `creditsDay` (UTC date YYYY-MM-DD); resets when the day changes.
+  creditsUsed          Int           @default(0)
+  creditsDay           String        @default("")
+  /// Image/scene generation credits used on `imageCreditsDay` (UTC date); Ultimate gets a daily allowance.
+  imageCreditsUsed     Int           @default(0)
+  imageCreditsDay      String        @default("")
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  /// Public creator profile
+  /// Unique handle (lowercase); uniqueness enforced in /api/profile.
+  username             String?
+  displayName          String?
+  bio                  String        @default("") 
+  banner               String?
+  bannerAnimated       Boolean       @default(true)
+  /// Vertical crop of the profile banner. 15 keeps faces in frame, 100 shows the bottom.
+  bannerPositionY      Int           @default(15)
+  accentTheme          String        @default("OBSIDIAN")
+  pinnedCharacterIds   String?      
+  accounts             Account[]
+  sessions             Session[]
+  chatSessions         ChatSession[]
+  characters           Character[]
+  personas             Persona[]
+  lorebooks            Lorebook[]
+  scripts              UserScript[]
+  bookmarks            Bookmark[]
+
+  @@index([username])
+}
+
+/// Monthly price per tier and the Stripe Price it maps to (filled in on first checkout).
+model SubscriptionPlan {
+  tier          Tier     @id
+  name          String
+  priceCents    Int
+  lookupKey     String?  @unique
+  stripePriceId String?
+  /// PayPal billing plan for the current price (created automatically on first checkout).
+  paypalPlanId  String?
+  updatedAt     DateTime @updatedAt
+}
+
+model Persona {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  avatar            String?
+  pronouns          String   @default("They/Them")
+  physical          String   @default("") 
+  attire            String   @default("") 
+  visualTraits      String   @default("") 
+  /// Granular face, body, and outfit fields. JSON object; empty values are omitted from the prompt.
+  appearance        String   @default("{}")
+  /// One-time text reading of the avatar. Regenerated only when the avatar URL changes.
+  avatarSnapshot    String   @default("")
+  /// Avatar URL that avatarSnapshot describes.
+  avatarSnapshotFor String   @default("")
+  personality       String   @default("") 
+  backstory         String   @default("") 
+  speech            String   @default("") 
+  isDefault         Boolean  @default(false)
+  boundCharacterIds String 
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Lorebook {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  description  String      @default("") 
+  /// GLOBAL | CHARACTER | PERSONA
+  scope        String      @default("GLOBAL")
+  characterIds String    
+  personaIds   String    
+  enabled      Boolean     @default(true)
+  entries      LoreEntry[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([userId])
+}
+
+model LoreEntry {
+  id         String   @id @default(cuid())
+  lorebookId String
+  lorebook   Lorebook @relation(fields: [lorebookId], references: [id], onDelete: Cascade)
+  title      String   @default("")
+  keys       String 
+  content    String   
+  /// Lower numbers are inserted first.
+  order      Int      @default(100)
+  /// Higher priority entries survive when the lore budget is exceeded.
+  priority   Int      @default(50)
+  /// How many recent messages are scanned for this entry's keywords.
+  depth      Int      @default(4)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([lorebookId])
+}
+
+model UserScript {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  /// REGEX | PROMPT
+  kind        String   @default("REGEX")
+  findPattern String   @default("") 
+  flags       String   @default("g")
+  replaceWith String   @default("") 
+  /// PRE (user input before sending) | POST (AI reply before saving) | DISPLAY (rendering only)
+  placement   String   @default("DISPLAY")
+  promptText  String   @default("") 
+  enabled     Boolean  @default(true)
+  order       Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Bookmark {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  characterId String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, characterId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? 
+  access_token      String? 
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? 
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/// Processed payment webhook event ids (idempotency; PayPal now, legacy Stripe rows kept).
+model StripeEvent {
+  id        String   @id
+  type      String
+  createdAt DateTime @default(now())
+}
+
+enum LogSeverity {
+  INFO
+  WARN
+  ERROR
+  CRITICAL
+}
+
+/// Platform errors, slow queries, and failed model streams. No message text or API keys.
+model MaintenanceLog {
+  id         String      @id @default(cuid())
+  severity   LogSeverity
+  source     String
+  message    String
+  route      String      @default("")
+  userId     String      @default("")
+  sessionId  String      @default("")
+  stack      String      @default("")
+  meta       String      @default("{}")
+  durationMs Int?
+  createdAt  DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([severity, createdAt])
+  @@index([route])
+}
+
+enum UserRole {
+  USER
+  CREATOR_ADMIN
+}
+
+enum Tier {
+  FREE
+  PLUS
+  PREMIUM
+  ULTIMATE
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum Provider {
+  OPENAI // legacy, unused — no rows reference it and the app never routes to it
+  ANTHROPIC
+  GEMINI
+  OPENROUTER
+  CUSTOM
+}

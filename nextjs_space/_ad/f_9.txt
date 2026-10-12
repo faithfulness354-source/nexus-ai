@@ -1,0 +1,1 @@
+scale=2400:-2,zoompan=z='min(1.0+0.0008*on\,1.14)':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=360:s=1920x1080:fps=24,fade=t=in:st=0:d=0.35,fade=t=out:st=14.65:d=0.35,format=yuv420p
