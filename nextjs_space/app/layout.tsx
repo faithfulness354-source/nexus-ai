@@ -8,6 +8,7 @@ import { ChunkLoadErrorHandler } from "@/components/chunk-load-error-handler";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { StartupSplash } from "@/components/splash/startup-screen";
 import { LiveUpdateCheck } from "@/components/live-update-check";
+import { TermsOfServiceGate } from "@/components/terms-of-service-gate";
 
 import "@/app/globals.css";
 
@@ -47,10 +48,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           disableTransitionOnChange
         >
           <Providers session={session}>
-            <div className="flex min-h-[100dvh] flex-col">
-              <div className="flex-1">{children}</div>
-              <SiteFooter />
-            </div>
+            <TermsOfServiceGate>
+              <div className="flex min-h-[100dvh] flex-col">
+                <div className="flex-1">{children}</div>
+                <SiteFooter />
+              </div>
+            </TermsOfServiceGate>
           </Providers>
           <Toaster />
           <SonnerToaster />

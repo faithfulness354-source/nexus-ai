@@ -1,5 +1,22 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { auth } from '@/auth';
+import { prisma } from '@/lib/db';
+
+export const runtime = 'nodejs';
+
+const OPEN_API = [
+  '/api/auth',
+  '/api/account/tos',
+  '/api/signup',
+  '/api/live',
+  '/api/health',
+  '/api/account/magic-link',
+  '/api/account/forgot-password',
+  '/api/account/reset-password',
+  '/api/account/quick-reset',
+  '/api/webhooks',
+];
 
 function sessionCookieName(request: NextRequest): string {
   const forwarded = request.headers.get('x-forwarded-proto');
@@ -23,7 +40,7 @@ function corsHeaders(origin: string): Headers {
   return headers;
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   const bearer = requestHeaders.get('authorization') ?? '';
   if (bearer.toLowerCase().startsWith('bearer ')) {
@@ -39,6 +56,21 @@ export function middleware(request: NextRequest) {
   const allow = allowedOrigin(origin);
   if (request.method === 'OPTIONS' && allow && origin) {
     return new NextResponse(null, { status: 204, headers: corsHeaders(origin) });
+  }
+
+  const path = request.nextUrl.pathname;
+  const open = OPEN_API.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  if (!open && request.method !== 'OPTIONS') {
+    const session = await auth();
+    const id = session?.user?.id;
+    if (id) {
+      const user = await prisma.user.findUnique({ where: { id }, select: { termsAcceptedAt: true } });
+      if (user && !user.termsAcceptedAt) {
+        const blocked = NextResponse.json({ error: 'Accept the Terms of Service to continue.' }, { status: 403 });
+        if (allow && origin) corsHeaders(origin).forEach((value, key) => blocked.headers.set(key, value));
+        return blocked;
+      }
+    }
   }
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });

@@ -1,14 +1,15 @@
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { getViewer, unauthorized, forbidden, canEditCharacter, canViewNsfw, nsfwLocked } from '@/lib/access';
-import { generateComfyImage } from '@/src/lib/comfy/client';
 
 /** Render a character portrait on the local ComfyUI instance and store it on the card. */
 export async function POST(request: NextRequest) {
   try {
+    const { prisma } = await import('@/lib/db');
+    const { getViewer, unauthorized, forbidden, canEditCharacter, canViewNsfw, nsfwLocked } = await import('@/lib/access');
+    const { generateComfyImage } = await import('@/src/lib/comfy/client');
     const viewer = await getViewer();
     if (!viewer) return unauthorized();
     const body = await request.json().catch(() => ({}));
