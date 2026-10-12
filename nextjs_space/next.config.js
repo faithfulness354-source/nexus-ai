@@ -1,12 +1,16 @@
 /** @type {import('next').NextConfig} */
 const path = require('path');
 
+const onVercel = process.env.VERCEL === '1';
+const mobileExport = Boolean(process.env.NEXT_OUTPUT_MODE) && !onVercel;
+
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
-  output: process.env.NEXT_OUTPUT_MODE,
+  output: mobileExport ? process.env.NEXT_OUTPUT_MODE : undefined,
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
-  outputFileTracingRoot: process.env.NEXT_OUTPUT_MODE ? path.join(__dirname, '../') : '/',
+  // '/' makes Vercel trace the scene route from the filesystem root and fail /_not-found.
+  outputFileTracingRoot: mobileExport ? path.join(__dirname, '../') : __dirname,
   typescript: {
     ignoreBuildErrors: true,
   },

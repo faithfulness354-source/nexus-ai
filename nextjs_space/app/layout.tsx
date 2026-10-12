@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { Session } from "next-auth";
 import { auth } from "@/auth";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Providers } from "@/components/providers";
@@ -11,6 +12,8 @@ import { LiveUpdateCheck } from "@/components/live-update-check";
 import { TermsOfServiceGate } from "@/components/terms-of-service-gate";
 
 import "@/app/globals.css";
+
+export const dynamic = 'force-dynamic';
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -32,7 +35,12 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
+  let session: Session | null = null;
+  try {
+    session = await auth();
+  } catch (error) {
+    console.error('Session lookup skipped', error instanceof Error ? error.message : '');
+  }
   return (
     <html lang="en" suppressHydrationWarning className="dark">
       <head>

@@ -1,5 +1,3 @@
-import { readFile } from 'fs/promises';
-import path from 'path';
 import type { GalleryImage } from '@/lib/types';
 
 const STOP_WORDS = new Set(['character', 'the', 'and', 'with', 'image', 'reference', 'ref', 'portrait', 'photo', 'pic']);
@@ -35,7 +33,7 @@ export function pickReferences(character: SceneCharacter, description: string): 
   return refs;
 }
 
-function publicPortrait(url: string): string | null {
+function publicPortrait(url: string, path: { resolve: (...parts: string[]) => string; sep: string }): string | null {
   let pathname = url;
   if (/^https?:\/\//i.test(url)) {
     try {
@@ -64,7 +62,9 @@ async function loadPortrait(url: string): Promise<Buffer | null> {
     const data = Buffer.from(match[1].replace(/\s/g, ''), 'base64');
     return data.length && data.length <= MAX_REF_BYTES ? data : null;
   }
-  const local = publicPortrait(url);
+  const { readFile } = await import('fs/promises');
+  const path = await import('path');
+  const local = publicPortrait(url, path);
   if (local) {
     try {
       const data = await readFile(local);

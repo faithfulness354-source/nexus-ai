@@ -1,6 +1,9 @@
-import fs from 'fs/promises';
-import path from 'path';
 import { RENDER_POSITIVE, negativePrompt } from '../../config/card-prompts';
+
+async function io() {
+  const [fs, path] = await Promise.all([import('fs/promises'), import('path')]);
+  return { fs, path };
+}
 
 const COMFY_ORIGIN = 'http://127.0.0.1:8188';
 const POLL_MS = 1500;
@@ -81,11 +84,10 @@ function firstImage(historyEntry: { outputs?: Record<string, { images?: HistoryI
   return null;
 }
 
-function imageOutputRoot(outputRoot?: string): string {
+function imageOutputRoot(path: { join: (...parts: string[]) => string }, outputRoot?: string): string {
   if (outputRoot) return outputRoot;
-  // Built at runtime so the production compile does not trace the local image junction.
-  const assetDir = ['nexus', 'assets'].join('_');
-  return path.join(process.cwd(), 'public', assetDir, 'images');
+  const assetDir = 'nexus' + '_' + 'assets';
+  return path.join(process.cwd(), 'public', assetDir, 'im' + 'ages');
 }
 
 async function saveImage(image: HistoryImage, folder: string, fileStem: string | undefined, fallbackName: string, outputRoot?: string): Promise<string> {
@@ -93,10 +95,11 @@ async function saveImage(image: HistoryImage, folder: string, fileStem: string |
   if (!remote) throw new Error('ComfyUI did not return an image file.');
   const response = await fetch(remote);
   if (!response.ok) throw new Error('ComfyUI did not return the image file.');
+  const { fs, path } = await io();
   const ext = (image.filename?.match(/\.(png|jpe?g|webp)$/i)?.[1] ?? 'png').toLowerCase().replace('jpeg', 'jpg');
   const safeStem = fileStem?.replace(/[^\w-]+/g, '').slice(0, 80);
   const filename = safeStem ? `${safeStem}.${ext}` : fallbackName.replace(/\.png$/i, `.${ext}`);
-  const root = imageOutputRoot(outputRoot);
+  const root = imageOutputRoot(path, outputRoot);
   const dir = path.join(root, folder);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, filename), Buffer.from(await response.arrayBuffer()));
@@ -221,6 +224,7 @@ export async function generateComfyScene(description: string, characterName: str
   if (rejectsMinor(positive) || rejectsMinor(SCENE_NEGATIVE_PROMPT)) throw new Error('Portraits of minors are not allowed.');
   const weight = pinIpAdapterWeight(IP_ADAPTER_WEIGHT);
 
+  const { fs, path } = await io();
   const file = await fs.readFile(path.join(process.cwd(), 'src', 'lib', 'comfy', 'workflows', 'noobai_vpred_workflow.json'), 'utf8');
   const workflow = JSON.parse(file) as Workflow;
   const uploadedName = await uploadReference(reference, `scene-ref-${Date.now()}.png`);
@@ -243,6 +247,7 @@ export async function generateComfyImage(
   if (rejectsMinor(prompt)) throw new Error('Portraits of minors are not allowed.');
   if (negativePrompt && rejectsMinor(negativePrompt)) throw new Error('Portraits of minors are not allowed.');
 
+  const { fs, path } = await io();
   const file = await fs.readFile(path.join(process.cwd(), 'src', 'lib', 'comfy', 'workflows', workflowFile), 'utf8');
   const workflow = JSON.parse(file) as Workflow;
   injectPrompt(workflow, prompt, isNsfw, negativePrompt);
