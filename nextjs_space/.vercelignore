@@ -1,0 +1,7 @@
+node_modules
+.next
+.next-mobile
+.next-vercel-check
+out
+*.db
+public/nexus_assets

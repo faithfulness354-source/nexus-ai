@@ -14,7 +14,7 @@ async function groqChatModels(): Promise<string[]> {
   const key = config?.apiKey?.trim() ?? '';
   const baseUrl = config?.baseUrl?.trim() ?? '';
   if (!config?.isActive || !key || (baseUrl && !/groq\.com/i.test(baseUrl))) return GROQ_CHAT_MODELS;
-  const root = (baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  const root = (baseUrl || process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
   try {
     const res = await fetch(`${root}/models`, {
       headers: { Authorization: `Bearer ${key}` },

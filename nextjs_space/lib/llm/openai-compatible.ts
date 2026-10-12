@@ -17,7 +17,8 @@ interface Params {
 
 // Generic OpenAI-compatible chat-completions client, used only for user-defined Custom endpoints/proxies.
 export function streamOpenAICompatible(params: Params): ReadableStream {
-  const url = `${(params?.baseUrl || 'http://localhost:5001/v1').replace(/\/+$/, '')}/chat/completions`;
+  const root = params?.baseUrl?.trim() || process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1';
+  const url = `${root.replace(/\/+$/, '')}/chat/completions`;
 
   return new ReadableStream({
     async start(controller) {

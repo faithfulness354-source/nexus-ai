@@ -28,7 +28,10 @@ function outboundModel(provider: string, model: string): string {
 export function createLLMStream(opts: StreamOptions): ReadableStream {
   const { provider, config, messages, model, settings, forbiddenWords, images } = opts;
   const apiKey = config?.apiKey ?? '';
-  const baseUrl = config?.baseUrl ?? '';
+  const savedBaseUrl = config?.baseUrl?.trim() ?? '';
+  const baseUrl = savedBaseUrl || (normalizeProvider(provider) === 'CUSTOM'
+    ? (process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1')
+    : '');
 
   const params = {
     messages: sanitizeChatHistory(messages),
