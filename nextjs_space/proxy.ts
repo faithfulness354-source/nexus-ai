@@ -3,8 +3,6 @@ import type { NextRequest } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 
-export const runtime = 'nodejs';
-
 const OPEN_API = [
   '/api/auth',
   '/api/account/tos',
@@ -40,7 +38,7 @@ function corsHeaders(origin: string): Headers {
   return headers;
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   const bearer = requestHeaders.get('authorization') ?? '';
   if (bearer.toLowerCase().startsWith('bearer ')) {
