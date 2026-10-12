@@ -22,12 +22,12 @@ export function savePublicUpload(fileName: string, body: Buffer, contentType = '
   if (!ext) throw new Error('That file is not a supported image');
   const stem = path.basename(fileName).replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(-60) || 'image';
   const stored = `${Date.now()}-${stem}.${ext}`;
-  const dir = path.resolve(process.cwd(), 'public', 'uploads');
-  const file = path.resolve(dir, stored);
+  const dir = path.resolve(/*turbopackIgnore: true*/ process.cwd(), 'public', 'uploads');
+  const file = path.resolve(/*turbopackIgnore: true*/ dir, stored);
   const dirKey = dir.toLowerCase();
   const fileKey = file.toLowerCase();
   if (fileKey !== dirKey && !fileKey.startsWith(`${dirKey}${path.sep}`)) throw new Error('Invalid upload path');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, body);
+  fs.mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
+  fs.writeFileSync(/*turbopackIgnore: true*/ file, body);
   return `/uploads/${stored}`;
 }

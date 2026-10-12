@@ -26,8 +26,8 @@ function publicFile(url: string): string | null {
   if (!pathname.startsWith('/')) return null;
   const relative = decodeURIComponent(pathname.split('?')[0]).replace(/^\/+/, '');
   if (!relative || relative.split('/').includes('..')) return null;
-  const root = path.resolve(process.cwd(), 'public');
-  const file = path.resolve(root, relative);
+  const root = path.resolve(/*turbopackIgnore: true*/ process.cwd(), 'public');
+  const file = path.resolve(/*turbopackIgnore: true*/ root, relative);
   const rootKey = root.toLowerCase();
   const fileKey = file.toLowerCase();
   if (fileKey !== rootKey && !fileKey.startsWith(`${rootKey}${path.sep}`)) return null;
@@ -45,7 +45,7 @@ export async function loadImage(url: string): Promise<{ mime: string; data: stri
   const local = publicFile(url);
   if (local) {
     try {
-      const buf = await readFile(local);
+      const buf = await readFile(/*turbopackIgnore: true*/ local);
       const mime = MIME_BY_EXT[path.extname(local).toLowerCase()];
       if (!mime || !buf.length || buf.length > MAX_BYTES) return null;
       return { mime, data: buf.toString('base64') };

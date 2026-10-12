@@ -14,7 +14,7 @@ function revision(): string {
   if (deployed) return deployed;
   if (process.env.NODE_ENV === 'development') return `boot-${bootedAt}`;
   try {
-    const id = readFileSync(path.join(process.cwd(), '.next', 'BUILD_ID'), 'utf8').trim();
+    const id = readFileSync(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ process.cwd(), '.next', 'BUILD_ID'), 'utf8').trim();
     if (id) return id;
   } catch { /* no production build id on disk */ }
   return `boot-${bootedAt}`;

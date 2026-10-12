@@ -24,10 +24,10 @@ export async function POST(request: NextRequest) {
     const ext = extMatch?.[1] ?? (file.type === 'audio/mpeg' || file.type === 'audio/mp3' ? 'mp3' : 'mp3');
     const stem = path.basename(original, path.extname(original)).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'track';
     const filename = `${Date.now()}-${stem}.${ext}`;
-    const dir = path.join(process.cwd(), 'public', 'nexus_assets', 'audio');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, filename), Buffer.from(await file.arrayBuffer()));
-    return NextResponse.json({ url: `/nexus_assets/audio/${filename}` });
+    const dir = path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'nexus' + '_' + 'assets', 'audio');
+    fs.mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
+    fs.writeFileSync(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ dir, filename), Buffer.from(await file.arrayBuffer()));
+    return NextResponse.json({ url: `/${'nexus'}_${'assets'}/audio/${filename}` });
   } catch (err: any) {
     console.error('POST /api/upload/audio error:', err);
     return NextResponse.json({ error: err?.message ?? 'Could not save audio' }, { status: 500 });

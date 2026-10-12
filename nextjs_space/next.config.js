@@ -11,6 +11,14 @@ const nextConfig = {
   productionBrowserSourceMaps: false,
   // '/' makes Vercel trace the scene route from the filesystem root and fail /_not-found.
   outputFileTracingRoot: mobileExport ? path.join(__dirname, '../') : __dirname,
+  // Dynamic image writes must not pull public media into the serverless trace.
+  outputFileTracingExcludes: {
+    '*': [
+      './public/nexus_assets/**/*',
+      './public/splash/**/*',
+      './public/uploads/**/*',
+    ],
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

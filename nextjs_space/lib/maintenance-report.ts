@@ -5,7 +5,7 @@ import { logEvent } from '@/lib/logger';
 import { missingLocalAssets, runHealthChecks, type HealthReport } from '@/lib/health';
 import { maintenanceLogsSince } from '@/lib/maintenance-store';
 
-export const REPORT_DIR = path.join(process.cwd(), 'logs', 'maintenance_reports');
+export const REPORT_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), 'logs', 'maintenance_reports');
 
 export type ErrorGroup = {
   route: string;
@@ -130,12 +130,12 @@ function markdown(report: MaintenanceReport): string {
 }
 
 export async function writeMaintenanceReport(report: MaintenanceReport): Promise<{ jsonPath: string; markdownPath: string }> {
-  await mkdir(REPORT_DIR, { recursive: true });
+  await mkdir(/*turbopackIgnore: true*/ REPORT_DIR, { recursive: true });
   const stamp = report.generatedAt.replace(/[:.]/g, '-');
-  const jsonPath = path.join(REPORT_DIR, `maintenance-${stamp}.json`);
-  const markdownPath = path.join(REPORT_DIR, `maintenance-${stamp}.md`);
-  await writeFile(jsonPath, JSON.stringify(report, null, 2));
-  await writeFile(markdownPath, markdown(report));
+  const jsonPath = path.join(/*turbopackIgnore: true*/ REPORT_DIR, `maintenance-${stamp}.json`);
+  const markdownPath = path.join(/*turbopackIgnore: true*/ REPORT_DIR, `maintenance-${stamp}.md`);
+  await writeFile(/*turbopackIgnore: true*/ jsonPath, JSON.stringify(report, null, 2));
+  await writeFile(/*turbopackIgnore: true*/ markdownPath, markdown(report));
   await logEvent({
     severity: 'INFO',
     source: 'maintenance',
@@ -147,10 +147,10 @@ export async function writeMaintenanceReport(report: MaintenanceReport): Promise
 
 export async function latestMaintenanceReport(): Promise<MaintenanceReport | null> {
   try {
-    const names = (await readdir(REPORT_DIR)).filter((name) => name.endsWith('.json')).sort();
+    const names = (await readdir(/*turbopackIgnore: true*/ REPORT_DIR)).filter((name) => name.endsWith('.json')).sort();
     const latest = names.at(-1);
     if (!latest) return null;
-    return JSON.parse(await readFile(path.join(REPORT_DIR, latest), 'utf8')) as MaintenanceReport;
+    return JSON.parse(await readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ REPORT_DIR, latest), 'utf8')) as MaintenanceReport;
   } catch {
     return null;
   }

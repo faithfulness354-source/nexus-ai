@@ -104,15 +104,15 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid upload path' }, { status: 400, headers: corsHeaders });
     }
     const buffer = Buffer.from(await request.arrayBuffer());
-    const uploadDir = path.resolve(process.cwd(), 'public', 'uploads');
-    const filePath = path.resolve(uploadDir, stored);
+    const uploadDir = path.resolve(/*turbopackIgnore: true*/ process.cwd(), 'public', 'uploads');
+    const filePath = path.resolve(/*turbopackIgnore: true*/ uploadDir, stored);
     const dirKey = uploadDir.toLowerCase();
     const fileKey = filePath.toLowerCase();
     if (fileKey !== dirKey && !fileKey.startsWith(`${dirKey}${path.sep}`)) {
       return NextResponse.json({ error: 'Invalid upload path' }, { status: 400, headers: corsHeaders });
     }
-    fs.mkdirSync(uploadDir, { recursive: true });
-    fs.writeFileSync(filePath, buffer);
+    fs.mkdirSync(/*turbopackIgnore: true*/ uploadDir, { recursive: true });
+    fs.writeFileSync(/*turbopackIgnore: true*/ filePath, buffer);
     return NextResponse.json({ success: true, url: `/uploads/${stored}` }, { headers: corsHeaders });
   } catch (err: any) {
     console.error('PUT upload error:', err instanceof Error ? err.name : 'Error');

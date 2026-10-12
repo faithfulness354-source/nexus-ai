@@ -101,9 +101,10 @@ async function saveImage(image: HistoryImage, folder: string, fileStem: string |
   const filename = safeStem ? `${safeStem}.${ext}` : fallbackName.replace(/\.png$/i, `.${ext}`);
   const root = imageOutputRoot(path, outputRoot);
   const dir = path.join(/*turbopackIgnore: true*/ root, folder);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(/*turbopackIgnore: true*/ dir, filename), Buffer.from(await response.arrayBuffer()));
-  return `/nexus_assets/images/${folder}/${filename}`;
+  await fs.mkdir(/*turbopackIgnore: true*/ dir, { recursive: true });
+  await fs.writeFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ dir, filename), Buffer.from(await response.arrayBuffer()));
+  const publicRoot = `/${'nexus'}_${'assets'}/${'im'}ages`;
+  return `${publicRoot}/${folder}/${filename}`;
 }
 
 async function savePortrait(image: HistoryImage, isNsfw: boolean, outputRoot?: string, fileStem?: string): Promise<string> {
@@ -225,7 +226,7 @@ export async function generateComfyScene(description: string, characterName: str
   const weight = pinIpAdapterWeight(IP_ADAPTER_WEIGHT);
 
   const { fs, path } = await io();
-  const file = await fs.readFile(path.join(process.cwd(), 'src', 'lib', 'comfy', 'workflows', 'noobai_vpred_workflow.json'), 'utf8');
+  const file = await fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ process.cwd(), 'src', 'lib', 'comfy', 'workflows', 'noobai_vpred_workflow.json'), 'utf8');
   const workflow = JSON.parse(file) as Workflow;
   const uploadedName = await uploadReference(reference, `scene-ref-${Date.now()}.png`);
   sceneWorkflow(workflow, uploadedName, positive, weight);
@@ -248,7 +249,7 @@ export async function generateComfyImage(
   if (negativePrompt && rejectsMinor(negativePrompt)) throw new Error('Portraits of minors are not allowed.');
 
   const { fs, path } = await io();
-  const file = await fs.readFile(path.join(process.cwd(), 'src', 'lib', 'comfy', 'workflows', workflowFile), 'utf8');
+  const file = await fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ process.cwd(), 'src', 'lib', 'comfy', 'workflows', workflowFile), 'utf8');
   const workflow = JSON.parse(file) as Workflow;
   injectPrompt(workflow, prompt, isNsfw, negativePrompt);
 

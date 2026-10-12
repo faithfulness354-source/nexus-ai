@@ -20,17 +20,17 @@ export type HealthReport = {
   };
 };
 
-const PUBLIC_DIR = path.join(process.cwd(), 'public');
+const PUBLIC_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), 'public');
 
 function localFile(url: string): string | null {
   const clean = url.split('?')[0]?.trim() ?? '';
   if (!clean.startsWith('/') || clean.includes('..')) return null;
-  return path.join(PUBLIC_DIR, clean);
+  return path.join(/*turbopackIgnore: true*/ PUBLIC_DIR, clean);
 }
 
 async function exists(file: string): Promise<boolean> {
   try {
-    await access(file);
+    await access(/*turbopackIgnore: true*/ file);
     return true;
   } catch {
     return false;
