@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, json, can } from '@/lib/access';
-import { lorebookInput, entriesInput } from '@/lib/hub-server';
+import { lorebookInput, entriesInput, packList, unpackList } from '@/lib/hub-server';
 
 /** Saves lorebook settings and replaces its entries with the submitted list. */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -17,11 +17,20 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (!data.name) return json({ error: 'Lorebook name is required' }, 400);
     const entries = entriesInput(body?.entries);
     await prisma.$transaction([
-      prisma.lorebook.update({ where: { id }, data }),
+      prisma.lorebook.update({
+        where: { id },
+        data: { ...data, characterIds: packList(data.characterIds), personaIds: packList(data.personaIds) },
+      }),
       prisma.loreEntry.deleteMany({ where: { lorebookId: id } }),
-      prisma.loreEntry.createMany({ data: entries.map((e) => ({ ...e, lorebookId: id })) }),
+      prisma.loreEntry.createMany({ data: entries.map((entry) => ({ ...entry, keys: packList(entry.keys), lorebookId: id })) }),
     ]);
-    return json(await prisma.lorebook.findUnique({ where: { id }, include: { entries: { orderBy: { order: 'asc' } } } }));
+    const saved = await prisma.lorebook.findUnique({ where: { id }, include: { entries: { orderBy: { order: 'asc' } } } });
+    return json(saved && {
+      ...saved,
+      characterIds: unpackList(saved.characterIds),
+      personaIds: unpackList(saved.personaIds),
+      entries: saved.entries.map((entry) => ({ ...entry, keys: unpackList(entry.keys) })),
+    });
   } catch (err: any) {
     console.error('PUT /api/lorebooks/[id] error:', err);
     return json({ error: err?.message ?? 'Failed to save lorebook' }, 500);

@@ -154,11 +154,13 @@ export async function runHealthChecks(): Promise<HealthReport> {
 }
 
 export function publicHealth(report: HealthReport) {
+  const connected = report.checks.database.ok;
   return {
-    status: report.status,
+    status: connected ? 'ok' : 'down',
+    db: connected ? 'connected' : 'unavailable',
     time: report.time,
     checks: {
-      database: report.checks.database.ok,
+      database: connected,
       llm: report.checks.llm.ok,
       media: report.checks.media.ok,
       sessions: report.checks.sessions.ok,

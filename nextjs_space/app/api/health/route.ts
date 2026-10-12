@@ -16,11 +16,14 @@ export async function GET() {
         route: '/api/health',
       });
     }
-    if (viewer?.isCreatorAdmin) return NextResponse.json(report);
-    return NextResponse.json(publicHealth(report));
+    const connected = report.checks.database.ok;
+    const body = viewer?.isCreatorAdmin
+      ? { ...report, status: connected ? 'ok' : 'down', db: connected ? 'connected' : 'unavailable' }
+      : publicHealth(report);
+    return NextResponse.json(body, { status: connected ? 200 : 503 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Health check failed';
     void logEvent({ severity: 'CRITICAL', source: 'health', message, route: '/api/health', stack: error instanceof Error ? error.stack : '' });
-    return NextResponse.json({ status: 'down', time: new Date().toISOString() }, { status: 503 });
+    return NextResponse.json({ status: 'down', db: 'unavailable', time: new Date().toISOString() }, { status: 503 });
   }
 }

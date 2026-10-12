@@ -12,6 +12,7 @@ import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
 import { sceneTagsForLLM } from '@/lib/scene-tags';
 import { applyScripts, trimIncompleteTail, fillMacros, formatPersona, personaAnchor, pickPersona, selectLore } from '@/lib/hubs';
 import { personaDto } from '@/lib/persona-server';
+import { unpackList } from '@/lib/hub-server';
 import { compilePerceivedAppearance } from '@/lib/persona-appearance';
 import { loadImage } from '@/lib/avatar-snapshot';
 import { messageContent, sanitizeChatHistory, spliceDeletedMessages, usableImages, type ProviderImage } from '@/lib/llm/messages';
@@ -210,11 +211,11 @@ export async function POST(request: NextRequest) {
     }
     const books = lorebooks.filter((b) =>
       b.scope === 'GLOBAL' ||
-      (b.scope === 'CHARACTER' && b.characterIds.includes(session.characterId)) ||
-      (b.scope === 'PERSONA' && !!persona && b.personaIds.includes(persona.id)));
+      (b.scope === 'CHARACTER' && unpackList(b.characterIds).includes(session.characterId)) ||
+      (b.scope === 'PERSONA' && !!persona && unpackList(b.personaIds).includes(persona.id)));
     if (books.length) {
       const recent = [...storedMessages.slice(-50).map((m) => m.content), content];
-      const lore = selectLore(books.flatMap((b) => b.entries), recent);
+      const lore = selectLore(books.flatMap((b) => b.entries.map((entry) => ({ ...entry, keys: unpackList(entry.keys) }))), recent);
       // Lore is capped at 15% of the plan context so it never crowds out the conversation window.
       if (lore.length) contextParts.push(truncateTokens(`World lore (relevant entries): ${lore.map((e) => `${e.title ? `${e.title}: ` : ''}${e.content.trim()}`).join(' | ')}`, Math.floor(policy.contextCap * 0.15)));
     }

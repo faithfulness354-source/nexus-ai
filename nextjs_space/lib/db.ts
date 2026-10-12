@@ -44,7 +44,7 @@ function createRealClient() {
 type AppPrisma = ReturnType<typeof createRealClient>;
 
 function buildStub(): AppPrisma {
-  const stub = new Proxy(function stubFn() { return stub; }, {
+  const stub: any = new Proxy(function stubFn() { return stub; }, {
     get(_target, prop) {
       if (prop === 'then') return undefined;
       return stub;

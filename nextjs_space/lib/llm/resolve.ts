@@ -54,7 +54,7 @@ export async function resolveChatTarget(provider?: string | null, model?: string
       }
       return null;
     }
-    m = geminiModel(m, config.defaultModel);
+    m = geminiModel(m, config?.defaultModel);
   }
 
   return {

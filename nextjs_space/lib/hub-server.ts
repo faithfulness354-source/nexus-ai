@@ -6,6 +6,22 @@ const int = (v: unknown, def: number, min: number, max: number) => {
 const ids = (v: unknown) =>
   Array.isArray(v) ? (Array.from(new Set(v.filter((x) => typeof x === 'string'))) as string[]).slice(0, 200) : [];
 
+export function packList(values: string[]): string {
+  return JSON.stringify(values);
+}
+
+export function unpackList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+  } catch {
+    /* Older rows may be comma-separated. */
+  }
+  return value.split(',').map((part) => part.trim()).filter(Boolean);
+}
+
 export function lorebookInput(body: any) {
   const scope = ['GLOBAL', 'CHARACTER', 'PERSONA'].includes(body?.scope) ? body.scope : 'GLOBAL';
   return {

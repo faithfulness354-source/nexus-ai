@@ -80,6 +80,7 @@ export function SettingsPage({ allowApiSettings = false, initialTab, checkout }:
   }
 
   function selectTab(next: string) {
+    if (next !== 'subscription' && next !== 'api') return;
     if (next === 'api' && !canSeeApi) return;
     setTab(next);
   }

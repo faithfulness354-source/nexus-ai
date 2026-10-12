@@ -6,6 +6,7 @@ import { normalizeAudioUrl } from '@/lib/audio-url';
 import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -49,11 +50,18 @@ export async function GET(request: NextRequest) {
     const sfwBrowse = !mine && (nsfw !== 'true' || !canViewNsfw(viewer));
     if (sfwBrowse) where.nsfw = false;
 
-    const characters = await prisma.character.findMany({
+    let characters = await prisma.character.findMany({
       where,
       orderBy: { updatedAt: 'desc' },
       include: { _count: { select: { sessions: true } } },
     });
+    if (characters.length === 0 && !mine && !search && !tag && await ensureDefaultCards()) {
+      characters = await prisma.character.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        include: { _count: { select: { sessions: true } } },
+      });
+    }
 
     return NextResponse.json(
       characters.flatMap(({ _count, ...c }) => {

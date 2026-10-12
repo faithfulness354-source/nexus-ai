@@ -6,8 +6,9 @@ import { NextResponse } from 'next/server';
 
 /** Changes when this server process starts, or when a hosted deployment id is set. */
 const bootKey = '__nexusLiveBoot';
-const bootedAt = (globalThis as Record<string, number>)[bootKey] ?? Date.now();
-(globalThis as Record<string, number>)[bootKey] = bootedAt;
+const bootStore = globalThis as unknown as Record<string, number>;
+const bootedAt = bootStore[bootKey] ?? Date.now();
+bootStore[bootKey] = bootedAt;
 
 function revision(): string {
   const deployed = process.env.VERCEL_DEPLOYMENT_ID?.trim() || process.env.NEXT_PUBLIC_APP_REVISION?.trim();

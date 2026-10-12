@@ -34,10 +34,8 @@ export function StartupSplash({ onComplete }: Props) {
     const video = videoRef.current;
     if (!video || done.current) return;
     if (video.error?.code === MediaError.MEDIA_ERR_ABORTED) return;
-    if (!video.muted) {
-      video.muted = true;
-      void video.play().catch(() => {});
-    }
+    console.warn('Splash video play blocked, bypassing:', video.error?.message || 'media error');
+    finish();
   }
 
   useEffect(() => {
@@ -51,24 +49,39 @@ export function StartupSplash({ onComplete }: Props) {
       if (video.ended || (video.duration > 0 && video.currentTime >= video.duration - 0.2)) close();
     }, 300);
     const watchdog = window.setTimeout(close, 17000);
+    const stall = window.setTimeout(() => {
+      if (done.current) return;
+      const current = videoRef.current;
+      const started = !!current && !current.error && current.currentTime > 0 && !current.paused;
+      if (!started) {
+        console.warn('Splash video play blocked, bypassing: playback stalled');
+        finish();
+      }
+    }, 3500);
 
     const reveal = () => {
       if (done.current) return;
       video.muted = false;
       video.volume = 1;
       setShown(true);
-      if (video.paused) void video.play().catch(() => {});
+      if (video.paused) {
+        void video.play().catch((err) => {
+          console.warn('Splash video play blocked, bypassing:', err);
+          finish();
+        });
+      }
     };
     video.muted = true;
-    void video.play().then(reveal).catch(() => {
-      video.muted = true;
-      void video.play().then(() => setShown(true)).catch(() => {});
+    void video.play().then(reveal).catch((err) => {
+      console.warn('Splash video play blocked, bypassing:', err);
+      finish();
     });
 
     return () => {
       video.removeEventListener('ended', close);
       window.clearInterval(watch);
       window.clearTimeout(watchdog);
+      window.clearTimeout(stall);
     };
   }, []);
 
@@ -111,7 +124,7 @@ export function StartupSplash({ onComplete }: Props) {
         autoPlay
         muted
         controls={false}
-        loop={false}
+        loop
         playsInline
         preload="auto"
         onPlaying={() => setShown(true)}

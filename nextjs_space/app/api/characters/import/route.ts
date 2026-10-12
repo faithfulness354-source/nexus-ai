@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
         customRules: '{"meters":[],"rules":[]}',
         systemPrompt: can(viewer, 'customPrompts') ? card.systemPrompt : '',
         creatorNotes: card.creatorNotes,
-        tags: card.tags,
+        tags: Array.isArray(card.tags) ? card.tags.join(',') : '',
         avatar,
         creator: card.creator,
         nsfw: card.nsfw,
