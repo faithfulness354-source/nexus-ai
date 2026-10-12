@@ -87,7 +87,7 @@ function firstImage(historyEntry: { outputs?: Record<string, { images?: HistoryI
 function imageOutputRoot(path: { join: (...parts: string[]) => string }, outputRoot?: string): string {
   if (outputRoot) return outputRoot;
   const assetDir = 'nexus' + '_' + 'assets';
-  return path.join(process.cwd(), 'public', assetDir, 'im' + 'ages');
+  return path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', assetDir, 'im' + 'ages');
 }
 
 async function saveImage(image: HistoryImage, folder: string, fileStem: string | undefined, fallbackName: string, outputRoot?: string): Promise<string> {
@@ -100,9 +100,9 @@ async function saveImage(image: HistoryImage, folder: string, fileStem: string |
   const safeStem = fileStem?.replace(/[^\w-]+/g, '').slice(0, 80);
   const filename = safeStem ? `${safeStem}.${ext}` : fallbackName.replace(/\.png$/i, `.${ext}`);
   const root = imageOutputRoot(path, outputRoot);
-  const dir = path.join(root, folder);
+  const dir = path.join(/*turbopackIgnore: true*/ root, folder);
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, filename), Buffer.from(await response.arrayBuffer()));
+  await fs.writeFile(path.join(/*turbopackIgnore: true*/ dir, filename), Buffer.from(await response.arrayBuffer()));
   return `/nexus_assets/images/${folder}/${filename}`;
 }
 

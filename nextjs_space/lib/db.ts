@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 const SLOW_QUERY_MS = 800;
 const CLIENT_BUILD = 2;
 
-function createClient() {
+function createRealClient() {
   if (!process.env.DATABASE_URL) process.env.DATABASE_URL = 'file:./dev.db';
   return new PrismaClient().$extends({
     query: {
@@ -41,7 +41,26 @@ function createClient() {
   });
 }
 
-type AppPrisma = ReturnType<typeof createClient>;
+type AppPrisma = ReturnType<typeof createRealClient>;
+
+function buildStub(): AppPrisma {
+  const stub = new Proxy(function stubFn() { return stub; }, {
+    get(_target, prop) {
+      if (prop === 'then') return undefined;
+      return stub;
+    },
+    apply() {
+      return stub;
+    },
+  });
+  return stub as unknown as AppPrisma;
+}
+
+function createClient(): AppPrisma {
+  // The client generated during Vercel install throws if constructed while pages are collected.
+  if (process.env.NEXT_PHASE === 'phase-production-build') return buildStub();
+  return createRealClient();
+}
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: AppPrisma;
@@ -61,6 +80,7 @@ export const prisma: AppPrisma = new Proxy({} as AppPrisma, {
   get(_target, prop, receiver) {
     const client = cachedClient();
     const value = Reflect.get(client as object, prop, receiver);
-    return typeof value === 'function' ? value.bind(client) : value;
+    if (typeof value !== 'function' || value === client) return value;
+    return value.bind(client);
   },
 });

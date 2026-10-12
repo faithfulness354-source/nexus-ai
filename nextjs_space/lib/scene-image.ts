@@ -47,8 +47,8 @@ function publicPortrait(url: string, path: { resolve: (...parts: string[]) => st
   if (!pathname.startsWith('/')) return null;
   const relative = decodeURIComponent(pathname.split('?')[0]).replace(/^\/+/, '');
   if (!relative || relative.split('/').includes('..')) return null;
-  const root = path.resolve(process.cwd(), 'public');
-  const file = path.resolve(root, relative);
+  const root = path.resolve(/*turbopackIgnore: true*/ process.cwd(), 'public');
+  const file = path.resolve(/*turbopackIgnore: true*/ root, relative);
   const rootKey = root.toLowerCase();
   const fileKey = file.toLowerCase();
   if (fileKey !== rootKey && !fileKey.startsWith(`${rootKey}${path.sep}`)) return null;
@@ -67,7 +67,7 @@ async function loadPortrait(url: string): Promise<Buffer | null> {
   const local = publicPortrait(url, path);
   if (local) {
     try {
-      const data = await readFile(local);
+      const data = await readFile(/*turbopackIgnore: true*/ local);
       return data.length && data.length <= MAX_REF_BYTES ? data : null;
     } catch {
       return null;

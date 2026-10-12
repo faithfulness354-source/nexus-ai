@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "postinstall": "prisma generate",
     "build": "node scripts/build.mjs",
     "start": "next start",
     "lint": "eslint ."
