@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { getViewer, canViewNsfw, canEditCharacter } from '@/lib/access';
 import { findUserByUsername, profileStats, profileBadges, pinIds } from '@/lib/profile-server';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
-import { readNsfwToggle } from '@/lib/nsfw-pref';
+import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { AppHeader } from '@/components/layout/app-header';
 import { PublicProfile } from '@/components/profile/public-profile';
 
@@ -22,7 +22,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
 
   const viewer = await getViewer();
   const seeAll = !!viewer && (viewer.isCreatorAdmin || viewer.user.id === user.id);
-  const showNsfw = await readNsfwToggle() && canViewNsfw(viewer);
+  const showNsfw = await adultCardsEnabled(viewer);
   const stats = await profileStats(user.id, { publicOnly: !seeAll });
   const rows = await prisma.character.findMany({
     // Visitors only see published cards. The author and the creator admin also see drafts, unlisted, and moderated cards.

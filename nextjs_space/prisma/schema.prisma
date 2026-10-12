@@ -166,6 +166,8 @@ model User {
   bannerPositionY      Int           @default(15)
   accentTheme          String        @default("OBSIDIAN")
   pinnedCharacterIds   String?      
+  /// Profile setting. Adult cards stay hidden until a paid account turns this on.
+  nsfwEnabled          Boolean       @default(false)
   accounts             Account[]
   sessions             Session[]
   chatSessions         ChatSession[]

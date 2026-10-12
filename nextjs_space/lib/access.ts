@@ -107,6 +107,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
     hasSubscription: !!viewer?.user.paypalSubscriptionId && ['active', 'past_due'].includes(viewer.user.subscriptionStatus ?? ''),
     paymentsConfigured: paymentsConfigured(),
+    nsfwEnabled: false,
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),
       advancedGeneration: !!viewer && can(viewer, 'advancedGeneration'),

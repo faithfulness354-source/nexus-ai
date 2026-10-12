@@ -5,9 +5,9 @@ import { createLLMStream } from '@/lib/llm/router';
 import { resolveChatTarget } from '@/lib/llm/resolve';
 import { estimateTokens } from '@/lib/tokens';
 import { CONTEXT_WINDOWS, DEFAULT_MODEL } from '@/lib/types';
-import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, canViewNsfw, nsfwLocked } from '@/lib/access';
+import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked } from '@/lib/access';
 import { canViewCharacter } from '@/lib/card-visibility';
-import { nsfwToggleFromRequest } from '@/lib/nsfw-pref';
+import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { TIERS, isProModel, clampSampling, SAMPLING_LIMITS } from '@/lib/tiers';
 import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     if (session.character && !canViewCharacter({ isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id }, session.character)) {
       return new Response(JSON.stringify({ error: 'This character is not available.' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
-    if (session.character && (session.character.nsfw || characterImpliesNsfw(session.character)) && !(nsfwToggleFromRequest(request) && canViewNsfw(viewer))) return nsfwLocked();
+    if (session.character && (session.character.nsfw || characterImpliesNsfw(session.character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
 
     // Daily credits: 1 credit = 1 text message. Admins and unlimited tiers always pass.
     if (!(await consumeCredit(viewer))) {

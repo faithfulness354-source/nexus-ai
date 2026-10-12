@@ -49,7 +49,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
     if (!open) return;
     let cancel = false;
     setChatsLoading(true);
-    fetch(`/api/sessions?nsfw=${nsfwView ? 'true' : 'false'}`)
+    fetch(nsfwView ? '/api/sessions' : '/api/sessions?nsfw=false')
       .then((r) => (r.ok ? r.json() : []))
       .then((data: any) => { if (!cancel) setSessions(Array.isArray(data) ? data.slice(0, 30) : []); })
       .catch((err) => { if (!cancel) console.error('Failed to load sessions', err); })
@@ -234,7 +234,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
           ))}
           {!chatsLoading && sessions.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
-              <MessageSquare className="h-3.5 w-3.5" /> {nsfwView ? 'No NSFW chats' : 'No SFW chats'}
+              <MessageSquare className="h-3.5 w-3.5" /> {nsfwView ? 'No chats' : 'No SFW chats'}
             </p>
           )}
         </div>

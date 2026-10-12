@@ -12,7 +12,6 @@ import { PROVIDER_MODELS, PROVIDER_LABELS, SUPPORTED_PROVIDERS, DEFAULT_PROVIDER
 import { Save, Zap, Check, CreditCard, KeyRound, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { SubscriptionPanel } from '@/components/billing/subscription-panel';
-import { NsfwContentSetting } from '@/components/settings/nsfw-content-setting';
 import Link from 'next/link';
 import { useAccess } from '@/components/billing/access-provider';
 
@@ -201,8 +200,6 @@ export function SettingsPage({ allowApiSettings = false, initialTab, checkout }:
           <p className="text-muted-foreground text-sm mb-6">
             Manage your plan and daily credits{canSeeApi ? ', plus the AI provider keys shared by the whole app' : ''}.
           </p>
-
-          <NsfwContentSetting />
 
           <Tabs value={canSeeApi ? tab : 'subscription'} onValueChange={selectTab}>
             <TabsList className="mb-6">

@@ -7,7 +7,7 @@ import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
-import { nsfwToggleFromRequest } from '@/lib/nsfw-pref';
+import { adultCardsEnabled } from '@/lib/nsfw-account';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -23,11 +23,10 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const search = url.searchParams.get('search') ?? '';
     const tag = url.searchParams.get('tag') ?? '';
-    const nsfw = url.searchParams.get('nsfw');
     const mine = url.searchParams.get('mine') === 'true';
     const viewer = await getViewer();
-    // Adult cards stay out of every list until the profile setting is on and the account may view them.
-    const showNsfw = nsfw === 'true' && nsfwToggleFromRequest(request) && canViewNsfw(viewer);
+    // Browse, search, and My Characters include adult cards only for a paid account that turned the profile setting on.
+    const showNsfw = await adultCardsEnabled(viewer);
     const where: any = {};
     if (mine) {
       if (!viewer) return unauthorized();

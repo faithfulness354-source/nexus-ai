@@ -4,7 +4,7 @@ import { getViewer, unauthorized, json, can, canViewNsfw, type Viewer } from '@/
 import { ACCENT_THEMES, USERNAME_RE, isAccentTheme } from '@/lib/profile';
 import { profileStats, profileBadges, findUserByUsername, pinIds } from '@/lib/profile-server';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
-import { readNsfwToggle } from '@/lib/nsfw-pref';
+import { adultCardsEnabled, writeAccountNsfwEnabled } from '@/lib/nsfw-account';
 
 const MAX_PINS = 6;
 
@@ -12,7 +12,7 @@ async function payload(viewer: Viewer) {
   const userId = viewer.user.id;
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const stats = await profileStats(userId);
-  const showNsfw = await readNsfwToggle() && canViewNsfw(viewer);
+  const showNsfw = await adultCardsEnabled(viewer);
   const characters = await prisma.character.findMany({
     where: { ownerId: userId, ...(showNsfw ? {} : { nsfw: false }) },
     select: { id: true, name: true, avatar: true, title: true, nsfw: true, summary: true, personality: true, scenario: true, initialMessage: true, tags: true, banner: true, creator: true, ownerId: true, visibility: true, moderated: true },
@@ -33,6 +33,8 @@ async function payload(viewer: Viewer) {
     stats,
     badges: profileBadges(user, stats),
     vipThemes: can(viewer, 'vipThemes'),
+    subscribed: canViewNsfw(viewer),
+    nsfwEnabled: showNsfw,
     characters: characters.flatMap((c) => {
       const flagged = c.nsfw || characterImpliesNsfw(c);
       if (!showNsfw && flagged) return [];
@@ -91,6 +93,13 @@ export async function PUT(request: Request) {
       const owned = await prisma.character.findMany({ where: { id: { in: wanted }, ownerId: viewer.user.id }, select: { id: true } });
       const ok = new Set(owned.map((c) => c.id));
       data.pinnedCharacterIds = JSON.stringify(wanted.filter((id) => ok.has(id)).slice(0, MAX_PINS));
+    }
+
+    if (typeof body?.nsfwEnabled === 'boolean') {
+      if (body.nsfwEnabled && !canViewNsfw(viewer)) {
+        return json({ error: 'Requires Active Subscription to Enable', code: 'NSFW_LOCKED' }, 403);
+      }
+      await writeAccountNsfwEnabled(viewer.user.id, body.nsfwEnabled);
     }
 
     await prisma.user.update({ where: { id: viewer.user.id }, data });

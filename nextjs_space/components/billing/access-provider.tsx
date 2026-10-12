@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AgeGateModal } from '@/components/safety/age-gate-modal';
 import { getAgeVerified, setAgeVerified } from '@/lib/age-gate';
-import { readNsfwView, readStoredNsfwView, writeNsfwView } from '@/lib/nsfw-view';
+import { readNsfwView, writeNsfwView } from '@/lib/nsfw-view';
 import { useSession } from 'next-auth/react';
 import type { AccessStatus } from '@/lib/tiers';
 import { PaywallModal, type PaywallReason } from './paywall-modal';
@@ -44,8 +44,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   // Restore a saved profile preference only when this account may still view adult cards.
   useEffect(() => {
     if (!status) return;
-    const saved = readStoredNsfwView();
-    const allowed = !!status.can.nsfw && (status.isAdmin || status.isCreatorAdmin || getAgeVerified() === true);
+    const saved = !!status.nsfwEnabled;
+    const allowed = !!status.can.nsfw && saved && (status.isAdmin || status.isCreatorAdmin || getAgeVerified() === true);
     if (saved && allowed) {
       if (!readNsfwView()) writeNsfwView(true);
       return;
