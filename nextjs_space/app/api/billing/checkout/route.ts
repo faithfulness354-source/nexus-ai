@@ -49,6 +49,9 @@ export async function POST(request: NextRequest) {
     if (!url) return json({ error: 'PayPal did not return an approval link.' }, 502);
     return json({ url });
   } catch (err: any) {
+    if (err?.message === 'PayPal is not configured') {
+      return json({ error: 'Payments are not set up yet. Please check back soon.', code: 'PAYMENTS_NOT_CONFIGURED' }, 503);
+    }
     console.error('POST /api/billing/checkout error:', err?.message);
     return json({ error: 'Could not start PayPal checkout. Please try again.' }, 500);
   }

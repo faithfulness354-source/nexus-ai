@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { json } from '@/lib/access';
-import { paypal, paypalConfigured, syncPaypalSubscription, verifyWebhook, type PaypalSubscription } from '@/lib/paypal';
+import { isPaypalSubscriptionId, paypal, paypalConfigured, syncPaypalSubscription, verifyWebhook, type PaypalSubscription } from '@/lib/paypal';
 
 /** PayPal webhook: subscription lifecycle + payment events. Subscribe to BILLING.SUBSCRIPTION.* and PAYMENT.SALE.COMPLETED. */
 export async function POST(request: NextRequest) {
@@ -15,13 +15,15 @@ export async function POST(request: NextRequest) {
   }
   try {
     if (!(await verifyWebhook(request.headers, event))) return json({ error: 'Invalid signature' }, 400);
+    if (!event?.id || typeof event.id !== 'string') return json({ error: 'Invalid event' }, 400);
     if (await prisma.stripeEvent.findUnique({ where: { id: `paypal:${event.id}` } })) return json({ received: true, duplicate: true });
 
     const type: string = event.event_type ?? '';
     const resource = event.resource ?? {};
-    // Subscription events carry the subscription; sale events reference it via billing_agreement_id.
-    const subId: string | undefined = type.startsWith('BILLING.SUBSCRIPTION.') ? resource.id : resource.billing_agreement_id;
-    if (subId) {
+    // Subscription events carry the subscription; sale and capture events reference it via billing_agreement_id.
+    const candidate = type.startsWith('BILLING.SUBSCRIPTION.') ? resource.id : resource.billing_agreement_id;
+    const subId = typeof candidate === 'string' ? candidate : '';
+    if (isPaypalSubscriptionId(subId)) {
       // Re-fetch so we always act on the current state, not a possibly out-of-order payload.
       await syncPaypalSubscription(await paypal<PaypalSubscription>(`/v1/billing/subscriptions/${subId}`));
     }

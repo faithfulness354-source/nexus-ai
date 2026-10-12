@@ -77,7 +77,8 @@ export function contextBudget(viewer: Viewer, modelWindow: number): number {
 }
 
 export function paymentsConfigured(): boolean {
-  return !!process.env.PAYPAL_CLIENT_ID?.trim() && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
+  const clientId = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || process.env.PAYPAL_CLIENT_ID?.trim();
+  return !!clientId && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
 }
 
 export function accessStatus(viewer: Viewer | null): AccessStatus {

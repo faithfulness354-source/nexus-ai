@@ -10,6 +10,7 @@ import { TierCard } from './tier-card';
 import { useAccess } from './access-provider';
 import { TIERS, TIER_ORDER, type PaidTierId, type TierId } from '@/lib/tiers';
 import { startCheckout, cancelSubscription } from '@/lib/billing-client';
+import { loadPaypalSdk } from '@/lib/paypal-browser';
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -22,6 +23,11 @@ export function SubscriptionPanel({ checkout }: { checkout?: string }) {
   const { status, refresh } = useAccess();
   const [pending, setPending] = useState<TierId | 'portal' | null>(null);
   const handled = useRef(false);
+
+  useEffect(() => {
+    if (!status?.paymentsConfigured) return;
+    void loadPaypalSdk();
+  }, [status?.paymentsConfigured]);
 
   // Feedback after returning from PayPal; the webhook may land a moment later, so re-poll briefly.
   useEffect(() => {

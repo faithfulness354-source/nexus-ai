@@ -15,6 +15,9 @@ export async function POST() {
     await syncPaypalSubscription(await paypal<PaypalSubscription>(`/v1/billing/subscriptions/${id}`));
     return json({ cancelled: true });
   } catch (err: any) {
+    if (err?.message === 'PayPal is not configured') {
+      return json({ error: 'Payments are not set up yet.', code: 'PAYMENTS_NOT_CONFIGURED' }, 503);
+    }
     console.error('POST /api/billing/portal error:', err?.message);
     return json({ error: 'Could not cancel the subscription. You can also cancel it from your PayPal account.' }, 500);
   }

@@ -2,20 +2,58 @@ import 'server-only';
 import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
-/** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV (sandbox|live), PAYPAL_WEBHOOK_ID. */
-export function paypalConfigured(): boolean {
-  return !!process.env.PAYPAL_CLIENT_ID?.trim() && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
+const LIVE_API = 'https://api-m.paypal.com';
+const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
+
+/** Browser and server share the same PayPal app id. The secret stays server-only. */
+export function paypalClientId(): string {
+  return process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || process.env.PAYPAL_CLIENT_ID?.trim() || '';
 }
 
-const apiBase = () =>
-  process.env.PAYPAL_ENV?.trim().toLowerCase() === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+export function paypalClientSecret(): string {
+  return process.env.PAYPAL_CLIENT_SECRET?.trim() || '';
+}
+
+let warned = false;
+
+/**
+ * Production-only notice. Checkout routes return 503 when credentials are absent;
+ * this must not throw or fail the build.
+ */
+export function warnPaypalConfig(): void {
+  const production = process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
+  if (!production || warned) return;
+  const missing = [
+    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() ? '' : 'NEXT_PUBLIC_PAYPAL_CLIENT_ID',
+    paypalClientSecret() ? '' : 'PAYPAL_CLIENT_SECRET',
+  ].filter(Boolean);
+  if (!missing.length) return;
+  warned = true;
+  console.warn(`[paypal] Missing ${missing.join(' and ')}. Checkout stays unavailable until both are set.`);
+}
+
+/** PayPal REST credentials. PAYPAL_ENV (sandbox|live) overrides the production/sandbox host. */
+export function paypalConfigured(): boolean {
+  warnPaypalConfig();
+  return !!paypalClientId() && !!paypalClientSecret();
+}
+
+/** Live host in production. Local dev and Vercel preview stay on the sandbox unless PAYPAL_ENV says otherwise. */
+export function paypalApiBase(): string {
+  const mode = process.env.PAYPAL_ENV?.trim().toLowerCase();
+  if (mode === 'live') return LIVE_API;
+  if (mode === 'sandbox') return SANDBOX_API;
+  const live = process.env.VERCEL_ENV === 'production' || (process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV);
+  return live ? LIVE_API : SANDBOX_API;
+}
 
 let token: { value: string; expires: number } | null = null;
 
 async function accessToken(): Promise<string> {
+  if (!paypalConfigured()) throw new Error('PayPal is not configured');
   if (token && token.expires > Date.now() + 60_000) return token.value;
-  const basic = Buffer.from(`${process.env.PAYPAL_CLIENT_ID?.trim()}:${process.env.PAYPAL_CLIENT_SECRET?.trim()}`).toString('base64');
-  const res = await fetch(`${apiBase()}/v1/oauth2/token`, {
+  const basic = Buffer.from(`${paypalClientId()}:${paypalClientSecret()}`).toString('base64');
+  const res = await fetch(`${paypalApiBase()}/v1/oauth2/token`, {
     method: 'POST',
     headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'grant_type=client_credentials',
@@ -28,7 +66,8 @@ async function accessToken(): Promise<string> {
 
 /** Authenticated PayPal REST call. Throws with PayPal's error message on failure. */
 export async function paypal<T = any>(path: string, init: { method?: string; body?: unknown; requestId?: string } = {}): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
+  if (!paypalConfigured()) throw new Error('PayPal is not configured');
+  const res = await fetch(`${paypalApiBase()}${path}`, {
     method: init.method ?? 'GET',
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
@@ -100,6 +139,10 @@ async function tierFromPlan(planId?: string | null): Promise<PaidTierId | null> 
   for (const t of PAID_TIERS) if (process.env[`PAYPAL_PLAN_${t}`]?.trim() === planId) return t;
   const row = await prisma.subscriptionPlan.findFirst({ where: { paypalPlanId: planId } });
   return row && row.tier !== 'FREE' ? (row.tier as PaidTierId) : null;
+}
+
+export function isPaypalSubscriptionId(id: string | null | undefined): id is string {
+  return !!id && /^I-[A-Za-z0-9]+$/.test(id);
 }
 
 export interface PaypalSubscription {
