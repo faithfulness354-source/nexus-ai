@@ -1,7 +1,6 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
 import type { GalleryImage } from '@/lib/types';
-import { generateComfyScene } from '@/src/lib/comfy/client';
 
 const STOP_WORDS = new Set(['character', 'the', 'and', 'with', 'image', 'reference', 'ref', 'portrait', 'photo', 'pic']);
 const MAX_REFS = 3;
@@ -87,6 +86,7 @@ async function loadPortrait(url: string): Promise<Buffer | null> {
 
 /** Renders a scene in ComfyUI, using the card portrait so the character stays recognizable. */
 export async function renderSceneImage(character: SceneCharacter, description: string) {
+  const { generateComfyScene } = await import('@/src/lib/comfy/client');
   const portrait = character.avatar
     ? { url: character.avatar, label: character.name }
     : pickReferences(character, description)[0] ?? null;

@@ -55,4 +55,11 @@ function cachedClient(): AppPrisma {
   return next;
 }
 
-export const prisma = cachedClient();
+/** First property access creates the client. Importing this module during page collection does not connect. */
+export const prisma: AppPrisma = new Proxy({} as AppPrisma, {
+  get(_target, prop, receiver) {
+    const client = cachedClient();
+    const value = Reflect.get(client as object, prop, receiver);
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});

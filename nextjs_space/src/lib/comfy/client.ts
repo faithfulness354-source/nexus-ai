@@ -81,6 +81,13 @@ function firstImage(historyEntry: { outputs?: Record<string, { images?: HistoryI
   return null;
 }
 
+function imageOutputRoot(outputRoot?: string): string {
+  if (outputRoot) return outputRoot;
+  // Built at runtime so the production compile does not trace the local image junction.
+  const assetDir = ['nexus', 'assets'].join('_');
+  return path.join(process.cwd(), 'public', assetDir, 'images');
+}
+
 async function saveImage(image: HistoryImage, folder: string, fileStem: string | undefined, fallbackName: string, outputRoot?: string): Promise<string> {
   const remote = viewUrl(image);
   if (!remote) throw new Error('ComfyUI did not return an image file.');
@@ -89,7 +96,7 @@ async function saveImage(image: HistoryImage, folder: string, fileStem: string |
   const ext = (image.filename?.match(/\.(png|jpe?g|webp)$/i)?.[1] ?? 'png').toLowerCase().replace('jpeg', 'jpg');
   const safeStem = fileStem?.replace(/[^\w-]+/g, '').slice(0, 80);
   const filename = safeStem ? `${safeStem}.${ext}` : fallbackName.replace(/\.png$/i, `.${ext}`);
-  const root = outputRoot ?? path.join(process.cwd(), 'public', 'nexus_assets', 'images');
+  const root = imageOutputRoot(outputRoot);
   const dir = path.join(root, folder);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, filename), Buffer.from(await response.arrayBuffer()));

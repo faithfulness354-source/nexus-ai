@@ -4,6 +4,7 @@ import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 import { CharacterAvatar } from '@/components/character/character-avatar';
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Profiles · NexusAI' };
 
 function plainBio(value: string): string {

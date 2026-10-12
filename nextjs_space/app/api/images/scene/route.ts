@@ -1,15 +1,17 @@
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 export const maxDuration = 180;
+
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { renderSceneImage } from '@/lib/scene-image';
-import { GENERATE_TAG_RE } from '@/lib/scene-tags';
-import { getViewer, unauthorized, forbidden, canAccessSession, can, consumeImageCredit, refundImageCredit } from '@/lib/access';
-import { TIERS } from '@/lib/tiers';
 
 /** Renders the first pending [GENERATE_IMAGE: ...] tag in a message and swaps in the finished image. */
 export async function POST(request: NextRequest) {
   try {
+    const { prisma } = await import('@/lib/db');
+    const { renderSceneImage } = await import('@/lib/scene-image');
+    const { GENERATE_TAG_RE } = await import('@/lib/scene-tags');
+    const { getViewer, unauthorized, forbidden, canAccessSession, can, consumeImageCredit, refundImageCredit } = await import('@/lib/access');
+    const { TIERS } = await import('@/lib/tiers');
     const viewer = await getViewer();
     if (!viewer) return unauthorized();
     if (!can(viewer, 'sceneImages')) {
