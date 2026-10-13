@@ -45,17 +45,29 @@ export function paypalApiBase(): string {
 
 let token: { value: string; expires: number } | null = null;
 
+function paypalFailure(data: { error?: string; error_description?: string; message?: string; name?: string; details?: { description?: string; issue?: string }[] }, status: number): string {
+  const detail = Array.isArray(data?.details) ? data.details.map((item) => item.description || item.issue).filter(Boolean).join('; ') : '';
+  return detail || data?.error_description || data?.message || data?.error || data?.name || `PayPal request failed (${status})`;
+}
+
 async function accessToken(): Promise<string> {
-  if (!paypalConfigured()) throw new Error('PayPal is not configured');
+  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || paypalClientId();
+  const secret = process.env.PAYPAL_CLIENT_SECRET?.trim() || paypalClientSecret();
+  const mode = (process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
+  if (!clientId || !secret) throw new Error('PayPal is not configured');
   if (token && token.expires > Date.now() + 60_000) return token.value;
-  const basic = Buffer.from(`${paypalClientId()}:${paypalClientSecret()}`).toString('base64');
-  const res = await fetch(`${paypalApiBase()}/v1/oauth2/token`, {
+  const basic = Buffer.from(`${clientId}:${secret}`).toString('base64');
+  const res = await fetch(`${mode === 'live' ? LIVE_API : paypalApiBase()}/v1/oauth2/token`, {
     method: 'POST',
     headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'grant_type=client_credentials',
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.access_token) throw new Error(`PayPal auth failed (${res.status}): ${data.error_description ?? data.error ?? ''}`);
+  if (!res.ok || !data.access_token) {
+    console.error('[paypal] oauth /v1/oauth2/token', res.status, data.error || data.name, data.error_description || data.message);
+    throw new Error(paypalFailure(data, res.status));
+  }
+  console.log('[paypal] oauth /v1/oauth2/token', res.status);
   token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000 };
   return token.value;
 }
@@ -75,8 +87,76 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
   });
   if (res.status === 204) return {} as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`PayPal ${path} failed (${res.status}): ${data.message ?? data.name ?? ''} ${JSON.stringify(data.details ?? '')}`);
+  if (!res.ok) {
+    console.error('[paypal]', path, res.status, data.name || data.error, data.message || data.error_description, data.details);
+    throw new Error(paypalFailure(data, res.status));
+  }
   return data as T;
+}
+
+export interface PaypalOrder {
+  id: string;
+  status?: string;
+  purchase_units?: { custom_id?: string; amount?: { value?: string } }[];
+  links?: { href: string; rel: string }[];
+}
+
+/** Creates a live PayPal order and returns the order id. */
+export async function createPaypalOrder(input: { value: string; description: string; customId: string; returnUrl: string; cancelUrl: string }): Promise<PaypalOrder> {
+  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || '';
+  const secret = process.env.PAYPAL_CLIENT_SECRET?.trim() || '';
+  const mode = (process.env.PAYPAL_MODE || 'live').trim().toLowerCase();
+  if (!clientId || !secret) throw new Error('PayPal live credentials are not configured');
+  if (mode !== 'live') console.error('[paypal] PAYPAL_MODE is not live; creating the order on https://api-m.paypal.com');
+  const order = await paypal<PaypalOrder>('/v2/checkout/orders', {
+    method: 'POST',
+    body: {
+      intent: 'CAPTURE',
+      purchase_units: [{
+        custom_id: input.customId,
+        description: input.description,
+        amount: { currency_code: 'USD', value: input.value },
+      }],
+      payment_source: {
+        paypal: {
+          experience_context: {
+            brand_name: 'NexusAI',
+            user_action: 'PAY_NOW',
+            shipping_preference: 'NO_SHIPPING',
+            return_url: input.returnUrl,
+            cancel_url: input.cancelUrl,
+          },
+        },
+      },
+    },
+  });
+  if (!order?.id) {
+    console.error('[paypal] /v2/checkout/orders missing id', order?.status);
+    throw new Error('PayPal did not return an order id.');
+  }
+  console.log('[paypal] /v2/checkout/orders', order.id, order.status);
+  return order;
+}
+
+/** Captures an approved live order and grants one month of the purchased tier. */
+export async function fulfillPaypalOrder(orderId: string, userId: string): Promise<'success' | 'pending' | 'error'> {
+  let order = await paypal<PaypalOrder>(`/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+  console.log('[paypal] order lookup', order.id, order.status);
+  const custom = String(order.purchase_units?.[0]?.custom_id || '');
+  const [ownerId, tier] = custom.split(':');
+  if (ownerId !== userId || !PAID_TIERS.includes(tier as PaidTierId)) return 'error';
+  if (order.status === 'APPROVED') {
+    order = await paypal<PaypalOrder>(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, { method: 'POST' });
+    console.log('[paypal] order capture', order.id, order.status);
+  }
+  if (order.status !== 'COMPLETED') return 'pending';
+  const periodEnd = new Date();
+  periodEnd.setMonth(periodEnd.getMonth() + 1);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { tier: tier as PaidTierId, subscriptionStatus: 'active', currentPeriodEnd: periodEnd },
+  });
+  return 'success';
 }
 
 export const priceCents = (tier: PaidTierId) => Math.round(TIERS[tier].price * 100);

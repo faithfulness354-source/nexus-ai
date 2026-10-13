@@ -14,7 +14,11 @@ export function paypalPublicClientId(clientId?: string): string {
  */
 export function loadPaypalSdk(clientId?: string): Promise<void> {
   const id = paypalPublicClientId(clientId);
-  if (!id || typeof document === 'undefined') return Promise.resolve();
+  if (typeof document === 'undefined') return Promise.resolve();
+  if (!id) {
+    console.error('PayPal SDK missing live PAYPAL_CLIENT_ID');
+    return Promise.resolve();
+  }
   if (document.querySelector('script[data-paypal-sdk="1"]')) return loading ?? Promise.resolve();
   loading = new Promise((resolve) => {
     const script = document.createElement('script');
@@ -23,6 +27,7 @@ export function loadPaypalSdk(clientId?: string): Promise<void> {
     script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(id)}&vault=true&intent=subscription&currency=USD`;
     script.onload = () => resolve();
     script.onerror = () => {
+      console.error('PayPal live SDK failed to load');
       loading = null;
       resolve();
     };

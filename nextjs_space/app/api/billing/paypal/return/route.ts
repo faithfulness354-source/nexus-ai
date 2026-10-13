@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { getViewer } from '@/lib/access';
-import { isPaypalSubscriptionId, paypal, syncPaypalSubscription, type PaypalSubscription } from '@/lib/paypal';
+import { fulfillPaypalOrder, isPaypalSubscriptionId, paypal, syncPaypalSubscription, type PaypalSubscription } from '@/lib/paypal';
 
 function siteOrigin(request: NextRequest): string {
   const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
@@ -14,7 +14,12 @@ export async function GET(request: NextRequest) {
   const back = (result: string) => NextResponse.redirect(`${siteOrigin(request)}/settings?tab=subscription&checkout=${result}`);
   try {
     const id = request.nextUrl.searchParams.get('subscription_id');
+    const orderId = request.nextUrl.searchParams.get('token');
     const viewer = await getViewer();
+    if (orderId && !id) {
+      if (!viewer) return back('pending');
+      return back(await fulfillPaypalOrder(orderId, viewer.user.id));
+    }
     if (!id || !viewer) return back('pending');
     if (!isPaypalSubscriptionId(id)) return back('error');
 

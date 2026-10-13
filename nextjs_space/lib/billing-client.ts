@@ -15,11 +15,15 @@ export async function startCheckout(tier: PaidTierId): Promise<boolean> {
     window.location.href = `/login?callbackUrl=${encodeURIComponent('/settings?tab=subscription')}`;
     return false;
   }
-  if (!res.ok) throw new Error(data?.error ?? 'Could not start checkout');
+  if (!res.ok) {
+    console.error('PayPal checkout failed', data?.error || data);
+    throw new Error(data?.error ?? 'Could not start checkout');
+  }
   if (data?.switched) {
     toast.success('Your plan was updated.');
     return true;
   }
+  if (!data?.url) console.error('PayPal checkout returned no approval link', data);
   if (data?.url) window.location.href = data.url;
   return false;
 }
