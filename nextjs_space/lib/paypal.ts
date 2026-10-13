@@ -9,13 +9,18 @@ function paypalEnv(name: string): string {
   return (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim();
 }
 
+/** PayPal credentials never contain spaces. Strip any that a dashboard paste left behind. */
+function paypalCredential(name: string): string {
+  return paypalEnv(name).replace(/\s+/g, '');
+}
+
 /** Browser and server share the same PayPal app id. The secret stays server-only. */
 export function paypalClientId(): string {
-  return paypalEnv('PAYPAL_CLIENT_ID') || paypalEnv('NEXT_PUBLIC_PAYPAL_CLIENT_ID');
+  return paypalCredential('PAYPAL_CLIENT_ID') || paypalCredential('NEXT_PUBLIC_PAYPAL_CLIENT_ID');
 }
 
 export function paypalClientSecret(): string {
-  return paypalEnv('PAYPAL_CLIENT_SECRET');
+  return paypalCredential('PAYPAL_CLIENT_SECRET');
 }
 
 let warned = false;
@@ -61,12 +66,22 @@ async function accessToken(): Promise<string> {
   const endpoint = `${base}/v1/oauth2/token`;
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    cache: 'no-store',
+    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: 'grant_type=client_credentials',
   });
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data: { access_token?: string; expires_in?: number; error?: string; error_description?: string; message?: string; name?: string; details?: { description?: string; issue?: string }[] } = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { error_description: raw }; }
   if (!res.ok || !data.access_token) {
-    console.error('[paypal] oauth failed', { endpoint, status: res.status, body: data });
+    console.error('[paypal] oauth failed', {
+      endpoint,
+      status: res.status,
+      mode: paypalEnv('PAYPAL_MODE') || '(unset)',
+      clientIdLength: clientId.length,
+      secretLength: clientSecret.length,
+      body: raw,
+    });
     throw new Error(paypalFailure(data, res.status));
   }
   token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
@@ -79,6 +94,7 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
   const endpoint = `${paypalApiBase()}${path}`;
   const res = await fetch(endpoint, {
     method: init.method ?? 'GET',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
       'Content-Type': 'application/json',
@@ -88,9 +104,11 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   if (res.status === 204) return {} as T;
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data: { error?: string; error_description?: string; message?: string; name?: string; details?: { description?: string; issue?: string }[] } = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
   if (!res.ok) {
-    console.error('[paypal] request failed', { endpoint, status: res.status, body: data });
+    console.error('[paypal] request failed', { endpoint, status: res.status, body: raw });
     throw new Error(paypalFailure(data, res.status));
   }
   return data as T;

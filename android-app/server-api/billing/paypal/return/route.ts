@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 import { NextRequest, NextResponse } from 'next/server';
 import { getViewer } from '@/lib/access';
 import { paypal, syncPaypalSubscription, type PaypalSubscription } from '@/lib/paypal';

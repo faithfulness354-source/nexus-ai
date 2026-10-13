@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 import { getViewer, accessStatus, json } from '@/lib/access';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 

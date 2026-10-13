@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 import { getViewer, json, unauthorized } from '@/lib/access';
 import { paypal, syncPaypalSubscription, type PaypalSubscription } from '@/lib/paypal';
 

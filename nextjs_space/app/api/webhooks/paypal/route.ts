@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { json } from '@/lib/access';
@@ -22,10 +23,9 @@ export async function POST(request: NextRequest) {
     const resource = event.resource ?? {};
     // Subscription events carry the subscription; sale and capture events reference it via billing_agreement_id.
     const candidate = type.startsWith('BILLING.SUBSCRIPTION.') ? resource.id : resource.billing_agreement_id;
-    const subId = typeof candidate === 'string' ? candidate : '';
-    if (isPaypalSubscriptionId(subId)) {
+    if (isPaypalSubscriptionId(typeof candidate === 'string' ? candidate : '')) {
       // Re-fetch so we always act on the current state, not a possibly out-of-order payload.
-      await syncPaypalSubscription(await paypal<PaypalSubscription>(`/v1/billing/subscriptions/${subId}`));
+      await syncPaypalSubscription(await paypal<PaypalSubscription>(`/v1/billing/subscriptions/${candidate}`));
     }
     await prisma.stripeEvent.create({ data: { id: `paypal:${event.id}`, type } }).catch(() => {});
     return json({ received: true });

@@ -3,7 +3,7 @@ import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
 /** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE=live, PAYPAL_WEBHOOK_ID. */
 export function paypalConfigured(): boolean {
-  return !!paypalEnv('PAYPAL_CLIENT_ID') && !!paypalEnv('PAYPAL_CLIENT_SECRET');
+  return !!paypalCredential('PAYPAL_CLIENT_ID') && !!paypalCredential('PAYPAL_CLIENT_SECRET');
 }
 
 const LIVE_API = 'https://api-m.paypal.com';
@@ -13,25 +13,32 @@ function paypalEnv(name: string): string {
   return (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim();
 }
 
+function paypalCredential(name: string): string {
+  return paypalEnv(name).replace(/\s+/g, '');
+}
+
 const apiBase = () => (paypalEnv('PAYPAL_MODE').toLowerCase() === 'live' ? LIVE_API : SANDBOX_API);
 
 let token: { value: string; expires: number; base: string } | null = null;
 
 async function accessToken(): Promise<string> {
-  const clientId = paypalEnv('PAYPAL_CLIENT_ID');
-  const clientSecret = paypalEnv('PAYPAL_CLIENT_SECRET');
+  const clientId = paypalCredential('PAYPAL_CLIENT_ID');
+  const clientSecret = paypalCredential('PAYPAL_CLIENT_SECRET');
   const base = apiBase();
   if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
   const basic = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
   const endpoint = `${base}/v1/oauth2/token`;
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    cache: 'no-store',
+    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: 'grant_type=client_credentials',
   });
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data: { access_token?: string; expires_in?: number; error?: string; error_description?: string } = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { error_description: raw }; }
   if (!res.ok || !data.access_token) {
-    console.error('[paypal] oauth failed', { endpoint, status: res.status, body: data });
+    console.error('[paypal] oauth failed', { endpoint, status: res.status, mode: paypalEnv('PAYPAL_MODE') || '(unset)', clientIdLength: clientId.length, secretLength: clientSecret.length, body: raw });
     throw new Error(`PayPal auth failed (${res.status}): ${data.error_description ?? data.error ?? ''}`);
   }
   token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
@@ -43,6 +50,7 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
   const endpoint = `${apiBase()}${path}`;
   const res = await fetch(endpoint, {
     method: init.method ?? 'GET',
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
       'Content-Type': 'application/json',
@@ -52,9 +60,11 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   if (res.status === 204) return {} as T;
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data: { message?: string; name?: string; details?: unknown } = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
   if (!res.ok) {
-    console.error('[paypal] request failed', { endpoint, status: res.status, body: data });
+    console.error('[paypal] request failed', { endpoint, status: res.status, body: raw });
     throw new Error(`PayPal ${path} failed (${res.status}): ${data.message ?? data.name ?? ''} ${JSON.stringify(data.details ?? '')}`);
   }
   return data as T;
