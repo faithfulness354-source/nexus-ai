@@ -3,14 +3,19 @@ import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
 const LIVE_API = 'https://api-m.paypal.com';
+const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
+
+function paypalEnv(name: string): string {
+  return (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+}
 
 /** Browser and server share the same PayPal app id. The secret stays server-only. */
 export function paypalClientId(): string {
-  return process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || '';
+  return paypalEnv('PAYPAL_CLIENT_ID') || paypalEnv('NEXT_PUBLIC_PAYPAL_CLIENT_ID');
 }
 
 export function paypalClientSecret(): string {
-  return process.env.PAYPAL_CLIENT_SECRET?.trim() || '';
+  return paypalEnv('PAYPAL_CLIENT_SECRET');
 }
 
 let warned = false;
@@ -34,16 +39,12 @@ export function paypalConfigured(): boolean {
   return !!paypalClientId() && !!paypalClientSecret();
 }
 
-/** PAYPAL_MODE=live. Checkout always calls the live PayPal API. */
+/** Live mode uses the live host. Any other mode uses the sandbox host. */
 export function paypalApiBase(): string {
-  const mode = (process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
-  if (mode !== 'live') return LIVE_API;
-  const configured = process.env.PAYPAL_API_BASE_URL?.trim().replace(/\/$/, '');
-  if (configured === LIVE_API) return configured;
-  return LIVE_API;
+  return paypalEnv('PAYPAL_MODE').toLowerCase() === 'live' ? LIVE_API : SANDBOX_API;
 }
 
-let token: { value: string; expires: number } | null = null;
+let token: { value: string; expires: number; base: string } | null = null;
 
 function paypalFailure(data: { error?: string; error_description?: string; message?: string; name?: string; details?: { description?: string; issue?: string }[] }, status: number): string {
   const detail = Array.isArray(data?.details) ? data.details.map((item) => item.description || item.issue).filter(Boolean).join('; ') : '';
@@ -51,31 +52,32 @@ function paypalFailure(data: { error?: string; error_description?: string; messa
 }
 
 async function accessToken(): Promise<string> {
-  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || paypalClientId();
-  const secret = process.env.PAYPAL_CLIENT_SECRET?.trim() || paypalClientSecret();
-  const mode = (process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
-  if (!clientId || !secret) throw new Error('PayPal is not configured');
-  if (token && token.expires > Date.now() + 60_000) return token.value;
-  const basic = Buffer.from(`${clientId}:${secret}`).toString('base64');
-  const res = await fetch(`${mode === 'live' ? LIVE_API : paypalApiBase()}/v1/oauth2/token`, {
+  const clientId = paypalClientId();
+  const clientSecret = paypalClientSecret();
+  const base = paypalApiBase();
+  if (!clientId || !clientSecret) throw new Error('PayPal is not configured');
+  if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
+  const basic = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
+  const endpoint = `${base}/v1/oauth2/token`;
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'grant_type=client_credentials',
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.access_token) {
-    console.error('[paypal] oauth /v1/oauth2/token', res.status, data.error || data.name, data.error_description || data.message);
+    console.error('[paypal] oauth failed', { endpoint, status: res.status, body: data });
     throw new Error(paypalFailure(data, res.status));
   }
-  console.log('[paypal] oauth /v1/oauth2/token', res.status);
-  token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000 };
+  token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
   return token.value;
 }
 
 /** Authenticated PayPal REST call. Throws with PayPal's error message on failure. */
 export async function paypal<T = any>(path: string, init: { method?: string; body?: unknown; requestId?: string } = {}): Promise<T> {
   if (!paypalConfigured()) throw new Error('PayPal is not configured');
-  const res = await fetch(`${paypalApiBase()}${path}`, {
+  const endpoint = `${paypalApiBase()}${path}`;
+  const res = await fetch(endpoint, {
     method: init.method ?? 'GET',
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
@@ -88,7 +90,7 @@ export async function paypal<T = any>(path: string, init: { method?: string; bod
   if (res.status === 204) return {} as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    console.error('[paypal]', path, res.status, data.name || data.error, data.message || data.error_description, data.details);
+    console.error('[paypal] request failed', { endpoint, status: res.status, body: data });
     throw new Error(paypalFailure(data, res.status));
   }
   return data as T;
@@ -103,11 +105,9 @@ export interface PaypalOrder {
 
 /** Creates a live PayPal order and returns the order id. */
 export async function createPaypalOrder(input: { value: string; description: string; customId: string; returnUrl: string; cancelUrl: string }): Promise<PaypalOrder> {
-  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || '';
-  const secret = process.env.PAYPAL_CLIENT_SECRET?.trim() || '';
-  const mode = (process.env.PAYPAL_MODE || 'live').trim().toLowerCase();
-  if (!clientId || !secret) throw new Error('PayPal live credentials are not configured');
-  if (mode !== 'live') console.error('[paypal] PAYPAL_MODE is not live; creating the order on https://api-m.paypal.com');
+  const clientId = paypalClientId();
+  const clientSecret = paypalClientSecret();
+  if (!clientId.trim() || !clientSecret.trim()) throw new Error('PayPal live credentials are not configured');
   const order = await paypal<PaypalOrder>('/v2/checkout/orders', {
     method: 'POST',
     body: {
@@ -131,7 +131,7 @@ export async function createPaypalOrder(input: { value: string; description: str
     },
   });
   if (!order?.id) {
-    console.error('[paypal] /v2/checkout/orders missing id', order?.status);
+    console.error('[paypal] /v2/checkout/orders missing id', { endpoint: `${paypalApiBase()}/v2/checkout/orders`, status: order?.status, body: order });
     throw new Error('PayPal did not return an order id.');
   }
   console.log('[paypal] /v2/checkout/orders', order.id, order.status);
