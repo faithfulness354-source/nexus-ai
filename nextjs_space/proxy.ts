@@ -62,11 +62,15 @@ export async function proxy(request: NextRequest) {
     const session = await auth();
     const id = session?.user?.id;
     if (id) {
-      const user = await prisma.user.findUnique({ where: { id }, select: { termsAcceptedAt: true } });
-      if (user && !user.termsAcceptedAt) {
-        const blocked = NextResponse.json({ error: 'Accept the Terms of Service to continue.' }, { status: 403 });
-        if (allow && origin) corsHeaders(origin).forEach((value, key) => blocked.headers.set(key, value));
-        return blocked;
+      try {
+        const user = await prisma.user.findUnique({ where: { id }, select: { termsAcceptedAt: true } });
+        if (user && !user.termsAcceptedAt) {
+          const blocked = NextResponse.json({ error: 'Accept the Terms of Service to continue.' }, { status: 403 });
+          if (allow && origin) corsHeaders(origin).forEach((value, key) => blocked.headers.set(key, value));
+          return blocked;
+        }
+      } catch (error) {
+        console.log(`Terms check skipped: ${error instanceof Error ? error.message : 'unknown'}`);
       }
     }
   }

@@ -77,7 +77,7 @@ export function contextBudget(viewer: Viewer, modelWindow: number): number {
 }
 
 export function paymentsConfigured(): boolean {
-  const clientId = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || process.env.PAYPAL_CLIENT_ID?.trim();
+  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim();
   return !!clientId && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
 }
 
@@ -107,6 +107,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
     hasSubscription: !!viewer?.user.paypalSubscriptionId && ['active', 'past_due'].includes(viewer.user.subscriptionStatus ?? ''),
     paymentsConfigured: paymentsConfigured(),
+    paypalClientId: process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || '',
     nsfwEnabled: false,
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),

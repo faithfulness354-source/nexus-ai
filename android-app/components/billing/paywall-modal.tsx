@@ -56,11 +56,6 @@ export function PaywallModal({ reason, status, onClose }: { reason: PaywallReaso
             )}
           </DialogDescription>
         </DialogHeader>
-        {!status?.paymentsConfigured && (
-          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-center text-xs text-amber-300">
-            Payments aren't switched on yet. Checkout will work once the app owner connects PayPal.
-          </p>
-        )}
         <div className={`grid gap-4 pt-2 ${options.length >= 3 ? 'sm:grid-cols-3' : options.length === 2 ? 'sm:grid-cols-2' : ''}`}>
           {options.map((t) => (
             <TierCard key={t} tier={t} currentTier={current} compact loading={pending === t} disabled={!!pending} onSelect={choose} />

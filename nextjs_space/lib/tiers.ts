@@ -91,6 +91,8 @@ export interface AccessStatus {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   paymentsConfigured: boolean;
+  /** Public live PayPal app id used to load the checkout SDK. */
+  paypalClientId: string;
   /** Saved profile preference. Adult cards stay hidden until this is on and the plan allows them. */
   nsfwEnabled: boolean;
   can: Record<TierFeature, boolean>;

@@ -135,6 +135,7 @@ model User {
   email                String        @unique
   emailVerified        DateTime?
   /// Set when the user accepts the Terms of Service and confirms they are 18+.
+  termsAccepted        Boolean       @default(false)
   termsAcceptedAt      DateTime?
   image                String?
   password             String?

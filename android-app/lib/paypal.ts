@@ -1,13 +1,20 @@
 import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
-/** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV (sandbox|live), PAYPAL_WEBHOOK_ID. */
+/** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE=live, PAYPAL_WEBHOOK_ID. */
 export function paypalConfigured(): boolean {
   return !!process.env.PAYPAL_CLIENT_ID?.trim() && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
 }
 
-const apiBase = () =>
-  process.env.PAYPAL_ENV?.trim().toLowerCase() === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+const LIVE_API = 'https://api-m.paypal.com';
+
+const apiBase = () => {
+  const mode = (process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
+  if (mode !== 'live') return LIVE_API;
+  const configured = process.env.PAYPAL_API_BASE_URL?.trim().replace(/\/$/, '');
+  if (configured === LIVE_API) return configured;
+  return LIVE_API;
+};
 
 let token: { value: string; expires: number } | null = null;
 

@@ -25,9 +25,9 @@ export function SubscriptionPanel({ checkout }: { checkout?: string }) {
   const handled = useRef(false);
 
   useEffect(() => {
-    if (!status?.paymentsConfigured) return;
-    void loadPaypalSdk();
-  }, [status?.paymentsConfigured]);
+    if (!status?.paypalClientId) return;
+    void loadPaypalSdk(status.paypalClientId);
+  }, [status?.paypalClientId]);
 
   // Feedback after returning from PayPal; the webhook may land a moment later, so re-poll briefly.
   useEffect(() => {
@@ -171,12 +171,6 @@ export function SubscriptionPanel({ checkout }: { checkout?: string }) {
             </p>
           )}
         </section>
-      )}
-
-      {!status.paymentsConfigured && !status.isAdmin && (
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Payments aren't switched on yet. Checkout will work once the app owner connects PayPal.
-        </p>
       )}
 
       {/* Plans */}

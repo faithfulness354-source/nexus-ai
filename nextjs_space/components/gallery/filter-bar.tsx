@@ -21,12 +21,18 @@ export function SearchInput({ value, onChange, className }: { value: string; onC
     <div className={cn('relative min-w-0', className)}>
       <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
       <input
-        type="search"
+        type="text"
+        inputMode="search"
+        enterKeyHint="search"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        suppressHydrationWarning
         aria-label="Search characters"
         placeholder="Search characters, scenarios, creators…"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full rounded-full bg-secondary/80 pl-10 pr-10 text-sm placeholder:text-muted-foreground outline-none ring-1 ring-border/60 focus:ring-primary/60 transition [&::-webkit-search-cancel-button]:hidden"
+        className="h-10 w-full rounded-full bg-secondary/80 pl-10 pr-10 text-sm placeholder:text-muted-foreground outline-none ring-1 ring-border/60 focus:ring-primary/60 transition"
       />
       {value && (
         <button aria-label="Clear search" onClick={() => onChange('')} className="absolute right-3 top-1/2 -translate-y-1/2">

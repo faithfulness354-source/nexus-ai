@@ -15,6 +15,7 @@ create table if not exists public.characters (
   greeting text not null default '',
   tags text not null default '',
   avatar text,
+  banner text,
   nsfw boolean not null default false,
   visibility text not null default 'PRIVATE',
   updated_at timestamptz not null default now()
@@ -98,6 +99,13 @@ create policy "own characters" on public.characters
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
+drop policy if exists "public published characters" on public.characters;
+create policy "public published characters" on public.characters
+  for select to anon, authenticated
+  using (visibility = 'PUBLIC');
+
+alter table public.characters add column if not exists banner text;
+
 drop policy if exists "own scenarios" on public.scenarios;
 create policy "own scenarios" on public.scenarios
   for all to authenticated
@@ -153,6 +161,12 @@ alter table public.profiles
 alter table public.profiles
   add column if not exists tos_accepted_at timestamptz;
 
+alter table public.profiles
+  add column if not exists terms_accepted boolean not null default false;
+
+alter table public.profiles
+  add column if not exists terms_accepted_at timestamptz;
+
 alter table public.profiles enable row level security;
 
 drop policy if exists "own profile" on public.profiles;
@@ -170,6 +184,11 @@ drop policy if exists "insert own profile" on public.profiles;
 create policy "insert own profile" on public.profiles
   for insert to authenticated
   with check (id = auth.uid());
+
+drop policy if exists "Users can update own terms status" on public.profiles;
+create policy "Users can update own terms status" on public.profiles
+  for update
+  using (auth.uid() = id);
 
 grant select, insert, update on public.profiles to authenticated;
 

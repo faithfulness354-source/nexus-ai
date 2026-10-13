@@ -3,11 +3,10 @@ import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
 const LIVE_API = 'https://api-m.paypal.com';
-const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 
 /** Browser and server share the same PayPal app id. The secret stays server-only. */
 export function paypalClientId(): string {
-  return process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || process.env.PAYPAL_CLIENT_ID?.trim() || '';
+  return process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || '';
 }
 
 export function paypalClientSecret(): string {
@@ -16,35 +15,32 @@ export function paypalClientSecret(): string {
 
 let warned = false;
 
-/**
- * Production-only notice. Checkout routes return 503 when credentials are absent;
- * this must not throw or fail the build.
- */
+/** Production-only notice. Missing credentials must not throw or fail the build. */
 export function warnPaypalConfig(): void {
   const production = process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
   if (!production || warned) return;
   const missing = [
-    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() ? '' : 'NEXT_PUBLIC_PAYPAL_CLIENT_ID',
+    paypalClientId() ? '' : 'PAYPAL_CLIENT_ID',
     paypalClientSecret() ? '' : 'PAYPAL_CLIENT_SECRET',
   ].filter(Boolean);
   if (!missing.length) return;
   warned = true;
-  console.warn(`[paypal] Missing ${missing.join(' and ')}. Checkout stays unavailable until both are set.`);
+  console.warn(`[paypal] Missing ${missing.join(' and ')}. Set them for live checkout.`);
 }
 
-/** PayPal REST credentials. PAYPAL_ENV (sandbox|live) overrides the production/sandbox host. */
+/** Live PayPal credentials from PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET. */
 export function paypalConfigured(): boolean {
   warnPaypalConfig();
   return !!paypalClientId() && !!paypalClientSecret();
 }
 
-/** Live host in production. Local dev and Vercel preview stay on the sandbox unless PAYPAL_ENV says otherwise. */
+/** PAYPAL_MODE=live. Checkout always calls the live PayPal API. */
 export function paypalApiBase(): string {
-  const mode = process.env.PAYPAL_ENV?.trim().toLowerCase();
-  if (mode === 'live') return LIVE_API;
-  if (mode === 'sandbox') return SANDBOX_API;
-  const live = process.env.VERCEL_ENV === 'production' || (process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV);
-  return live ? LIVE_API : SANDBOX_API;
+  const mode = (process.env.PAYPAL_MODE || process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
+  if (mode !== 'live') return LIVE_API;
+  const configured = process.env.PAYPAL_API_BASE_URL?.trim().replace(/\/$/, '');
+  if (configured === LIVE_API) return configured;
+  return LIVE_API;
 }
 
 let token: { value: string; expires: number } | null = null;

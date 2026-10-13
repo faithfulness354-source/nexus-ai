@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest } from 'next/server';
 import { getViewer, json, unauthorized } from '@/lib/access';
-import { getPlanId, paypal, paypalConfigured, type PaypalSubscription } from '@/lib/paypal';
+import { getPlanId, paypal, type PaypalSubscription } from '@/lib/paypal';
 import { PAID_TIERS, TIERS, type PaidTierId } from '@/lib/tiers';
 
 const approveLink = (sub: PaypalSubscription) => sub.links?.find((l) => l.rel === 'approve')?.href;
@@ -13,7 +13,6 @@ export async function POST(request: NextRequest) {
 
     const { tier } = (await request.json().catch(() => ({}))) ?? {};
     if (!PAID_TIERS.includes(tier)) return json({ error: 'Choose Plus, Premium or Ultimate.' }, 400);
-    if (!paypalConfigured()) return json({ error: 'Payments are not set up yet. Please check back soon.', code: 'PAYMENTS_NOT_CONFIGURED' }, 503);
 
     const planId = await getPlanId(tier as PaidTierId);
     const user = viewer.user;

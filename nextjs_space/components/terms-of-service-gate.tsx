@@ -11,36 +11,42 @@ const PUBLIC_LEGAL = new Set(['/terms', '/privacy', '/guidelines', '/dmca']);
 export function TermsOfServiceGate({ children }: { children: React.ReactNode }) {
   const { status } = useSession();
   const pathname = usePathname();
-  const [accepted, setAccepted] = useState<boolean | null>(null);
+  const [acceptedTerms, setAcceptedTerms] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (status === 'loading') return;
     if (status !== 'authenticated') {
-      setAccepted(true);
+      setAcceptedTerms(true);
       return;
     }
     let cancel = false;
-    fetch('/api/account/tos', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: { accepted?: boolean } | null) => {
-        if (!cancel) setAccepted(Boolean(body?.accepted));
-      })
-      .catch(() => {
-        if (!cancel) setAccepted(null);
-      });
+    (async () => {
+      try {
+        const response = await fetch('/api/account/tos', { cache: 'no-store', credentials: 'include' });
+        const body = await response.json().catch(() => null) as { accepted?: boolean } | null;
+        if (cancel) return;
+        if (!response.ok || !body) {
+          setAcceptedTerms(null);
+          return;
+        }
+        setAcceptedTerms(Boolean(body.accepted));
+      } catch {
+        if (!cancel) setAcceptedTerms(null);
+      }
+    })();
     return () => {
       cancel = true;
     };
   }, [status]);
 
-  const locked = status === 'authenticated' && accepted === false && !PUBLIC_LEGAL.has(pathname);
+  const locked = status === 'authenticated' && acceptedTerms === false && !PUBLIC_LEGAL.has(pathname);
 
   return (
     <>
       <div key={locked ? 'tos-locked' : 'tos-open'} className={locked ? 'pointer-events-none select-none' : undefined} inert={locked ? true : undefined}>
         {children}
       </div>
-      {locked ? <TermsOfServiceModal onAccepted={() => setAccepted(true)} /> : null}
+      {locked ? <TermsOfServiceModal onAccepted={() => setAcceptedTerms(true)} /> : null}
     </>
   );
 }

@@ -34,23 +34,28 @@ export function TermsOfServiceModal({ onAccepted }: Props) {
     setSaving(true);
     setError('');
     try {
-      const saved = await fetch('/api/account/tos', { method: 'POST' });
-      if (!saved.ok) throw new Error('Save failed');
-
       const client = supabaseBrowser();
-      if (client) {
-        const { data } = await client.auth.getUser();
-        const user = data.user;
-        if (user) {
-          await client
-            .from('profiles')
-            .update({
-              accepted_tos: true,
-              tos_accepted_at: new Date().toISOString(),
-            })
-            .eq('id', user.id);
-        }
+      const session = client ? (await client.auth.getSession()).data.session : null;
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+      const saved = await fetch('/api/account/tos', { method: 'POST', headers, credentials: 'include' });
+      const body = await saved.json().catch(() => null);
+      if (!saved.ok || !body?.accepted) throw new Error(body?.error || 'Save failed');
+
+      if (client && session?.user) {
+        const stamp = new Date().toISOString();
+        const { error } = await client
+          .from('profiles')
+          .update({
+            accepted_tos: true,
+            terms_accepted: true,
+            tos_accepted_at: stamp,
+            terms_accepted_at: stamp,
+          })
+          .eq('id', session.user.id);
+        if (error) throw new Error(error.message);
       }
+      setError('');
       onAccepted();
     } catch {
       setError('Could not save your acceptance. Try again.');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Lock } from 'lucide-react';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { TierCard } from './tier-card';
 import { PAID_TIERS, TIERS, TIER_ORDER, type AccessStatus, type PaidTierId, type TierId } from '@/lib/tiers';
 import { startCheckout } from '@/lib/billing-client';
+import { loadPaypalSdk } from '@/lib/paypal-browser';
 
 export type PaywallReason = 'credits' | 'sceneImages' | 'advancedGeneration' | 'customPrompts' | 'proModels' | 'nsfw' | 'vipThemes';
 
@@ -23,6 +24,10 @@ const COPY: Record<PaywallReason, { title: string; body: string; minTier: TierId
 
 export function PaywallModal({ reason, status, onClose }: { reason: PaywallReason | null; status: AccessStatus | null; onClose: () => void }) {
   const [pending, setPending] = useState<TierId | null>(null);
+  useEffect(() => {
+    if (!status?.paypalClientId) return;
+    void loadPaypalSdk(status.paypalClientId);
+  }, [status?.paypalClientId]);
   const copy = COPY[reason ?? 'credits'];
   const current = status?.tier ?? 'FREE';
   const options = PAID_TIERS.filter((t) => TIER_ORDER.indexOf(t) >= Math.max(TIER_ORDER.indexOf(copy.minTier), TIER_ORDER.indexOf(current) + 1));
@@ -56,11 +61,6 @@ export function PaywallModal({ reason, status, onClose }: { reason: PaywallReaso
             )}
           </DialogDescription>
         </DialogHeader>
-        {!status?.paymentsConfigured && (
-          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-center text-xs text-amber-300">
-            Payments aren't switched on yet. Checkout will work once the app owner connects PayPal.
-          </p>
-        )}
         <div className={`grid gap-4 pt-2 ${options.length >= 3 ? 'sm:grid-cols-3' : options.length === 2 ? 'sm:grid-cols-2' : ''}`}>
           {options.map((t) => (
             <TierCard key={t} tier={t} currentTier={current} compact loading={pending === t} disabled={!!pending} onSelect={choose} />

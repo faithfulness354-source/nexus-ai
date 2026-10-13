@@ -167,12 +167,6 @@ export function SubscriptionPanel({ checkout }: { checkout?: string }) {
         </section>
       )}
 
-      {!status.paymentsConfigured && !status.isAdmin && (
-        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Payments aren't switched on yet. Checkout will work once the app owner connects PayPal.
-        </p>
-      )}
-
       {/* Plans */}
       <div>
         <h3 className="mb-3 font-display font-semibold">Plans</h3>

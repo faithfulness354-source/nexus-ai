@@ -9,11 +9,12 @@ if (!process.env.DIRECT_URL?.trim() && process.env.DATABASE_URL?.trim()) {
 const production = process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
 if (production) {
   const missing = [
-    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() ? '' : 'NEXT_PUBLIC_PAYPAL_CLIENT_ID',
+    (process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim()) ? '' : 'PAYPAL_CLIENT_ID',
     process.env.PAYPAL_CLIENT_SECRET?.trim() ? '' : 'PAYPAL_CLIENT_SECRET',
+    (process.env.PAYPAL_MODE || 'live').trim().toLowerCase() === 'live' ? '' : 'PAYPAL_MODE',
   ].filter(Boolean);
   if (missing.length) {
-    console.warn(`[paypal] Missing ${missing.join(' and ')}. Checkout stays unavailable until both are set.`);
+    console.warn(`[paypal] Missing ${missing.join(' and ')}. Set them before deploying live checkout.`);
   }
 }
 
