@@ -56,6 +56,7 @@ export function ProfileHub() {
   const { status, refresh: refreshAccess } = useAccess();
   const [p, setP] = useState<ProfileState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [songUploading, setSongUploading] = useState(false);
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
 
   useEffect(() => {
@@ -123,6 +124,31 @@ export function ProfileHub() {
     } catch (err: any) {
       console.error('Avatar save failed:', err);
       toast.error(err?.message ?? 'Failed to save avatar');
+    }
+  }
+
+  async function uploadSong(file?: File) {
+    if (!file || !p) return;
+    setSongUploading(true);
+    try {
+      const body = new FormData();
+      body.set('file', file);
+      const uploaded = await fetch('/api/upload/audio', { method: 'POST', body });
+      const payload = await uploaded.json().catch(() => ({}));
+      if (!uploaded.ok || typeof payload.url !== 'string') throw new Error(payload.error || 'Choose an audio file');
+      const saved = await fetch('/api/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileSongUrl: payload.url }),
+      });
+      const data = await saved.json().catch(() => ({}));
+      if (!saved.ok) throw new Error(data.error || 'Could not save the song');
+      set({ profileSongUrl: payload.url });
+      toast.success('Profile song updated');
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not upload that song');
+    } finally {
+      setSongUploading(false);
     }
   }
 
@@ -376,6 +402,19 @@ export function ProfileHub() {
             <BoxGlitchLayers />
             <Label htmlFor="pf-song">Profile song</Label>
             <Input id="pf-song" value={p.profileSongUrl} placeholder="https://example.com/theme.mp3" onChange={(e) => set({ profileSongUrl: e.target.value })} />
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+              disabled={songUploading}
+              aria-label="Choose profile song file"
+              className="block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void uploadSong(file);
+              }}
+            />
+            <p className="text-[11px] text-muted-foreground">{songUploading ? 'Uploading…' : 'Choose an audio file from your device, or paste a link.'}</p>
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">Autoplay on your public page. Visitors can mute it.</p>
               <Switch checked={p.profileStyle.songAutoplay} onCheckedChange={(songAutoplay) => set({ profileStyle: { ...p.profileStyle, songAutoplay } })} aria-label="Autoplay profile song" />
@@ -484,6 +523,7 @@ export function ProfileHub() {
                 profile={{ ...p, username: username || null, badges: applyBadgePrefs(p.earnedBadges, p.badgePrefs) }}
                 pinned={pinned}
                 creations={p.characters}
+                onProfileSong={(profileSongUrl) => set({ profileSongUrl })}
               />
             </div>
           </div>

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Crown, Gem, Globe2, MessageSquare, BookOpen, Sparkles, Pin, Users, Volume2, VolumeX } from 'lucide-react';
+import { toast } from 'sonner';
 import { RichContent } from '@/components/editor/rich-content';
 import { CharacterCard, cardAudioTrack } from '@/components/gallery/character-card';
 import { ACCENT_THEMES, DEFAULT_BANNER_NAME_SIZE, DEFAULT_PROFILE_STYLE, bannerFocusPosition, bannerNameStyle, isAccentTheme, type ProfileBadge, type ProfileStyle } from '@/lib/profile';
@@ -49,11 +50,12 @@ const BADGE_STYLE: Record<ProfileBadge['id'], { icon: typeof Crown; cls: string 
   WORLDBUILDER: { icon: Globe2, cls: 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 text-emerald-200 ring-1 ring-emerald-400/40' },
 };
 
-export function PublicProfile({ profile, pinned, creations, compact }: {
+export function PublicProfile({ profile, pinned, creations, compact, onProfileSong }: {
   profile: PublicProfileData;
   pinned: ProfileCharacter[];
   creations: ProfileCharacter[];
   compact?: boolean;
+  onProfileSong?: (url: string) => void;
 }) {
   const { status: access } = useAccess();
   const showNsfw = useNsfwView();
@@ -78,13 +80,16 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
   const bannerIsVideo = profile.bannerMediaType === 'video' && !!profile.bannerVideoUrl;
   const bannerFocus = bannerFocusPosition(profile.bannerPositionY);
   const name = profile.displayName || profile.username || 'Creator';
+  const [songUrl, setSongUrl] = useState(profile.profileSongUrl ?? '');
+  const [songBusy, setSongBusy] = useState(false);
+  useEffect(() => { setSongUrl(profile.profileSongUrl ?? ''); }, [profile.profileSongUrl]);
   const library = visibleOwned;
   const ownProfile = !!access?.username && profile.username === access.username;
 
   return (
     <>
     <div className="-mx-4 sm:-mx-6 md:hidden">
-      <MobileProfileView profile={profile} pinned={visiblePinned} creations={library} canEditCard={canEdit} ownProfile={ownProfile} />
+      <MobileProfileView profile={profile} pinned={visiblePinned} creations={library} canEditCard={canEdit} ownProfile={ownProfile || !!onProfileSong} />
     </div>
     <div className="profile-stage relative hidden md:block" style={{ ['--profile-accent' as any]: theme.accent, ['--profile-glow' as any]: theme.glow, ['--profile-card-opacity' as any]: String(cardOpacity / 100), ['--glitch-overlay-opacity' as any]: String(style.glitchOverlayOpacity) }}>
       {(showVideo || profile.profileBgUrl) && (
@@ -174,6 +179,45 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
         </div>
       </div>
 
+      {(ownProfile || onProfileSong) && (
+        <div className="relative mx-4 mt-4 rounded-2xl bg-card/80 p-4 ring-1 ring-white/10 sm:mx-8">
+          <label htmlFor={compact ? 'preview-profile-song-file' : 'profile-song-file'} className="text-xs font-semibold text-muted-foreground">Profile song</label>
+          <input
+            id={compact ? 'preview-profile-song-file' : 'profile-song-file'}
+            type="file"
+            accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+            disabled={songBusy}
+            className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (!file) return;
+              setSongBusy(true);
+              const body = new FormData();
+              body.set('file', file);
+              void fetch('/api/upload/audio', { method: 'POST', body })
+                .then(async (uploaded) => {
+                  const payload = await uploaded.json().catch(() => ({}));
+                  if (!uploaded.ok || typeof payload?.url !== 'string') throw new Error(payload?.error || 'Choose an audio file');
+                  const saved = await fetch('/api/profile', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profileSongUrl: payload.url }),
+                  });
+                  const data = await saved.json().catch(() => ({}));
+                  if (!saved.ok) throw new Error(data?.error || 'Could not save the song');
+                  setSongUrl(payload.url);
+                  onProfileSong?.(payload.url);
+                  toast.success('Profile song updated');
+                })
+                .catch((err: Error) => toast.error(err?.message || 'Could not upload that song'))
+                .finally(() => setSongBusy(false));
+            }}
+          />
+          <p className="mt-2 truncate text-[11px] text-muted-foreground">{songBusy ? 'Uploading…' : songUrl || 'Choose an audio file from your device.'}</p>
+        </div>
+      )}
+
       {profile.bio.trim() && (
         compact ? (
           <div className="relative mx-4 mt-6 sm:mx-8">
@@ -194,7 +238,7 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
       <Section title={`${ownProfile ? 'My Created Cards' : 'Created Cards'} (${library.length})`} icon={Sparkles} accent={typeColor} compact={compact}>
         {library.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">No characters yet.</p> : library.map((item) => <CharacterCard key={item.id} {...item} audioUrl={cardAudioTrack(item)} canEdit={canEdit(item)} showVisibility={canEdit(item)} coverBlur={style.cardBlur} frameStyle={frameStyle} className="profile-card" />)}
       </Section>
-      {profile.profileSongUrl && <ProfileSong url={profile.profileSongUrl} autoplay={!compact && style.songAutoplay} accent={typeColor} />}
+      {songUrl && <ProfileSong url={songUrl} autoplay={!compact && style.songAutoplay} accent={typeColor} />}
       </div>
     </div>
     </>

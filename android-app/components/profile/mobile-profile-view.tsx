@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pencil, Pin, Sparkles, X } from 'lucide-react';
+import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pencil, Pin, Sparkles, Upload, X } from 'lucide-react';
 import { RichContent } from '@/components/editor/rich-content';
 import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlayer';
 import { ACCENT_THEMES, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
@@ -27,6 +27,8 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
   const name = profile.displayName || profile.username || 'Creator';
   const [dim, setDim] = useState(45);
   const [editing, setEditing] = useState(false);
+  const [songUrl, setSongUrl] = useState(profile.profileSongUrl ?? '');
+  const [songBusy, setSongBusy] = useState(false);
   const picks = pinned.length > 0 ? pinned : creations.slice(0, 8);
   const profileTrack = [...pinned, ...creations].map((item) => (item.audioUrl || '').trim()).find(Boolean) || '';
 
@@ -53,7 +55,34 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
           </div>
         )}
 
-        {profileTrack && <CharacterAudioPlayer audioUrl={profileTrack} label={name} className="relative z-20 w-fit" />}
+        {(songUrl || profileTrack) && <CharacterAudioPlayer audioUrl={songUrl || profileTrack} label={name} className="relative z-20 w-fit" />}
+        {ownProfile && (
+          <label className={cn('flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-card text-sm font-semibold ring-1 ring-white/10', songBusy && 'pointer-events-none opacity-60')}>
+            <Upload className="h-4 w-4" /> {songBusy ? 'Uploading…' : 'Choose song file'}
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+              className="sr-only"
+              disabled={songBusy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                setSongBusy(true);
+                const body = new FormData();
+                body.set('file', file);
+                void fetch('/api/upload/audio', { method: 'POST', body })
+                  .then(async (uploaded) => {
+                    const payload = await uploaded.json().catch(() => null);
+                    if (!uploaded.ok || typeof payload?.url !== 'string') return;
+                    setSongUrl(payload.url);
+                    await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profileSongUrl: payload.url }) });
+                  })
+                  .finally(() => setSongBusy(false));
+              }}
+            />
+          </label>
+        )}
 
         {profile.bio.trim() && (
           <div className="rounded-2xl bg-card p-4 ring-1 ring-white/10" style={{ borderTop: `2px solid ${theme.accent}` }}>

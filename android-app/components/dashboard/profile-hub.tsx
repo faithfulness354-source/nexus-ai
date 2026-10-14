@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, Save, ExternalLink, Check, Pin, AtSign, Lock } from 'lucide-react';
+import { Loader2, Save, ExternalLink, Check, Pin, AtSign, Lock, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,12 +38,14 @@ export function ProfileHub() {
   const { refresh: refreshAccess } = useAccess();
   const [p, setP] = useState<ProfileState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [songUploading, setSongUploading] = useState(false);
+  const [profileSongUrl, setProfileSongUrl] = useState('');
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/profile')
       .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d?.error); return d; })
-      .then((d) => { setP(d); setSavedUsername(d.username); })
+      .then((d) => { setP(d); setSavedUsername(d.username); setProfileSongUrl(typeof d.profileSongUrl === 'string' ? d.profileSongUrl : ''); })
       .catch((err) => { console.error(err); toast.error(err?.message ?? 'Failed to load profile'); });
   }, []);
 
@@ -75,6 +77,31 @@ export function ProfileHub() {
     }
   }
 
+  async function uploadSong(file?: File) {
+    if (!file) return;
+    setSongUploading(true);
+    try {
+      const body = new FormData();
+      body.set('file', file);
+      const uploaded = await fetch('/api/upload/audio', { method: 'POST', body });
+      const payload = await uploaded.json().catch(() => ({}));
+      if (!uploaded.ok || typeof payload.url !== 'string') throw new Error(payload.error || 'Choose an audio file');
+      const saved = await fetch('/api/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileSongUrl: payload.url }),
+      });
+      const data = await saved.json().catch(() => ({}));
+      if (!saved.ok) throw new Error(data.error || 'Could not save the song');
+      setProfileSongUrl(payload.url);
+      toast.success('Profile song updated');
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not upload that song');
+    } finally {
+      setSongUploading(false);
+    }
+  }
+
   async function save() {
     if (!p) return;
     if (usernameInvalid) return toast.error('Usernames are 3–24 characters: letters, numbers and underscores.');
@@ -86,6 +113,7 @@ export function ProfileHub() {
         body: JSON.stringify({
           username, displayName: p.displayName, image: p.image, bio: p.bio, banner: p.banner,
           bannerAnimated: p.bannerAnimated, bannerPositionY: p.bannerPositionY, accentTheme: p.accentTheme, pinnedCharacterIds: p.pinnedCharacterIds,
+          profileSongUrl,
         }),
       });
       const d = await r.json().catch(() => ({}));
@@ -214,6 +242,29 @@ export function ProfileHub() {
             <Label>Bio</Label>
             <p className="text-xs text-muted-foreground mb-2">Rich text and Markdown supported.</p>
             <RichTextEditor value={p.bio} onChange={(bio) => set({ bio })} placeholder="Tell visitors about you and your worlds…" minHeight={160} ariaLabel="Profile bio" />
+          </div>
+
+          <div className="space-y-3 rounded-2xl bg-card p-5 ring-1 ring-white/5">
+            <Label htmlFor="pf-song">Profile song</Label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input id="pf-song" className="flex-1" value={profileSongUrl} placeholder="https://example.com/theme.mp3" onChange={(e) => setProfileSongUrl(e.target.value)} />
+              <label className={cn('inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg bg-secondary px-3 text-sm font-semibold', songUploading && 'pointer-events-none opacity-60')}>
+                <Upload className="h-4 w-4" />
+                {songUploading ? 'Uploading…' : 'Choose file'}
+                <input
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+                  className="sr-only"
+                  disabled={songUploading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) void uploadSong(file);
+                  }}
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">Pick an audio file from your device, or paste a link.</p>
           </div>
 
           <div className="rounded-2xl bg-card p-5 ring-1 ring-white/5">

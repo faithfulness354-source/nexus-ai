@@ -20,6 +20,7 @@ export interface PublicProfileData {
   bannerAnimated: boolean;
   bannerPositionY: number;
   accentTheme: string;
+  profileSongUrl?: string;
   badges: ProfileBadge[];
   stats: { characters: number; loreEntries: number; chats: number };
 }

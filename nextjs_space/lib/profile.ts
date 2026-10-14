@@ -192,6 +192,7 @@ export function sanitizeSongUrl(value: unknown): string {
   if (typeof value !== 'string') return '';
   const raw = value.trim().slice(0, 500);
   if (!raw) return '';
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('..') && /\.(mp3|wav|ogg|m4a|aac|webm)(\?|#|$)/i.test(raw)) return raw;
   try {
     const url = new URL(raw);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';

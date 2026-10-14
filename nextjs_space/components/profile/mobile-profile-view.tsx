@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pause, Pencil, Pin, Play, Sparkles, Upload, X } from 'lucide-react';
+import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pause, Pencil, Pin, Play, Sparkles, X } from 'lucide-react';
 import { RichContent } from '@/components/editor/rich-content';
 import { ACCENT_THEMES, ROYAL_BLUE_ALLOY, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
@@ -247,12 +247,19 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
         />
       </div>
       {ownProfile && (
-        <>
-          <input ref={file} type="file" accept="audio/*" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void upload(next); }} />
-          <button type="button" onClick={() => file.current?.click()} disabled={busy} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-secondary text-sm font-semibold">
-            <Upload className="h-4 w-4" /> {busy ? 'Uploading…' : 'Upload song'}
-          </button>
-        </>
+        <input
+          ref={file}
+          type="file"
+          accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+          disabled={busy}
+          aria-label="Choose profile song file"
+          className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
+          onChange={(event) => {
+            const next = event.target.files?.[0];
+            event.target.value = '';
+            if (next) void upload(next);
+          }}
+        />
       )}
     </div>
   );
