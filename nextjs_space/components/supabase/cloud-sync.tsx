@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabaseBrowser } from '@/lib/supabase/browser';
@@ -12,7 +11,6 @@ const TABLES = ['characters', 'scenarios', 'chats', 'chat_messages', 'personas']
 /** Keeps a realtime socket open and copies cloud changes back into the local app. */
 export function CloudSync() {
   const { status } = useSession();
-  const router = useRouter();
 
   useEffect(() => {
     if (status !== 'authenticated') return;
@@ -27,7 +25,6 @@ export function CloudSync() {
         if (!revision || revision === 'signed-out') return;
         if (seen && seen !== revision) {
           window.dispatchEvent(new Event('nexus:cloud-revision'));
-          router.refresh();
         }
         seen = revision;
       } catch (error) {
@@ -40,7 +37,7 @@ export function CloudSync() {
       cancel = true;
       window.clearInterval(timer);
     };
-  }, [status, router]);
+  }, [status]);
 
   useEffect(() => {
     if (status !== 'authenticated') return;
@@ -64,7 +61,6 @@ export function CloudSync() {
         window.dispatchEvent(new CustomEvent('nexus:cloud-sync', {
           detail: { table, localId: String(record.local_id ?? '') },
         }));
-        router.refresh();
       } catch (error) {
         console.log(`Cloud apply failed: ${error}`);
       }
@@ -152,7 +148,7 @@ export function CloudSync() {
       if (retry) clearTimeout(retry);
       if (channel) void client.removeChannel(channel);
     };
-  }, [status, router]);
+  }, [status]);
 
   return null;
 }

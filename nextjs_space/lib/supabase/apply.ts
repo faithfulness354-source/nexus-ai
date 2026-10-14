@@ -43,6 +43,18 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
       visibility: visibility(record.visibility),
     };
     if (existing) {
+      const nextGreeting = keepGreeting ? existing.initialMessage : data.greeting;
+      const same = existing.name === data.name
+        && existing.title === data.title
+        && existing.summary === data.summary
+        && existing.personality === data.personality
+        && existing.scenario === data.scenario
+        && existing.tags === data.tags
+        && (existing.avatar ?? null) === data.avatar
+        && existing.nsfw === data.nsfw
+        && existing.visibility === data.visibility
+        && existing.initialMessage === nextGreeting;
+      if (same) return;
       await prisma.character.update({
         where: { id: localId },
         data: {
@@ -88,7 +100,9 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
     if (!characterId || characterId.startsWith('draft:')) return;
     const character = await prisma.character.findUnique({ where: { id: characterId } });
     if (!character || character.ownerId !== owner.id) return;
-    await prisma.character.update({ where: { id: characterId }, data: { scenario: text(record.body) } });
+    const scenario = text(record.body);
+    if (character.scenario === scenario) return;
+    await prisma.character.update({ where: { id: characterId }, data: { scenario } });
     return;
   }
 
@@ -100,7 +114,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
     if (existing && existing.userId && existing.userId !== owner.id) return;
     const title = text(record.title, 'New Chat');
     if (existing) {
-      await prisma.chatSession.update({ where: { id: localId }, data: { title } });
+      if (existing.title !== title) await prisma.chatSession.update({ where: { id: localId }, data: { title } });
       return;
     }
     await prisma.chatSession.create({
@@ -128,7 +142,9 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
     const existing = await prisma.message.findUnique({ where: { id: localId } });
     if (existing) {
       if (existing.sessionId !== sessionId) return;
-      await prisma.message.update({ where: { id: localId }, data: { content, role } });
+      if (existing.content !== content || existing.role !== role) {
+        await prisma.message.update({ where: { id: localId }, data: { content, role } });
+      }
     } else {
       await prisma.message.create({ data: { id: localId, sessionId, role, content, index } });
     }
@@ -158,6 +174,23 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
       boundCharacterIds: text(record.bound_character_ids, '[]'),
     };
     if (!data.name) return;
+    if (existing) {
+      const same = existing.name === data.name
+        && (existing.avatar ?? null) === data.avatar
+        && existing.pronouns === data.pronouns
+        && existing.physical === data.physical
+        && existing.attire === data.attire
+        && existing.visualTraits === data.visualTraits
+        && existing.appearance === data.appearance
+        && existing.avatarSnapshot === data.avatarSnapshot
+        && existing.avatarSnapshotFor === data.avatarSnapshotFor
+        && existing.personality === data.personality
+        && existing.backstory === data.backstory
+        && existing.speech === data.speech
+        && existing.isDefault === data.isDefault
+        && existing.boundCharacterIds === data.boundCharacterIds;
+      if (same) return;
+    }
     if (data.isDefault) {
       await prisma.persona.updateMany({ where: { userId: owner.id, NOT: { id: localId } }, data: { isDefault: false } });
     }

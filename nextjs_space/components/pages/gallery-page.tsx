@@ -11,6 +11,7 @@ import { ImportModal } from '@/components/character/import-modal';
 import { Button } from '@/components/ui/button';
 import { useAccess } from '@/components/billing/access-provider';
 import { useNsfwView } from '@/lib/nsfw-view';
+import { supabaseBrowser } from '@/lib/supabase/browser';
 
 export function GalleryPage() {
   const [characters, setCharacters] = useState<any[]>([]);
@@ -61,9 +62,9 @@ export function GalleryPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const loadCharacters = useCallback(async (tab: 'all' | 'mine') => {
+  const loadCharacters = useCallback(async (tab: 'all' | 'mine', quiet = false) => {
     const seq = ++loadSeq.current;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (debounced) params.set('search', debounced);
@@ -71,13 +72,12 @@ export function GalleryPage() {
       params.set('nsfw', nsfwEnabled ? 'true' : 'false');
       if (tab === 'mine') params.set('mine', 'true');
       const res = await fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' });
-      const data = await res.json();
+      const data = res.ok ? await res.json().catch(() => null) : null;
       // A slower browse response must not replace the full owned list.
       if (seq !== loadSeq.current) return;
       setCharacters(Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch {
       if (seq !== loadSeq.current) return;
-      console.error('Failed to load characters', err);
       setCharacters([]);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
@@ -90,30 +90,53 @@ export function GalleryPage() {
     if (view === 'mine' && !access) return;
     const tab = view === 'mine' && access?.authenticated ? 'mine' : 'all';
     void loadCharacters(tab);
-  }, [tabReady, view, access, access?.authenticated, access?.username, access?.userId, loadCharacters]);
+  }, [tabReady, view, access?.authenticated, access?.userId, loadCharacters]);
 
   // Tag list comes from every visible character, independent of the active tag filter
   const loadTags = useCallback(async () => {
     try {
-      const res = await fetch(`/api/characters?nsfw=${nsfwEnabled ? 'true' : 'false'}`);
-      const data = await res.json();
+      const res = await fetch(`/api/characters?nsfw=${nsfwEnabled ? 'true' : 'false'}`, { cache: 'no-store' });
+      const data = res.ok ? await res.json().catch(() => null) : null;
       const tags = Array.isArray(data) ? data.flatMap((c: any) => c?.tags ?? []) : [];
       setAllTags(Array.from(new Set<string>(tags)).sort());
-    } catch (err) {
-      console.error('Failed to load tags', err);
+    } catch {
+      setAllTags([]);
     }
   }, [nsfwEnabled]);
 
   useEffect(() => { loadTags(); }, [loadTags]);
 
   useEffect(() => {
+    const client = supabaseBrowser();
+    if (!client) return;
+    const channel = client.channel('gallery-feed')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'characters' }, () => {
+        window.dispatchEvent(new Event('nexus:cloud-revision'));
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'personas' }, () => {
+        window.dispatchEvent(new Event('nexus:cloud-revision'));
+      })
+      .subscribe();
+    return () => { void client.removeChannel(channel); };
+  }, []);
+
+  useEffect(() => {
+    let timer = 0;
     function onRevision() {
-      const tab = view === 'mine' && access?.authenticated ? 'mine' : 'all';
-      void loadCharacters(tab);
-      void loadTags();
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const tab = view === 'mine' && access?.authenticated ? 'mine' : 'all';
+        void loadCharacters(tab, true);
+        void loadTags();
+      }, 400);
     }
     window.addEventListener('nexus:cloud-revision', onRevision);
-    return () => window.removeEventListener('nexus:cloud-revision', onRevision);
+    window.addEventListener('nexus:cloud-sync', onRevision);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('nexus:cloud-revision', onRevision);
+      window.removeEventListener('nexus:cloud-sync', onRevision);
+    };
   }, [view, access?.authenticated, loadCharacters, loadTags]);
 
   return (
