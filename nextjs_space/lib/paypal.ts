@@ -14,13 +14,21 @@ function paypalCredential(name: string): string {
   return paypalEnv(name).replace(/\s+/g, '');
 }
 
+function firstCredential(...names: string[]): string {
+  for (const name of names) {
+    const value = paypalCredential(name);
+    if (value) return value;
+  }
+  return '';
+}
+
 /** Browser and server share the same PayPal app id. The secret stays server-only. */
 export function paypalClientId(): string {
-  return paypalCredential('PAYPAL_CLIENT_ID') || paypalCredential('NEXT_PUBLIC_PAYPAL_CLIENT_ID');
+  return firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID');
 }
 
 export function paypalClientSecret(): string {
-  return paypalCredential('PAYPAL_CLIENT_SECRET');
+  return firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
 }
 
 let warned = false;
@@ -79,6 +87,7 @@ async function accessToken(): Promise<string> {
       status: res.status,
       mode: paypalEnv('PAYPAL_MODE') || '(unset)',
       clientIdLength: clientId.length,
+      clientIdPrefix: clientId.slice(0, 4),
       secretLength: clientSecret.length,
       body: raw,
     });

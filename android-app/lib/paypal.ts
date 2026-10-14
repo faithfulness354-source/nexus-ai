@@ -2,8 +2,16 @@ import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
 /** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE=live, PAYPAL_WEBHOOK_ID. */
+function firstCredential(...names: string[]): string {
+  for (const name of names) {
+    const value = paypalCredential(name);
+    if (value) return value;
+  }
+  return '';
+}
+
 export function paypalConfigured(): boolean {
-  return !!paypalCredential('PAYPAL_CLIENT_ID') && !!paypalCredential('PAYPAL_CLIENT_SECRET');
+  return !!firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID') && !!firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
 }
 
 const LIVE_API = 'https://api-m.paypal.com';
@@ -22,8 +30,8 @@ const apiBase = () => (paypalEnv('PAYPAL_MODE').toLowerCase() === 'live' ? LIVE_
 let token: { value: string; expires: number; base: string } | null = null;
 
 async function accessToken(): Promise<string> {
-  const clientId = paypalCredential('PAYPAL_CLIENT_ID');
-  const clientSecret = paypalCredential('PAYPAL_CLIENT_SECRET');
+  const clientId = firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID');
+  const clientSecret = firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
   const base = apiBase();
   if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
   const basic = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');

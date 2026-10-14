@@ -76,9 +76,18 @@ export function contextBudget(viewer: Viewer, modelWindow: number): number {
   return viewer.isAdmin ? modelWindow : Math.min(modelWindow, TIERS[viewer.tier].contextTokens);
 }
 
+function paypalSetting(...names: string[]): string {
+  for (const name of names) {
+    const value = (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim().replace(/\s+/g, '');
+    if (value) return value;
+  }
+  return '';
+}
+
 export function paymentsConfigured(): boolean {
-  const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim();
-  return !!clientId && !!process.env.PAYPAL_CLIENT_SECRET?.trim();
+  const clientId = paypalSetting('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID');
+  const secret = paypalSetting('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
+  return !!clientId && !!secret;
 }
 
 export function accessStatus(viewer: Viewer | null): AccessStatus {
@@ -107,7 +116,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
     hasSubscription: !!viewer?.user.paypalSubscriptionId && ['active', 'past_due'].includes(viewer.user.subscriptionStatus ?? ''),
     paymentsConfigured: paymentsConfigured(),
-    paypalClientId: process.env.PAYPAL_CLIENT_ID?.trim() || process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || '',
+    paypalClientId: paypalSetting('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID'),
     nsfwEnabled: false,
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),
@@ -180,6 +189,16 @@ export function canEditCharacter(viewer: Viewer, character: { ownerId: string | 
 /** 18+ NSFW content requires an active Premium/Ultimate subscription or a whitelisted creator admin. */
 export function canViewNsfw(viewer: Viewer | null): boolean {
   return !!viewer && can(viewer, 'nsfw');
+}
+
+/**
+ * Profile NSFW switch. Creator and admin accounts save the preference without a paid plan.
+ * Other accounts need Premium, the tier that unlocks adult cards.
+ */
+export function canToggleNsfw(viewer: Viewer | null): boolean {
+  if (!viewer) return false;
+  if (viewer.isAdmin || viewer.isCreatorAdmin) return true;
+  return can(viewer, 'nsfw');
 }
 
 export const NSFW_UPGRADE_MESSAGE = '18+ NSFW content and scenarios unlock with the Premium or Ultimate plan. Please upgrade your subscription to unlock.';
