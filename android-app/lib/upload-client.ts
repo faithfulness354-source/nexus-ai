@@ -124,6 +124,43 @@ export async function uploadImage(input: File, crop?: CropPreset): Promise<{ url
   }
 }
 
+const AUDIO_TYPES: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  webm: 'audio/webm',
+};
+
+/** Uploads a profile song and returns the address that should be saved on the profile. */
+export async function uploadProfileAudio(file: File): Promise<{ url: string }> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const declared = file.type.toLowerCase().split(';')[0].trim();
+  const contentType = declared.startsWith('audio/') ? (declared === 'audio/mp3' ? 'audio/mpeg' : declared) : AUDIO_TYPES[ext] ?? '';
+  if (!contentType) throw new Error('Use an mp3, wav, ogg, m4a, or aac file');
+  if (file.size > 15 * 1024 * 1024) throw new Error('That audio file is larger than 15 MB');
+  const named = file.name && AUDIO_TYPES[ext] ? file.name : `track.${ext || 'mp3'}`;
+  const res = await fetch('/api/upload/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: named, contentType }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const url = publicImageUrl(data?.url);
+  if (!res.ok || !url) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not upload that song');
+  const target = httpUrl(data?.uploadUrl);
+  if (data?.provider === 'supabase') {
+    if (!target) throw new Error('Could not store that song');
+    const body = new FormData();
+    body.append('cacheControl', '3600');
+    body.append('', file, named);
+    const put = await fetch(target.toString(), { method: 'PUT', headers: { 'x-upsert': 'true' }, body });
+    if (!put.ok) throw new Error('Could not store that song');
+  }
+  return { url };
+}
+
 /** Uses the photo already on the device. A web address is not required. */
 export async function imageForCard(file: File, crop?: CropPreset): Promise<{ url: string; cloud_storage_path: string; isPublic: boolean }> {
   if (!(file instanceof Blob)) throw new Error('Choose an image file');

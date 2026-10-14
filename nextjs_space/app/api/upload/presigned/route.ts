@@ -41,7 +41,7 @@ function safeStem(fileName: string): string {
   return path.basename(fileName).replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(-60) || 'image';
 }
 
-const MEDIA_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm'];
+const MEDIA_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/x-m4a'];
 
 function mediaExtension(contentType: string, fileName: string): string | null {
   const image = extensionForImage(contentType, fileName);
@@ -49,8 +49,14 @@ function mediaExtension(contentType: string, fileName: string): string | null {
   const type = contentType.toLowerCase().split(';')[0].trim();
   if (type === 'video/mp4') return 'mp4';
   if (type === 'video/webm') return 'webm';
+  if (type === 'audio/mpeg' || type === 'audio/mp3') return 'mp3';
+  if (type === 'audio/wav' || type === 'audio/x-wav') return 'wav';
+  if (type === 'audio/ogg') return 'ogg';
+  if (type === 'audio/mp4' || type === 'audio/x-m4a') return 'm4a';
+  if (type === 'audio/aac') return 'aac';
+  if (type === 'audio/webm') return 'webm';
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'mp4' || ext === 'webm') return ext;
+  if (ext === 'mp4' || ext === 'webm' || ext === 'mp3' || ext === 'wav' || ext === 'ogg' || ext === 'm4a' || ext === 'aac') return ext;
   return null;
 }
 

@@ -7,6 +7,7 @@ import { RichContent } from '@/components/editor/rich-content';
 import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlayer';
 import { ACCENT_THEMES, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
+import { uploadProfileAudio } from '@/lib/upload-client';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
 
 const BADGE_STYLE: Record<ProfileBadge['id'], { icon: typeof Crown; cls: string }> = {
@@ -69,12 +70,8 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
                 event.target.value = '';
                 if (!file) return;
                 setSongBusy(true);
-                const body = new FormData();
-                body.set('file', file);
-                void fetch('/api/upload/audio', { method: 'POST', body })
-                  .then(async (uploaded) => {
-                    const payload = await uploaded.json().catch(() => null);
-                    if (!uploaded.ok || typeof payload?.url !== 'string') return;
+                void uploadProfileAudio(file)
+                  .then(async (payload) => {
                     setSongUrl(payload.url);
                     await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profileSongUrl: payload.url }) });
                   })

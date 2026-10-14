@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Loader2, Save, ExternalLink, Check, Pin, AtSign, Lock, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { uploadProfileAudio } from '@/lib/upload-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -81,11 +82,8 @@ export function ProfileHub() {
     if (!file) return;
     setSongUploading(true);
     try {
-      const body = new FormData();
-      body.set('file', file);
-      const uploaded = await fetch('/api/upload/audio', { method: 'POST', body });
-      const payload = await uploaded.json().catch(() => ({}));
-      if (!uploaded.ok || typeof payload.url !== 'string') throw new Error(payload.error || 'Choose an audio file');
+      const payload = await uploadProfileAudio(file);
+      setProfileSongUrl(payload.url);
       const saved = await fetch('/api/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

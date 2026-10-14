@@ -14,7 +14,7 @@ import { ImageField } from './image-field';
 import { PublicProfile, type ProfileCharacter } from '@/components/profile/public-profile';
 import { BoxGlitchLayers, GlitchSrcProvider } from '@/components/profile/box-glitch';
 import { ACCENT_THEMES, DEFAULT_BANNER_NAME_SIZE, DEFAULT_PROFILE_STYLE, FEATURED_CARD_MAX, ROYAL_BLUE_ALLOY, SOVEREIGN_LOCK_LABEL, USERNAME_RE, applyBadgePrefs, type AccentTheme, type BadgePrefs, type ProfileBadge, type ProfileStyle } from '@/lib/profile';
-import { uploadImage, uploadProfileVideo } from '@/lib/upload-client';
+import { uploadImage, uploadProfileAudio, uploadProfileVideo } from '@/lib/upload-client';
 import { cn } from '@/lib/utils';
 import { useAccess } from '@/components/billing/access-provider';
 import { NsfwContentSetting } from '@/components/settings/nsfw-content-setting';
@@ -131,11 +131,8 @@ export function ProfileHub() {
     if (!file || !p) return;
     setSongUploading(true);
     try {
-      const body = new FormData();
-      body.set('file', file);
-      const uploaded = await fetch('/api/upload/audio', { method: 'POST', body });
-      const payload = await uploaded.json().catch(() => ({}));
-      if (!uploaded.ok || typeof payload.url !== 'string') throw new Error(payload.error || 'Choose an audio file');
+      const payload = await uploadProfileAudio(file);
+      set({ profileSongUrl: payload.url });
       const saved = await fetch('/api/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

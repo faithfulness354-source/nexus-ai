@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Crown, Gem, Globe2, MessageSquare, BookOpen, Sparkles, Pin, Users, Volume2, VolumeX } from 'lucide-react';
 import { toast } from 'sonner';
+import { uploadProfileAudio } from '@/lib/upload-client';
 import { RichContent } from '@/components/editor/rich-content';
 import { CharacterCard, cardAudioTrack } from '@/components/gallery/character-card';
 import { ACCENT_THEMES, DEFAULT_BANNER_NAME_SIZE, DEFAULT_PROFILE_STYLE, bannerFocusPosition, bannerNameStyle, isAccentTheme, type ProfileBadge, type ProfileStyle } from '@/lib/profile';
@@ -193,12 +194,10 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
               event.target.value = '';
               if (!file) return;
               setSongBusy(true);
-              const body = new FormData();
-              body.set('file', file);
-              void fetch('/api/upload/audio', { method: 'POST', body })
-                .then(async (uploaded) => {
-                  const payload = await uploaded.json().catch(() => ({}));
-                  if (!uploaded.ok || typeof payload?.url !== 'string') throw new Error(payload?.error || 'Choose an audio file');
+              void uploadProfileAudio(file)
+                .then(async (payload) => {
+                  setSongUrl(payload.url);
+                  onProfileSong?.(payload.url);
                   const saved = await fetch('/api/profile', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -206,8 +205,9 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
                   });
                   const data = await saved.json().catch(() => ({}));
                   if (!saved.ok) throw new Error(data?.error || 'Could not save the song');
-                  setSongUrl(payload.url);
-                  onProfileSong?.(payload.url);
+                  const savedUrl = typeof data?.profileSongUrl === 'string' && data.profileSongUrl ? data.profileSongUrl : payload.url;
+                  setSongUrl(savedUrl);
+                  onProfileSong?.(savedUrl);
                   toast.success('Profile song updated');
                 })
                 .catch((err: Error) => toast.error(err?.message || 'Could not upload that song'))

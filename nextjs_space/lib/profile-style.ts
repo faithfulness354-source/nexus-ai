@@ -89,7 +89,43 @@ export async function readProfileExtras(userId: string): Promise<ProfileExtras> 
   }
 }
 
+const PROFILE_COLUMN_SQL = [
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileSongUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileStyle" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "badgePrefs" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameSize" DOUBLE PRECISION NOT NULL DEFAULT 1.8`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameColor" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameGlow" BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgType" TEXT NOT NULL DEFAULT 'image'`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgVideoUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileCardOpacity" INTEGER NOT NULL DEFAULT 35`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerMediaType" TEXT NOT NULL DEFAULT 'image'`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerVideoUrl" TEXT NOT NULL DEFAULT ''`,
+];
+
+function missingProfileColumn(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  return /does not exist/i.test(message) || /42703/.test(message);
+}
+
+async function ensureProfileColumns(): Promise<void> {
+  for (const statement of PROFILE_COLUMN_SQL) {
+    await prisma.$executeRawUnsafe(statement);
+  }
+}
+
 export async function writeProfileExtras(userId: string, extras: ProfileExtras): Promise<void> {
+  try {
+    await writeProfileExtrasOnce(userId, extras);
+  } catch (err) {
+    if (!missingProfileColumn(err)) throw err;
+    await ensureProfileColumns();
+    await writeProfileExtrasOnce(userId, extras);
+  }
+}
+
+async function writeProfileExtrasOnce(userId: string, extras: ProfileExtras): Promise<void> {
   const song = sanitizeSongUrl(extras.profileSongUrl);
   const style = JSON.stringify(sanitizeProfileStyle(extras.profileStyle));
   const badges = JSON.stringify(sanitizeBadgePrefs(extras.badgePrefs));

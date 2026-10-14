@@ -6,6 +6,7 @@ import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pause, Pencil, Pin, Play, 
 import { RichContent } from '@/components/editor/rich-content';
 import { ACCENT_THEMES, ROYAL_BLUE_ALLOY, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
+import { uploadProfileAudio } from '@/lib/upload-client';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
 
 const BADGE_STYLE: Record<ProfileBadge['id'], { icon: typeof Crown; cls: string }> = {
@@ -188,11 +189,7 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
   async function upload(next: File) {
     setBusy(true);
     try {
-      const body = new FormData();
-      body.set('file', next);
-      const uploaded = await fetch('/api/upload/audio', { method: 'POST', body });
-      const payload = await uploaded.json().catch(() => null);
-      if (!uploaded.ok || typeof payload?.url !== 'string') return;
+      const payload = await uploadProfileAudio(next);
       setCurrent(payload.url);
       await saveProfile({ profileSongUrl: payload.url });
     } finally {
