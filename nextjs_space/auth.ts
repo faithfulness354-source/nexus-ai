@@ -57,19 +57,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Credentials({
       credentials: { email: { label: 'Email', type: 'email' }, password: { label: 'Password', type: 'password' } },
       async authorize(credentials) {
+        const email = String(credentials?.email ?? '').trim().toLowerCase();
         try {
-          const email = String(credentials?.email ?? '').trim().toLowerCase();
           const password = String(credentials?.password ?? '');
-          if (!email || !password) return null;
+          if (!email || !password) {
+            console.error('[auth] sign-in rejected', { provider: 'credentials', reason: 'missing-credentials' });
+            return null;
+          }
           const user = await prisma.user.findUnique({ where: { email } });
-          if (!user?.password || !(await bcrypt.compare(password, user.password))) return null;
+          if (!user?.password) {
+            console.error('[auth] sign-in rejected', { provider: 'credentials', reason: 'unknown-account', whitelist: isWhitelistedEmail(email) });
+            return null;
+          }
+          if (!(await bcrypt.compare(password, user.password))) {
+            console.error('[auth] sign-in rejected', { provider: 'credentials', reason: 'password-mismatch', whitelist: isWhitelistedEmail(email) });
+            return null;
+          }
           const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email);
           if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
             await prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR_ADMIN', isWhitelisted: true } });
           }
           return { id: user.id, email: user.email, name: user.name, role: isAdmin ? 'CREATOR_ADMIN' : 'USER' };
         } catch (error) {
-          console.error('Auth database lookup failed', error instanceof Error ? error.message : '');
+          console.error('[auth] sign-in rejected', { provider: 'credentials', reason: 'lookup-failed', message: error instanceof Error ? error.message : '' });
           return null;
         }
       },
@@ -82,7 +92,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         try {
           const email = await consumeAuthToken('magic', String(credentials?.token ?? ''));
-          if (!email) return null;
+          if (!email) {
+            console.error('[auth] sign-in rejected', { provider: 'magic-link', reason: 'invalid-token' });
+            return null;
+          }
           const admin = isWhitelistedEmail(email);
           const user = await prisma.user.upsert({
             where: { email },
@@ -92,7 +105,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || admin;
           return { id: user.id, email: user.email, name: user.name, role: isAdmin ? 'CREATOR_ADMIN' : 'USER' };
         } catch (error) {
-          console.error('Auth database lookup failed', error instanceof Error ? error.message : '');
+          console.error('[auth] sign-in rejected', { provider: 'magic-link', reason: 'lookup-failed', message: error instanceof Error ? error.message : '' });
           return null;
         }
       },

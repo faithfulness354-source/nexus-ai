@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { auth } from '@/auth';
 import { isWhitelistedEmail } from '@/lib/admin';
+import { paypalCredentialPairs, paypalPublicClientId } from '@/lib/paypal-credentials';
 import { TIERS, type AccessStatus, type TierFeature, type TierId } from '@/lib/tiers';
 import type { User } from '@prisma/client';
 
@@ -76,18 +77,8 @@ export function contextBudget(viewer: Viewer, modelWindow: number): number {
   return viewer.isAdmin ? modelWindow : Math.min(modelWindow, TIERS[viewer.tier].contextTokens);
 }
 
-function paypalSetting(...names: string[]): string {
-  for (const name of names) {
-    const value = (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim().replace(/\s+/g, '');
-    if (value) return value;
-  }
-  return '';
-}
-
 export function paymentsConfigured(): boolean {
-  const clientId = paypalSetting('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID');
-  const secret = paypalSetting('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
-  return !!clientId && !!secret;
+  return paypalCredentialPairs().length > 0;
 }
 
 export function accessStatus(viewer: Viewer | null): AccessStatus {
@@ -116,7 +107,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
     hasSubscription: !!viewer?.user.paypalSubscriptionId && ['active', 'past_due'].includes(viewer.user.subscriptionStatus ?? ''),
     paymentsConfigured: paymentsConfigured(),
-    paypalClientId: paypalSetting('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID'),
+    paypalClientId: paypalPublicClientId(),
     nsfwEnabled: false,
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),

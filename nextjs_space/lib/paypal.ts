@@ -1,6 +1,7 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
+import { paypalCredentialPairs, paypalPublicClientId, type PaypalCredentialPair } from '@/lib/paypal-credentials';
 
 const LIVE_API = 'https://api-m.paypal.com';
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
@@ -9,26 +10,13 @@ function paypalEnv(name: string): string {
   return (process.env[name] ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim();
 }
 
-/** PayPal credentials never contain spaces. Strip any that a dashboard paste left behind. */
-function paypalCredential(name: string): string {
-  return paypalEnv(name).replace(/\s+/g, '');
-}
-
-function firstCredential(...names: string[]): string {
-  for (const name of names) {
-    const value = paypalCredential(name);
-    if (value) return value;
-  }
-  return '';
-}
-
 /** Browser and server share the same PayPal app id. The secret stays server-only. */
 export function paypalClientId(): string {
-  return firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID', 'NEXT_PUBLIC_PAYPAL_CLIENT_ID');
+  return paypalPublicClientId();
 }
 
 export function paypalClientSecret(): string {
-  return firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
+  return paypalCredentialPairs()[0]?.secret ?? '';
 }
 
 let warned = false;
@@ -64,13 +52,8 @@ function paypalFailure(data: { error?: string; error_description?: string; messa
   return detail || data?.error_description || data?.message || data?.error || data?.name || `PayPal request failed (${status})`;
 }
 
-async function accessToken(): Promise<string> {
-  const clientId = paypalClientId();
-  const clientSecret = paypalClientSecret();
-  const base = paypalApiBase();
-  if (!clientId || !clientSecret) throw new Error('PayPal is not configured');
-  if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
-  const basic = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
+async function requestAccessToken(base: string, pair: PaypalCredentialPair): Promise<{ token: string; expiresIn: number } | { error: string }> {
+  const basic = Buffer.from(`${pair.id}:${pair.secret}`).toString('base64');
   const endpoint = `${base}/v1/oauth2/token`;
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -86,15 +69,35 @@ async function accessToken(): Promise<string> {
       endpoint,
       status: res.status,
       mode: paypalEnv('PAYPAL_MODE') || '(unset)',
-      clientIdLength: clientId.length,
-      clientIdPrefix: clientId.slice(0, 4),
-      secretLength: clientSecret.length,
+      idName: pair.idName,
+      secretName: pair.secretName,
+      clientIdLength: pair.id.length,
+      clientIdPrefix: pair.id.slice(0, 4),
+      secretLength: pair.secret.length,
       body: raw,
     });
-    throw new Error(paypalFailure(data, res.status));
+    return { error: paypalFailure(data, res.status) };
   }
-  token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
-  return token.value;
+  return { token: data.access_token, expiresIn: data.expires_in ?? 3000 };
+}
+
+async function accessToken(): Promise<string> {
+  const pairs = paypalCredentialPairs();
+  const base = paypalApiBase();
+  if (!pairs.length) throw new Error('PayPal is not configured');
+  if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
+  let failure = 'Client Authentication failed';
+  for (const pair of pairs) {
+    const issued = await requestAccessToken(base, pair);
+    if ('error' in issued) {
+      failure = issued.error;
+      continue;
+    }
+    token = { value: issued.token, expires: Date.now() + issued.expiresIn * 1000, base };
+    console.log('[paypal] oauth ok', { endpoint: `${base}/v1/oauth2/token`, idName: pair.idName, secretName: pair.secretName, clientIdPrefix: pair.id.slice(0, 4) });
+    return token.value;
+  }
+  throw new Error(failure);
 }
 
 /** Authenticated PayPal REST call. Throws with PayPal's error message on failure. */

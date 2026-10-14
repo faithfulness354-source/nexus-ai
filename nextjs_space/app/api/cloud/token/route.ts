@@ -20,14 +20,25 @@ export async function POST(request: NextRequest) {
   if (!email || !password) return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user?.password || !(await bcrypt.compare(password, user.password))) {
+  if (!user?.password) {
+    console.error('[auth] sign-in rejected', { provider: 'cloud-token', reason: 'unknown-account', whitelist: isWhitelistedEmail(email) });
+    return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+  }
+  if (!(await bcrypt.compare(password, user.password))) {
+    console.error('[auth] sign-in rejected', { provider: 'cloud-token', reason: 'password-mismatch', whitelist: isWhitelistedEmail(email) });
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
   }
 
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-  if (!secret) return NextResponse.json({ error: 'Sign-in is not configured' }, { status: 503 });
+  if (!secret) {
+    console.error('[auth] sign-in rejected', { provider: 'cloud-token', reason: 'missing-auth-secret' });
+    return NextResponse.json({ error: 'Sign-in is not configured' }, { status: 503 });
+  }
 
   const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email);
+  if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
+    await prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR_ADMIN', isWhitelisted: true } });
+  }
   const salt = cookieName(request);
   const token = await encode({
     token: { sub: user.id, id: user.id, email: user.email, name: user.name, role: isAdmin ? 'CREATOR_ADMIN' : 'USER' },

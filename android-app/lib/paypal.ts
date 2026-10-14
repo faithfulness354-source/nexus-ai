@@ -2,16 +2,22 @@ import { prisma } from '@/lib/db';
 import { TIERS, PAID_TIERS, type PaidTierId } from '@/lib/tiers';
 
 /** PayPal REST credentials: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE=live, PAYPAL_WEBHOOK_ID. */
-function firstCredential(...names: string[]): string {
-  for (const name of names) {
-    const value = paypalCredential(name);
-    if (value) return value;
+function credentialPairs(): { id: string; secret: string; idName: string; secretName: string }[] {
+  const specs = [
+    ['paypal_client_ID', 'paypal_client_secret'],
+    ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET'],
+  ] as const;
+  const pairs = [];
+  for (const [idName, secretName] of specs) {
+    const id = paypalCredential(idName);
+    const secret = paypalCredential(secretName);
+    if (id && secret) pairs.push({ id, secret, idName, secretName });
   }
-  return '';
+  return pairs;
 }
 
 export function paypalConfigured(): boolean {
-  return !!firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID') && !!firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
+  return credentialPairs().length > 0;
 }
 
 const LIVE_API = 'https://api-m.paypal.com';
@@ -30,27 +36,32 @@ const apiBase = () => (paypalEnv('PAYPAL_MODE').toLowerCase() === 'live' ? LIVE_
 let token: { value: string; expires: number; base: string } | null = null;
 
 async function accessToken(): Promise<string> {
-  const clientId = firstCredential('paypal_client_ID', 'PAYPAL_CLIENT_ID');
-  const clientSecret = firstCredential('paypal_client_secret', 'PAYPAL_CLIENT_SECRET');
+  const pairs = credentialPairs();
   const base = apiBase();
+  if (!pairs.length) throw new Error('PayPal is not configured');
   if (token && token.base === base && token.expires > Date.now() + 60_000) return token.value;
-  const basic = Buffer.from(`${clientId.trim()}:${clientSecret.trim()}`).toString('base64');
-  const endpoint = `${base}/v1/oauth2/token`;
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: 'grant_type=client_credentials',
-  });
-  const raw = await res.text();
-  let data: { access_token?: string; expires_in?: number; error?: string; error_description?: string } = {};
-  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { error_description: raw }; }
-  if (!res.ok || !data.access_token) {
-    console.error('[paypal] oauth failed', { endpoint, status: res.status, mode: paypalEnv('PAYPAL_MODE') || '(unset)', clientIdLength: clientId.length, secretLength: clientSecret.length, body: raw });
-    throw new Error(`PayPal auth failed (${res.status}): ${data.error_description ?? data.error ?? ''}`);
+  let failure = 'Client Authentication failed';
+  for (const pair of pairs) {
+    const basic = Buffer.from(`${pair.id}:${pair.secret}`).toString('base64');
+    const endpoint = `${base}/v1/oauth2/token`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: 'grant_type=client_credentials',
+    });
+    const raw = await res.text();
+    let data: { access_token?: string; expires_in?: number; error?: string; error_description?: string } = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { error_description: raw }; }
+    if (!res.ok || !data.access_token) {
+      failure = data.error_description ?? data.error ?? failure;
+      console.error('[paypal] oauth failed', { endpoint, status: res.status, mode: paypalEnv('PAYPAL_MODE') || '(unset)', idName: pair.idName, secretName: pair.secretName, clientIdLength: pair.id.length, clientIdPrefix: pair.id.slice(0, 4), secretLength: pair.secret.length, body: raw });
+      continue;
+    }
+    token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
+    return token.value;
   }
-  token = { value: data.access_token, expires: Date.now() + (data.expires_in ?? 3000) * 1000, base };
-  return token.value;
+  throw new Error(failure);
 }
 
 /** Authenticated PayPal REST call. Throws with PayPal's error message on failure. */
