@@ -13,31 +13,36 @@ export async function GET(request: NextRequest) {
     const nsfw = url.searchParams.get('nsfw');
     const mine = url.searchParams.get('mine') === 'true';
 
-    const where: any = {};
     const viewer = await getViewer();
+    const filters: Record<string, unknown>[] = [];
     if (mine) {
       if (!viewer) return unauthorized();
-      where.ownerId = viewer.user.id;
+      filters.push({ ownerId: viewer.user.id });
+    } else if (viewer) {
+      filters.push({
+        OR: [
+          { visibility: 'PUBLIC', moderated: false },
+          { ownerId: viewer.user.id },
+        ],
+      });
     } else {
-      where.visibility = 'PUBLIC';
-      where.moderated = false;
+      filters.push({ visibility: 'PUBLIC', moderated: false });
     }
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { summary: { contains: search, mode: 'insensitive' } },
-        { scenario: { contains: search, mode: 'insensitive' } },
-        { creator: { contains: search, mode: 'insensitive' } },
-      ];
+      filters.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { summary: { contains: search, mode: 'insensitive' } },
+          { scenario: { contains: search, mode: 'insensitive' } },
+          { creator: { contains: search, mode: 'insensitive' } },
+        ],
+      });
     }
-    if (tag) {
-    where.tags = { contains: tag, mode: 'insensitive' };
-
+    if (tag) filters.push({ tags: { contains: tag, mode: 'insensitive' } });
+    if (!mine && (nsfw !== 'true' || !canViewNsfw(viewer))) {
+      filters.push(viewer ? { OR: [{ nsfw: false }, { ownerId: viewer.user.id }] } : { nsfw: false });
     }
-    // Safe by default: NSFW characters are only listed when explicitly requested by an entitled viewer.
-    if (nsfw !== 'true' || !canViewNsfw(viewer)) {
-      where.nsfw = false;
-    }
+    const where = { AND: filters };
 
     const characters = await prisma.character.findMany({
       where,

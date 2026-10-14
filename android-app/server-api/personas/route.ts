@@ -17,7 +17,6 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const userId = viewer.user.id;
-    if ((await prisma.persona.count({ where: { userId } })) >= 50) return json({ error: 'You can have up to 50 personas.' }, 400);
 
     let data;
     if (body?.cloneFrom) {

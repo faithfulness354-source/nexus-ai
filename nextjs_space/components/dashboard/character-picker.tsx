@@ -13,9 +13,9 @@ if (typeof window !== 'undefined') {
   subscribeNsfwView(() => { cache = null; });
 }
 export function loadCharacters(): Promise<PickableCharacter[]> {
-  cache ??= fetch(`/api/characters?nsfw=${readNsfwView() ? 'true' : 'false'}`)
+  cache ??= fetch(`/api/characters?nsfw=${readNsfwView() ? 'true' : 'false'}`, { cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : []))
-    .then((d: any) => (Array.isArray(d) ? d.filter((c: any) => readNsfwView() || !c?.nsfw).map((c: any) => ({ id: c.id, name: c.name, avatar: c.avatar ?? null })) : []))
+    .then((d: any) => (Array.isArray(d) ? d.map((c: any) => ({ id: c.id, name: c.name, avatar: c.avatar ?? null })) : []))
     .catch((err) => { console.error('Failed to load characters', err); cache = null; return []; });
   return cache;
 }
@@ -35,15 +35,14 @@ export function useCharacters() {
 }
 
 /** Searchable multi-select list of characters. */
-export function CharacterPicker({ value, onChange, max = 100 }: { value: string[]; onChange: (ids: string[]) => void; max?: number }) {
+export function CharacterPicker({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void; max?: number }) {
   const characters = useCharacters();
   const [q, setQ] = useState('');
   const filtered = useMemo(
-    () => characters.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 60),
+    () => characters.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase())),
     [characters, q]
   );
-  const toggle = (id: string) =>
-    onChange(value.includes(id) ? value.filter((v) => v !== id) : value.length >= max ? value : [...value, id]);
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
 
   return (
     <div className="rounded-xl bg-background/60 ring-1 ring-white/5">
@@ -55,7 +54,7 @@ export function CharacterPicker({ value, onChange, max = 100 }: { value: string[
           placeholder="Search characters…"
           className="flex-1 bg-transparent text-sm outline-none"
         />
-        <span className="text-[11px] text-muted-foreground">{value.length}/{max}</span>
+        <span className="text-[11px] text-muted-foreground">{value.length}</span>
       </div>
       <div className="max-h-56 overflow-y-auto p-1">
         {filtered.map((c) => {

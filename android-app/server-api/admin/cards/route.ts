@@ -23,7 +23,6 @@ export async function GET() {
   try {
     const cards = await prisma.character.findMany({
       orderBy: { updatedAt: 'desc' },
-      take: 400,
       select: cardSelect,
     });
     return NextResponse.json(cards);

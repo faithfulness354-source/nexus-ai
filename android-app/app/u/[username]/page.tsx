@@ -50,7 +50,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="mx-auto w-full max-w-6xl px-2 sm:px-4 pt-4 pb-16">
+      <main className="w-full" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <PublicProfile
           key={user.username}
           profile={{
