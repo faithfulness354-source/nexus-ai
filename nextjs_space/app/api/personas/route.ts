@@ -3,10 +3,13 @@ import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, json } from '@/lib/access';
 import { personaInput, normalizePersonaBindings, withAvatarSnapshot, personaDto } from '@/lib/persona-server';
 import { syncPersonaToCloud } from '@/lib/supabase/sync';
+import { pullCloudLibrary } from '@/lib/supabase/apply';
 
-export async function GET() {
+export async function GET(request: Request) {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
+  const refresh = new URL(request.url).searchParams.get('refresh') === '1';
+  await pullCloudLibrary(viewer.user, { force: refresh });
   const personas = await prisma.persona.findMany({ where: { userId: viewer.user.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] });
   return json(personas.map(personaDto));
 }

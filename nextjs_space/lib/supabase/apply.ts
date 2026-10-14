@@ -202,6 +202,49 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
   }
 }
 
+const libraryPulledAt = new Map<string, number>();
+const LIBRARY_GAP_MS = 10 * 1000;
+
+/** Copies this account's cloud characters and personas before a library list is returned. */
+export async function pullCloudLibrary(owner: Owner, options?: { force?: boolean }): Promise<void> {
+  const last = libraryPulledAt.get(owner.id) ?? 0;
+  if (!options?.force && Date.now() - last < LIBRARY_GAP_MS) return;
+  libraryPulledAt.set(owner.id, Date.now());
+  try {
+    const admin = supabaseAdmin();
+    const userId = await ensureCloudUser(owner.email, owner.id);
+    if (!admin || !userId) return;
+    for (const table of ['characters', 'personas'] as const) {
+      const { data, error } = await admin.from(table).select('*').eq('user_id', userId);
+      if (error) {
+        console.error('[supabase] library pull failed', table, error.message);
+        continue;
+      }
+      for (const row of data ?? []) await applyRemoteRecord(owner, table, row as Row);
+    }
+  } catch (error) {
+    libraryPulledAt.delete(owner.id);
+    console.error('[supabase] library pull failed', error instanceof Error ? error.message : 'unknown');
+  }
+}
+
+/** Drops a local card or persona after the owning cloud row is deleted. */
+export async function removeRemoteRecord(owner: Owner, table: string, record: Row): Promise<void> {
+  const localId = text(record.local_id);
+  if (!localId || localId.startsWith('draft:') || !(await owns(owner, record))) return;
+  if (table === 'characters') {
+    const existing = await prisma.character.findUnique({ where: { id: localId } });
+    if (!existing || existing.ownerId !== owner.id) return;
+    await prisma.character.delete({ where: { id: localId } });
+    return;
+  }
+  if (table === 'personas') {
+    const existing = await prisma.persona.findUnique({ where: { id: localId } });
+    if (!existing || existing.userId !== owner.id) return;
+    await prisma.persona.delete({ where: { id: localId } });
+  }
+}
+
 /** Reads this account's cloud rows once a minute and writes the newer copies locally. */
 export async function pullCloudAccount(owner: Owner): Promise<void> {
   const last = pulledAt.get(owner.id) ?? 0;
@@ -212,10 +255,15 @@ export async function pullCloudAccount(owner: Owner): Promise<void> {
     const userId = await ensureCloudUser(owner.email, owner.id);
     if (!admin || !userId) return;
     for (const table of ['characters', 'scenarios', 'chats', 'chat_messages', 'personas'] as const) {
-      const { data } = await admin.from(table).select('*').eq('user_id', userId);
+      const { data, error } = await admin.from(table).select('*').eq('user_id', userId);
+      if (error) {
+        console.error('[supabase] account pull failed', table, error.message);
+        continue;
+      }
       for (const row of data ?? []) await applyRemoteRecord(owner, table, row as Row);
     }
-  } catch {
+  } catch (error) {
     pulledAt.delete(owner.id);
+    console.error('[supabase] account pull failed', error instanceof Error ? error.message : 'unknown');
   }
 }

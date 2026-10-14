@@ -34,7 +34,6 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
     },
     orderBy: { updatedAt: 'desc' },
     include: { _count: { select: { sessions: true } } },
-    take: 120,
   });
   const creations = rows.flatMap((c) => {
     const flagged = c.nsfw || characterImpliesNsfw(c);

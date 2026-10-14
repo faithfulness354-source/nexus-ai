@@ -49,13 +49,13 @@ export function CloudSync() {
     let generation = 0;
     let attempt = 0;
 
-    async function applyLive(table: string, record: Record<string, unknown> | null) {
+    async function applyLive(table: string, record: Record<string, unknown> | null, deleted = false) {
       if (!record || cancel) return;
       try {
         const response = await fetch('/api/supabase/apply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ table, record }),
+          body: JSON.stringify({ table, record, deleted }),
         });
         if (!response.ok || cancel) return;
         window.dispatchEvent(new CustomEvent('nexus:cloud-sync', {
@@ -75,7 +75,10 @@ export function CloudSync() {
       channel = next;
       for (const table of TABLES) {
         next.on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-          if (payload.eventType === 'DELETE') return;
+          if (payload.eventType === 'DELETE') {
+            void applyLive(table, (payload.old ?? null) as Record<string, unknown> | null, true);
+            return;
+          }
           void applyLive(table, (payload.new ?? null) as Record<string, unknown> | null);
         });
       }

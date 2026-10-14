@@ -6,7 +6,7 @@ import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
-import { syncCharacterToCloud } from '@/lib/supabase/sync';
+import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -125,6 +125,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     const viewer = await requireEditor(id);
     if (viewer instanceof Response) return viewer;
     await prisma.character.delete({ where: { id } });
+    void deleteCharacterFromCloud(id, viewer.user);
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('DELETE /api/characters/[id] error:', err);

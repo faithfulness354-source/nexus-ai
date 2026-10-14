@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Plus, Upload, Compass, UserRound } from 'lucide-react';
+import { Plus, Upload, Compass, UserRound, Pin, Sparkles } from 'lucide-react';
 import { AppHeader } from '@/components/layout/app-header';
 import { CharacterGrid } from '@/components/gallery/character-grid';
+import { CharacterCard, cardAudioTrack } from '@/components/gallery/character-card';
 import { FilterBar, SearchInput } from '@/components/gallery/filter-bar';
 import { FantasyBanner } from '@/components/gallery/fantasy-banner';
 import { ImportModal } from '@/components/character/import-modal';
@@ -14,7 +15,9 @@ import { useNsfwView } from '@/lib/nsfw-view';
 import { supabaseBrowser } from '@/lib/supabase/browser';
 
 export function GalleryPage() {
-  const [characters, setCharacters] = useState<any[]>([]);
+  const [community, setCommunity] = useState<any[]>([]);
+  const [library, setLibrary] = useState<any[]>([]);
+  const [personas, setPersonas] = useState<Array<{ id: string; name: string; isDefault?: boolean }>>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -29,6 +32,7 @@ export function GalleryPage() {
   const [tabReady, setTabReady] = useState(false);
   const loadSeq = useRef(0);
   const showMine = view === 'mine' && !!access?.authenticated;
+  const signedIn = !!access?.authenticated;
 
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('view') === 'mine' ? 'mine' : 'all';
@@ -40,16 +44,14 @@ export function GalleryPage() {
     function onDeleted(event: Event) {
       const id = (event as CustomEvent<{ id?: string }>).detail?.id;
       if (!id) return;
-      setCharacters((prev) => prev.filter((character) => character.id !== id));
+      setLibrary((prev) => prev.filter((character) => character.id !== id));
+      setCommunity((prev) => prev.filter((character) => character.id !== id));
     }
     window.addEventListener('nexus:character-deleted', onDeleted);
     return () => window.removeEventListener('nexus:character-deleted', onDeleted);
   }, []);
 
   function changeView(v: 'all' | 'mine') {
-    loadSeq.current += 1;
-    setCharacters([]);
-    setLoading(true);
     setView(v);
     setSelectedTag('');
     const url = new URL(window.location.href);
@@ -62,35 +64,58 @@ export function GalleryPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const loadCharacters = useCallback(async (tab: 'all' | 'mine', quiet = false) => {
+  const loadFeed = useCallback(async (quiet = false, refresh = false) => {
     const seq = ++loadSeq.current;
     if (!quiet) setLoading(true);
+    const params = new URLSearchParams();
+    if (debounced) params.set('search', debounced);
+    if (selectedTag) params.set('tag', selectedTag);
+    params.set('nsfw', nsfwEnabled ? 'true' : 'false');
+    const mineParams = new URLSearchParams(params);
+    mineParams.set('mine', 'true');
+    if (refresh) mineParams.set('refresh', '1');
     try {
-      const params = new URLSearchParams();
-      if (debounced) params.set('search', debounced);
-      if (selectedTag) params.set('tag', selectedTag);
-      params.set('nsfw', nsfwEnabled ? 'true' : 'false');
-      if (tab === 'mine') params.set('mine', 'true');
-      const res = await fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' });
-      const data = res.ok ? await res.json().catch(() => null) : null;
-      // A slower browse response must not replace the full owned list.
-      if (seq !== loadSeq.current) return;
-      setCharacters(Array.isArray(data) ? data : []);
+      const jobs: Promise<void>[] = [
+        fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' })
+          .then(async (res) => {
+            const data = res.ok ? await res.json().catch(() => null) : null;
+            if (seq !== loadSeq.current) return;
+            setCommunity(Array.isArray(data) ? data : []);
+          }),
+      ];
+      if (signedIn) {
+        jobs.push(
+          fetch(`/api/characters?${mineParams.toString()}`, { cache: 'no-store' })
+            .then(async (res) => {
+              const data = res.ok ? await res.json().catch(() => null) : null;
+              if (seq !== loadSeq.current) return;
+              setLibrary(Array.isArray(data) ? data : []);
+            }),
+          fetch(`/api/personas${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' })
+            .then(async (res) => {
+              const data = res.ok ? await res.json().catch(() => null) : null;
+              if (seq !== loadSeq.current) return;
+              setPersonas(Array.isArray(data) ? data.filter((persona) => persona && typeof persona.id === 'string' && typeof persona.name === 'string') : []);
+            }),
+        );
+      } else if (seq === loadSeq.current) {
+        setLibrary([]);
+        setPersonas([]);
+      }
+      await Promise.all(jobs);
     } catch {
       if (seq !== loadSeq.current) return;
-      setCharacters([]);
+      setCommunity([]);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [debounced, selectedTag, nsfwEnabled]);
+  }, [debounced, selectedTag, nsfwEnabled, signedIn]);
 
   useEffect(() => {
     if (!tabReady) return;
-    // My Characters waits for the signed-in user so the public list cannot paint first and stick.
     if (view === 'mine' && !access) return;
-    const tab = view === 'mine' && access?.authenticated ? 'mine' : 'all';
-    void loadCharacters(tab);
-  }, [tabReady, view, access?.authenticated, access?.userId, loadCharacters]);
+    void loadFeed();
+  }, [tabReady, view, access?.authenticated, access?.userId, loadFeed]);
 
   // Tag list comes from every visible character, independent of the active tag filter
   const loadTags = useCallback(async () => {
@@ -125,19 +150,26 @@ export function GalleryPage() {
     function onRevision() {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const tab = view === 'mine' && access?.authenticated ? 'mine' : 'all';
-        void loadCharacters(tab, true);
+        void loadFeed(true, true);
         void loadTags();
       }, 400);
     }
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return;
+      void loadFeed(true, true);
+    }
     window.addEventListener('nexus:cloud-revision', onRevision);
     window.addEventListener('nexus:cloud-sync', onRevision);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('nexus:cloud-revision', onRevision);
       window.removeEventListener('nexus:cloud-sync', onRevision);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [view, access?.authenticated, loadCharacters, loadTags]);
+  }, [loadFeed, loadTags]);
+
+  const picks = library.slice(0, 8);
 
   return (
     <div className="min-h-[100dvh] w-full max-w-full bg-background">
@@ -194,27 +226,74 @@ export function GalleryPage() {
             ))}
           </div>
         )}
-        <div className="flex items-baseline justify-between mb-4">
-          <h2 className="font-display font-bold text-lg sm:text-xl tracking-tight">
-            {selectedTag ? <>Tagged <span className="text-primary">#{selectedTag}</span></> : showMine ? 'My Characters' : 'Discover Characters'}
-          </h2>
-          {!loading && <span className="text-xs text-muted-foreground">{characters.length} found</span>}
-        </div>
-        <CharacterGrid
-          characters={characters}
-          loading={loading}
-          onTagClick={setSelectedTag}
-          viewerId={access?.userId}
-          isAdmin={access?.isCreatorAdmin}
-          emptyTitle={showMine ? 'No characters yet' : undefined}
-          emptyHint={showMine ? 'Characters you create or import will appear here, ready to edit.' : undefined}
-        />
+        {signedIn && picks.length > 0 && (
+          <section className="mb-8">
+            <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-bold tracking-tight">
+              <Pin className="h-4 w-4 text-primary" /> Top 8 Picks
+            </h2>
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {picks.map((item) => (
+                <div key={item.id} className="w-56 shrink-0">
+                  <CharacterCard {...item} audioUrl={cardAudioTrack(item)} canEdit={!!access?.isCreatorAdmin || item.ownerId === access?.userId} showVisibility={!!access?.isCreatorAdmin || item.ownerId === access?.userId} />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {signedIn && (
+          <section className="mb-10">
+            <div className="mb-4 flex items-baseline justify-between">
+              <h2 className="font-display text-lg font-bold tracking-tight sm:text-xl">My Created Cards</h2>
+              {!loading && <span className="text-xs text-muted-foreground">{library.length} cards</span>}
+            </div>
+            <CharacterGrid
+              characters={library}
+              loading={loading && library.length === 0}
+              onTagClick={setSelectedTag}
+              viewerId={access?.userId}
+              isAdmin={access?.isCreatorAdmin}
+              emptyTitle="No characters yet"
+              emptyHint="Characters you create or import will appear here, ready to edit."
+            />
+            <h3 className="mb-3 mt-6 flex items-center gap-2 font-display text-base font-bold">
+              <Sparkles className="h-4 w-4 text-primary" /> Personas
+            </h3>
+            {personas.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No personas yet. <Link href="/dashboard/personas" className="text-primary hover:underline">Create one</Link></p>
+            ) : (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {personas.map((persona) => (
+                  <Link key={persona.id} href="/dashboard/personas" className="shrink-0 rounded-full bg-card px-3 py-1.5 text-sm font-semibold ring-1 ring-white/10">
+                    {persona.name}{persona.isDefault ? ' · default' : ''}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+        {!showMine && (
+          <section>
+            <div className="mb-4 flex items-baseline justify-between">
+              <h2 className="font-display text-lg font-bold tracking-tight sm:text-xl">
+                {selectedTag ? <>Tagged <span className="text-primary">#{selectedTag}</span></> : 'Discover Characters'}
+              </h2>
+              {!loading && <span className="text-xs text-muted-foreground">{community.length} found</span>}
+            </div>
+            <CharacterGrid
+              characters={community}
+              loading={loading && community.length === 0}
+              onTagClick={setSelectedTag}
+              viewerId={access?.userId}
+              isAdmin={access?.isCreatorAdmin}
+            />
+          </section>
+        )}
       </div>
 
       <ImportModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={() => { void loadCharacters(showMine ? 'mine' : 'all'); loadTags(); }}
+        onImported={() => { void loadFeed(true, true); loadTags(); }}
       />
     </div>
   );

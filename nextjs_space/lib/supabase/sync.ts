@@ -16,6 +16,15 @@ async function ownerId(owner: Owner): Promise<string | null> {
   }
 }
 
+async function upsertCharacters(admin: NonNullable<ReturnType<typeof supabaseAdmin>>, rows: Record<string, unknown> | Record<string, unknown>[]) {
+  const list = Array.isArray(rows) ? rows : [rows];
+  const first = await admin.from('characters').upsert(list, { onConflict: 'local_id' });
+  if (!first.error) return;
+  if (!/banner/i.test(first.error.message ?? '')) return;
+  const withoutBanner = list.map(({ banner: _banner, ...row }) => row);
+  await admin.from('characters').upsert(withoutBanner, { onConflict: 'local_id' });
+}
+
 export async function syncCharacterToCloud(character: {
   id: string;
   name: string;
@@ -26,6 +35,7 @@ export async function syncCharacterToCloud(character: {
   initialMessage?: string | null;
   tags?: string | null;
   avatar?: string | null;
+  banner?: string | null;
   nsfw?: boolean | null;
   visibility?: string | null;
 }, owner: Owner): Promise<void> {
@@ -33,7 +43,7 @@ export async function syncCharacterToCloud(character: {
     const admin = supabaseAdmin();
     const userId = await ownerId(owner);
     if (!admin || !userId) return;
-    await admin.from('characters').upsert({
+    await upsertCharacters(admin, {
       local_id: character.id,
       user_id: userId,
       name: character.name || 'Unnamed',
@@ -44,10 +54,11 @@ export async function syncCharacterToCloud(character: {
       greeting: character.initialMessage ?? '',
       tags: character.tags ?? '',
       avatar: character.avatar ?? null,
+      banner: character.banner ?? null,
       nsfw: character.nsfw === true,
       visibility: character.visibility ?? 'PRIVATE',
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'local_id' });
+    });
     await admin.from('scenarios').upsert({
       local_id: `${character.id}:scenario`,
       user_id: userId,
@@ -56,8 +67,8 @@ export async function syncCharacterToCloud(character: {
       body: character.scenario ?? '',
       updated_at: new Date().toISOString(),
     }, { onConflict: 'local_id' });
-  } catch {
-    // Local save already succeeded. Cloud sync can retry on the next write.
+  } catch (error) {
+    console.error('[supabase] character sync failed', error instanceof Error ? error.message : 'unknown');
   }
 }
 
@@ -126,8 +137,21 @@ export async function syncPersonaToCloud(persona: {
       bound_character_ids: persona.boundCharacterIds || '[]',
       updated_at: new Date().toISOString(),
     }, { onConflict: 'local_id' });
-  } catch {
-    // The local persona remains saved when the cloud write fails.
+  } catch (error) {
+    console.error('[supabase] persona sync failed', error instanceof Error ? error.message : 'unknown');
+  }
+}
+
+export async function deleteCharacterFromCloud(localId: string, owner: Owner): Promise<void> {
+  try {
+    const admin = supabaseAdmin();
+    const userId = await ownerId(owner);
+    if (!admin || !userId || !localId) return;
+    const removed = await admin.from('characters').delete().eq('local_id', localId).eq('user_id', userId);
+    if (removed.error) console.error('[supabase] character delete failed', removed.error.message);
+    await admin.from('scenarios').delete().eq('character_local_id', localId).eq('user_id', userId);
+  } catch (error) {
+    console.error('[supabase] character delete failed', error instanceof Error ? error.message : 'unknown');
   }
 }
 
@@ -180,7 +204,7 @@ export async function pushLocalAccount(owner: Owner): Promise<void> {
     const now = new Date().toISOString();
     const characters = await prisma.character.findMany({ where: { ownerId: owner.id } });
     if (characters.length) {
-      await admin.from('characters').upsert(characters.map((character) => ({
+      await upsertCharacters(admin, characters.map((character) => ({
         local_id: character.id,
         user_id: userId,
         name: character.name || 'Unnamed',
@@ -191,10 +215,11 @@ export async function pushLocalAccount(owner: Owner): Promise<void> {
         greeting: character.initialMessage ?? '',
         tags: character.tags ?? '',
         avatar: character.avatar ?? null,
+        banner: character.banner ?? null,
         nsfw: character.nsfw === true,
         visibility: character.visibility ?? 'PRIVATE',
         updated_at: now,
-      })), { onConflict: 'local_id' });
+      })));
       await admin.from('scenarios').upsert(characters.map((character) => ({
         local_id: `${character.id}:scenario`,
         user_id: userId,

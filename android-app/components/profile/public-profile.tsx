@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Crown, Gem, Globe2, MessageSquare, BookOpen, Sparkles, Pin, Users } from 'lucide-react';
 import { RichContent } from '@/components/editor/rich-content';
-import { CharacterCard } from '@/components/gallery/character-card';
+import { CharacterCard, cardAudioTrack } from '@/components/gallery/character-card';
 import { ACCENT_THEMES, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
 import { useAccess } from '@/components/billing/access-provider';
@@ -51,8 +51,7 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
   }, [profile.username, creations]);
   const theme = ACCENT_THEMES[isAccentTheme(profile.accentTheme) ? profile.accentTheme : 'OBSIDIAN'];
   const name = profile.displayName || profile.username || 'Creator';
-  const pinnedIds = new Set(pinned.map((c) => c.id));
-  const rest = owned.filter((c) => !pinnedIds.has(c.id));
+  const library = owned;
 
   return (
     <div style={{ ['--profile-accent' as any]: theme.accent, ['--profile-glow' as any]: theme.glow }}>
@@ -111,12 +110,12 @@ export function PublicProfile({ profile, pinned, creations, compact }: {
       )}
 
       {pinned.length > 0 && (
-        <Section title="Pinned" icon={Pin} accent={theme.accent} compact={compact}>
-          {pinned.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
+        <Section title="Top 8 Picks" icon={Pin} accent={theme.accent} compact={compact}>
+          {pinned.map((item) => <CharacterCard key={item.id} {...item} audioUrl={cardAudioTrack(item)} canEdit={canEdit(item)} showVisibility={canEdit(item)} />)}
         </Section>
       )}
-      <Section title={`Creations (${rest.length})`} icon={Sparkles} accent={theme.accent} compact={compact}>
-        {rest.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">{pinned.length ? 'All creations are pinned above.' : 'No public characters yet.'}</p> : rest.map((c) => <CharacterCard key={c.id} {...c} canEdit={canEdit(c)} showVisibility={canEdit(c)} />)}
+      <Section title={`Created Cards (${library.length})`} icon={Sparkles} accent={theme.accent} compact={compact}>
+        {library.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">No characters yet.</p> : library.map((item) => <CharacterCard key={item.id} {...item} audioUrl={cardAudioTrack(item)} canEdit={canEdit(item)} showVisibility={canEdit(item)} />)}
       </Section>
     </div>
   );

@@ -5,6 +5,7 @@ import { getViewer, unauthorized, can, canViewNsfw, nsfwLocked, canEditCharacter
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
+import { pullCloudLibrary } from '@/lib/supabase/apply';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
     const where: any = {};
     if (mine) {
       if (!viewer) return unauthorized();
+      await pullCloudLibrary(viewer.user, { force: url.searchParams.get('refresh') === '1' });
       where.ownerId = viewer.user.id;
     } else {
       where.visibility = 'PUBLIC';
@@ -77,6 +79,7 @@ export async function GET(request: NextRequest) {
           tags: tagList(c.tags || ''),
           avatar: c.avatar,
           banner: c.banner,
+          updatedAt: c.updatedAt,
           nsfw: flagged,
           chatCount: _count?.sessions ?? 0,
           ownerId: c.ownerId,

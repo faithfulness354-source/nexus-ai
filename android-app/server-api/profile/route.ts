@@ -14,7 +14,6 @@ async function payload(viewer: Viewer) {
     where: { ownerId: userId },
     select: { id: true, name: true, avatar: true, title: true, nsfw: true, summary: true, tags: true, banner: true, creator: true, ownerId: true, visibility: true, moderated: true },
     orderBy: { updatedAt: 'desc' },
-    take: 200,
   });
   return {
     username: user.username,
