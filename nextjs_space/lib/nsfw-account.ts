@@ -9,7 +9,7 @@ function asFlag(value: unknown): boolean {
 export async function readAccountNsfwEnabled(userId: string): Promise<boolean> {
   try {
     const rows = await prisma.$queryRaw<Array<{ nsfwEnabled: unknown }>>`
-      SELECT "nsfwEnabled" FROM "User" WHERE id = ${userId}
+      SELECT "nsfwEnabled" FROM nexus."User" WHERE id = ${userId}
     `;
     return asFlag(rows[0]?.nsfwEnabled);
   } catch (err) {
@@ -20,7 +20,7 @@ export async function readAccountNsfwEnabled(userId: string): Promise<boolean> {
 
 export async function writeAccountNsfwEnabled(userId: string, on: boolean): Promise<void> {
   await prisma.$executeRaw`
-    UPDATE "User" SET "nsfwEnabled" = ${on} WHERE id = ${userId}
+    UPDATE nexus."User" SET "nsfwEnabled" = ${on} WHERE id = ${userId}
   `;
 }
 

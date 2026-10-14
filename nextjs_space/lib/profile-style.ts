@@ -60,7 +60,7 @@ export async function readProfileExtras(userId: string): Promise<ProfileExtras> 
       SELECT "profileSongUrl", "profileStyle", "badgePrefs", "bannerNameSize", "bannerNameColor", "bannerNameGlow",
              "profileBgType", "profileBgUrl", "profileBgVideoUrl", "profileCardOpacity",
              "bannerMediaType", "bannerVideoUrl"
-      FROM "User" WHERE id = ${userId}
+      FROM nexus."User" WHERE id = ${userId}
     `;
     const row = rows[0];
     if (!row) return { ...EMPTY, profileStyle: { ...DEFAULT_PROFILE_STYLE } };
@@ -90,18 +90,18 @@ export async function readProfileExtras(userId: string): Promise<ProfileExtras> 
 }
 
 const PROFILE_COLUMN_SQL = [
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileSongUrl" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileStyle" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "badgePrefs" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameSize" DOUBLE PRECISION NOT NULL DEFAULT 1.8`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameColor" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerNameGlow" BOOLEAN NOT NULL DEFAULT false`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgType" TEXT NOT NULL DEFAULT 'image'`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgUrl" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBgVideoUrl" TEXT NOT NULL DEFAULT ''`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileCardOpacity" INTEGER NOT NULL DEFAULT 35`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerMediaType" TEXT NOT NULL DEFAULT 'image'`,
-  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannerVideoUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileSongUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileStyle" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "badgePrefs" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "bannerNameSize" DOUBLE PRECISION NOT NULL DEFAULT 1.8`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "bannerNameColor" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "bannerNameGlow" BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileBgType" TEXT NOT NULL DEFAULT 'image'`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileBgUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileBgVideoUrl" TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "profileCardOpacity" INTEGER NOT NULL DEFAULT 35`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "bannerMediaType" TEXT NOT NULL DEFAULT 'image'`,
+  `ALTER TABLE nexus."User" ADD COLUMN IF NOT EXISTS "bannerVideoUrl" TEXT NOT NULL DEFAULT ''`,
 ];
 
 function missingProfileColumn(err: unknown): boolean {
@@ -139,7 +139,7 @@ async function writeProfileExtrasOnce(userId: string, extras: ProfileExtras): Pr
   const bannerType = sanitizeBgType(extras.bannerMediaType);
   const bannerVideo = sanitizeMediaUrl(extras.bannerVideoUrl);
   await prisma.$executeRaw`
-    UPDATE "User"
+    UPDATE nexus."User"
     SET "profileSongUrl" = ${song}, "profileStyle" = ${style}, "badgePrefs" = ${badges},
         "bannerNameSize" = ${size}, "bannerNameColor" = ${color}, "bannerNameGlow" = ${glow},
         "profileBgType" = ${bgType}, "profileBgUrl" = ${bgUrl}, "profileBgVideoUrl" = ${bgVideo},
