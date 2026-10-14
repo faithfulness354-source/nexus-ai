@@ -31,12 +31,18 @@ export interface InputProps
     VariantProps<typeof inputVariants> {}
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, variant, size, ...props }, ref) => {
+  ({ className, type, variant, size, onFocus, readOnly, ...props }, ref) => {
     return (
       <input
         type={type}
-        className={cn(inputVariants({ variant, size, className }))}
+        className={cn(inputVariants({ variant, size, className }), 'relative z-10 touch-manipulation text-base')}
         ref={ref}
+        readOnly={readOnly === true}
+        onFocus={(event) => {
+          onFocus?.(event);
+          const node = event.currentTarget;
+          window.setTimeout(() => node.scrollIntoView({ block: 'center', inline: 'nearest' }), 280);
+        }}
         {...props}
       />
     )

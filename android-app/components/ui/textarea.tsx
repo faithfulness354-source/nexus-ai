@@ -25,11 +25,17 @@ export interface TextareaProps
     VariantProps<typeof textareaVariants> {}
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, variant, ...props }, ref) => {
+  ({ className, variant, onFocus, readOnly, ...props }, ref) => {
     return (
       <textarea
-        className={cn(textareaVariants({ variant, className }))}
+        className={cn(textareaVariants({ variant, className }), 'relative z-10 touch-manipulation text-base')}
         ref={ref}
+        readOnly={readOnly === true}
+        onFocus={(event) => {
+          onFocus?.(event);
+          const node = event.currentTarget;
+          window.setTimeout(() => node.scrollIntoView({ block: 'center', inline: 'nearest' }), 280);
+        }}
         {...props}
       />
     );

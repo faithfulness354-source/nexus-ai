@@ -5,6 +5,7 @@ import { encode } from 'next-auth/jwt';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { isWhitelistedEmail } from '@/lib/admin';
+import { hasAdminRole } from '@/lib/admin-role';
 
 function cookieName(request: NextRequest): string {
   const forwarded = request.headers.get('x-forwarded-proto');
@@ -35,7 +36,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Sign-in is not configured' }, { status: 503 });
   }
 
-  const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email);
+  // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
+  const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email) || hasAdminRole(user.role, user.isWhitelisted);
   if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
     await prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR_ADMIN', isWhitelisted: true } });
   }

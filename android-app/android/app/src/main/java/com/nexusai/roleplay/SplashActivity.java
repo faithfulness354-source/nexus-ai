@@ -31,9 +31,12 @@ public class SplashActivity extends Activity {
         }
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor("#06060E"));
+        root.setBackgroundColor(Color.BLACK);
         CoverVideo video = new CoverVideo(this);
-        video.setBackgroundColor(Color.TRANSPARENT);
+        video.setBackgroundColor(Color.BLACK);
+        video.setMediaController(null);
+        video.setAlpha(0f);
+        video.setVisibility(View.INVISIBLE);
         root.addView(video, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -42,11 +45,22 @@ public class SplashActivity extends Activity {
         hideSystemBars();
 
         video.setVideoURI(Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.splash_intro));
+        video.setMediaController(null);
         video.setOnPreparedListener(mp -> {
             fitTall(root, video, mp.getVideoWidth(), mp.getVideoHeight());
             mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);
-            video.setBackgroundColor(Color.TRANSPARENT);
+            mp.setOnInfoListener((player, what, extra) -> {
+                if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                    reveal(video);
+                    return true;
+                }
+                return false;
+            });
+            video.setBackgroundColor(Color.BLACK);
             video.start();
+            video.postDelayed(() -> {
+                if (video.isPlaying()) reveal(video);
+            }, 700);
         });
         video.setOnCompletionListener(mp -> openApp());
         video.setOnErrorListener((mp, what, extra) -> {
@@ -81,6 +95,13 @@ public class SplashActivity extends Activity {
             }
         }
         video.setLayoutParams(new FrameLayout.LayoutParams(viewW, viewH, Gravity.CENTER));
+    }
+
+    private void reveal(VideoView video) {
+        if (video.getVisibility() == View.VISIBLE && video.getAlpha() >= 1f) return;
+        video.setBackgroundColor(Color.TRANSPARENT);
+        video.setVisibility(View.VISIBLE);
+        video.setAlpha(1f);
     }
 
     private void hideSystemBars() {
@@ -124,6 +145,10 @@ public class SplashActivity extends Activity {
     static final class CoverVideo extends VideoView {
         CoverVideo(Context context) {
             super(context);
+            setMediaController(null);
+            setBackgroundColor(Color.BLACK);
+            setClickable(false);
+            setFocusable(false);
         }
 
         @Override

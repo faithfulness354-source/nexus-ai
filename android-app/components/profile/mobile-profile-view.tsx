@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pencil, Pin, Sparkles, X } from 'lucide-react';
 import { RichContent } from '@/components/editor/rich-content';
+import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlayer';
 import { ACCENT_THEMES, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
@@ -27,88 +28,91 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
   const [dim, setDim] = useState(45);
   const [editing, setEditing] = useState(false);
   const picks = pinned.length > 0 ? pinned : creations.slice(0, 8);
+  const profileTrack = [...pinned, ...creations].map((item) => (item.audioUrl || '').trim()).find(Boolean) || '';
 
   return (
     <div className="relative flex w-full flex-col" style={{ paddingBottom: 'calc(6rem + env(safe-area-inset-bottom))' }}>
-      <div className="relative z-10 flex flex-col">
-        <div className="relative h-52 w-full overflow-hidden">
-          <div className="absolute inset-0" style={{ backgroundImage: theme.gradient, opacity: 1 - dim / 140 }} />
-          {profile.banner ? (
-            <img src={profile.banner} alt="" className={cn('absolute inset-0 h-full w-full object-cover', profile.bannerAnimated && 'profile-banner-drift')} style={{ objectPosition: bannerFocusPosition(profile.bannerPositionY), opacity: 1 - dim / 200 }} />
-          ) : null}
-          <div className="absolute inset-0 bg-black" style={{ opacity: dim / 100 }} />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
+      <section className="relative z-10 flex flex-col gap-3 px-4 pt-4">
+        <div className="flex items-end gap-3">
+          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-secondary ring-4 ring-background" style={{ boxShadow: `0 0 0 2px ${theme.accent}` }}>
+            {profile.image ? <img src={profile.image} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full items-center justify-center font-display text-2xl font-bold" style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
+          </div>
+          <div className="min-w-0 flex-1 pb-1">
+            <h1 className="break-words font-display text-2xl font-bold leading-tight">{name}</h1>
+            {profile.username && <p className="truncate text-sm font-medium" style={{ color: theme.accent }}>@{profile.username}</p>}
+          </div>
         </div>
 
-        <div className="flex flex-col gap-3 px-4">
-          <div className="-mt-10 flex items-end gap-3">
-            <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-secondary ring-4 ring-background" style={{ boxShadow: `0 0 0 2px ${theme.accent}` }}>
-              {profile.image ? <img src={profile.image} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full items-center justify-center font-display text-2xl font-bold" style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
-            </div>
-            <div className="min-w-0 flex-1 pb-1">
-              <h1 className="break-words font-display text-2xl font-bold leading-tight">{name}</h1>
-              {profile.username && <p className="truncate text-sm font-medium" style={{ color: theme.accent }}>@{profile.username}</p>}
-            </div>
+        {profile.badges.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {profile.badges.map((badge) => {
+              const style = BADGE_STYLE[badge.id];
+              const Icon = style?.icon ?? Sparkles;
+              return <span key={badge.id} className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider', style?.cls)}><Icon className="h-3 w-3" />{badge.label}</span>;
+            })}
           </div>
+        )}
 
-          {profile.badges.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {profile.badges.map((badge) => {
-                const style = BADGE_STYLE[badge.id];
-                const Icon = style?.icon ?? Sparkles;
-                return <span key={badge.id} className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider', style?.cls)}><Icon className="h-3 w-3" />{badge.label}</span>;
-              })}
-            </div>
-          )}
+        {profileTrack && <CharacterAudioPlayer audioUrl={profileTrack} label={name} className="relative z-20 w-fit" />}
 
-          <div className="grid grid-cols-3 gap-2 rounded-2xl bg-card px-2 py-3 ring-1 ring-white/10">
-            <Stat icon={Sparkles} value={profile.stats.characters} label="Characters" />
-            <Stat icon={MessageSquare} value={profile.stats.chats} label="Chats" />
-            <Stat icon={BookOpen} value={profile.stats.loreEntries} label="Lore" />
+        {profile.bio.trim() && (
+          <div className="rounded-2xl bg-card p-4 ring-1 ring-white/10" style={{ borderTop: `2px solid ${theme.accent}` }}>
+            <RichContent content={profile.bio} />
           </div>
+        )}
 
-          <label className="rounded-2xl bg-card px-3 py-3 ring-1 ring-white/10">
-            <span className="mb-2 block text-xs font-semibold text-muted-foreground">Backdrop opacity</span>
-            <input type="range" min={0} max={100} value={dim} onChange={(event) => setDim(Number(event.target.value))} className="h-11 w-full accent-primary" aria-label="Backdrop opacity" />
-          </label>
+        {ownProfile && (
+          <button type="button" onClick={() => setEditing(true)} className="flex h-12 items-center justify-center gap-2 rounded-full bg-primary font-semibold text-primary-foreground">
+            <Pencil className="h-4 w-4" /> Edit profile
+          </button>
+        )}
+      </section>
 
-          {profile.bio.trim() && (
-            <div className="rounded-2xl bg-card p-4 ring-1 ring-white/10" style={{ borderTop: `2px solid ${theme.accent}` }}>
-              <RichContent content={profile.bio} />
-            </div>
-          )}
-
-          {picks.length > 0 && (
-            <section>
-              <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-bold"><Pin className="h-4 w-4" style={{ color: theme.accent }} /> Top 8 Picks</h2>
-              <div className="flex snap-x gap-3 overflow-x-auto pb-2">
-                {picks.map((item) => (
-                  <div key={item.id} className="w-40 shrink-0 snap-start">
-                    <MobileCard item={item} canEdit={canEditCard(item)} />
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section>
-            <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-bold"><Sparkles className="h-4 w-4" style={{ color: theme.accent }} /> {ownProfile ? 'My Created Cards' : 'Created Cards'} ({creations.length})</h2>
-            {creations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No characters yet.</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {creations.map((item) => <MobileCard key={item.id} item={item} canEdit={canEditCard(item)} />)}
-              </div>
-            )}
-          </section>
-        </div>
+      <div className="relative z-0 mt-4 h-40 w-full overflow-hidden">
+        <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: theme.gradient, opacity: 1 - dim / 140 }} />
+        {profile.banner ? (
+          <img src={profile.banner} alt="" className={cn('pointer-events-none absolute inset-0 h-full w-full object-cover', profile.bannerAnimated && 'profile-banner-drift')} style={{ objectPosition: bannerFocusPosition(profile.bannerPositionY), opacity: 1 - dim / 200 }} />
+        ) : null}
+        <div className="pointer-events-none absolute inset-0 bg-black" style={{ opacity: dim / 100 }} />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
       </div>
 
-      {ownProfile && (
-        <button type="button" onClick={() => setEditing(true)} className="fixed inset-x-4 z-40 flex h-12 items-center justify-center gap-2 rounded-full bg-primary font-semibold text-primary-foreground shadow-lg" style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
-          <Pencil className="h-4 w-4" /> Edit profile
-        </button>
-      )}
+      <div className="relative z-10 flex flex-col gap-3 px-4 pt-4">
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-card px-2 py-3 ring-1 ring-white/10">
+          <Stat icon={Sparkles} value={profile.stats.characters} label="Characters" />
+          <Stat icon={MessageSquare} value={profile.stats.chats} label="Chats" />
+          <Stat icon={BookOpen} value={profile.stats.loreEntries} label="Lore" />
+        </div>
+
+        <label className="relative z-10 rounded-2xl bg-card px-3 py-3 ring-1 ring-white/10">
+          <span className="mb-2 block text-xs font-semibold text-muted-foreground">Backdrop opacity</span>
+          <input type="range" min={0} max={100} value={dim} onChange={(event) => setDim(Number(event.target.value))} className="relative z-10 h-11 w-full accent-primary" aria-label="Backdrop opacity" />
+        </label>
+
+        {picks.length > 0 && (
+          <section>
+            <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-bold"><Pin className="h-4 w-4" style={{ color: theme.accent }} /> Top 8 Picks</h2>
+            <div className="flex snap-x gap-3 overflow-x-auto pb-2">
+              {picks.map((item) => (
+                <div key={item.id} className="w-40 shrink-0 snap-start">
+                  <MobileCard item={item} canEdit={canEditCard(item)} />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section>
+          <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-bold"><Sparkles className="h-4 w-4" style={{ color: theme.accent }} /> {ownProfile ? 'My Created Cards' : 'Created Cards'} ({creations.length})</h2>
+          {creations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No characters yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {creations.map((item) => <MobileCard key={item.id} item={item} canEdit={canEditCard(item)} />)}
+            </div>
+          )}
+        </section>
+      </div>
 
       {editing && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60" onClick={() => setEditing(false)}>

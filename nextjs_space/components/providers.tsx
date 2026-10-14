@@ -4,6 +4,7 @@ import { SessionProvider } from 'next-auth/react';
 import type { Session } from 'next-auth';
 import { AccessProvider } from '@/components/billing/access-provider';
 import { CloudSync } from '@/components/supabase/cloud-sync';
+import { MobileKeyboardInset } from '@/components/mobile-keyboard-inset';
 
 const SESSION_PATH = '/api/auth/session';
 /** Collapses the mount burst from NextAuth's broadcast listener into one request. */
@@ -70,6 +71,7 @@ export function Providers({ children, session }: { children: React.ReactNode; se
     <SessionProvider session={session} refetchInterval={0} refetchOnWindowFocus={false}>
       <AccessProvider>
         <CloudSync />
+        <MobileKeyboardInset />
         {children}
       </AccessProvider>
     </SessionProvider>

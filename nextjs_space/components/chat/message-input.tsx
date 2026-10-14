@@ -39,6 +39,7 @@ export function MessageInput({ onSend, disabled, currentModel, models, onModelCh
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.nativeEvent.isComposing || e.key === 'Process') return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -86,8 +87,10 @@ export function MessageInput({ onSend, disabled, currentModel, models, onModelCh
           onKeyDown={handleKeyDown}
           placeholder="Type your message..."
           disabled={disabled}
+          readOnly={false}
           rows={1}
-          className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          enterKeyHint="send"
+          className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 touch-manipulation"
         />
 
         {/* Send */}

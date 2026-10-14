@@ -163,6 +163,19 @@
 
   /* Rich-text character bios / definitions (editor + rendered output) */
   .rich-content { line-height: 1.65; overflow-wrap: anywhere; font-synthesis: weight style; }
+  .rich-content .rt-doc { font-family: inherit; font-size: inherit; line-height: inherit; color: inherit; }
+  .rich-content .rt-doc h1,
+  .rich-content .rt-doc h2,
+  .rich-content .rt-doc h3,
+  .rich-content .rt-doc p,
+  .rich-content .rt-doc li,
+  .rich-content .rt-doc small,
+  .rich-content .rt-doc font {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    color: inherit;
+  }
   .rich-content .rt-align-left { text-align: left; }
   .rich-content .rt-align-center { text-align: center; }
   .rich-content .rt-align-right { text-align: right; }
@@ -252,15 +265,113 @@
 /* Public profile animated banner */
 @keyframes profile-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 @keyframes profile-drift { 0%, 100% { transform: scale(1.04) translate(0, 0); } 50% { transform: scale(1.08) translate(-1.5%, 0); } }
-@keyframes profile-shimmer { 0% { background-position: -150% 0; } 100% { background-position: 250% 0; } }
 .profile-banner-animated { background-size: 300% 300%; animation: profile-shift 14s ease-in-out infinite; }
 .profile-banner-drift { transform-origin: center top; animation: profile-drift 24s ease-in-out infinite; }
-.profile-banner-shimmer {
-  background-image: linear-gradient(110deg, transparent 30%, var(--profile-glow, rgba(139,92,246,0.35)) 50%, transparent 70%);
-  background-size: 200% 100%;
-  mix-blend-mode: screen;
-  animation: profile-shimmer 7s linear infinite;
+.customization-box,
+.settings-panel,
+.bio-card,
+.profile-card,
+.live-preview-box {
+  background-image: none !important;
+  background-color: rgba(10, 10, 18, var(--profile-card-opacity, 0.0)) !important;
+  border: 1px solid rgba(0, 210, 255, calc(var(--profile-card-opacity, 0.0) * 0.3)) !important;
+  /* autoprefixer: off */
+  -webkit-backdrop-filter: blur(calc(var(--profile-card-opacity, 0.0) * 12px)) !important;
+  backdrop-filter: blur(calc(var(--profile-card-opacity, 0.0) * 12px)) !important;
+  /* autoprefixer: on */
 }
+.profile-settings div.settings-panel,
+.profile-settings div.customization-box,
+.profile-settings div.profile-card,
+.profile-settings div.bio-card,
+.profile-settings div.live-preview-box {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.box-glitch-video { display: none !important; }
+.box-glitch-shade { z-index: 10; }
+.profile-settings .settings-panel > :not(.box-glitch-video):not(.box-glitch-shade):not(a),
+.profile-settings .customization-box > :not(.box-glitch-video):not(.box-glitch-shade):not(a),
+.profile-settings .profile-card > :not(.box-glitch-video):not(.box-glitch-shade):not(a),
+.profile-settings .bio-card > :not(.box-glitch-video):not(.box-glitch-shade):not(a),
+.profile-settings .live-preview-box > :not(.box-glitch-video):not(.box-glitch-shade):not(a),
+.profile-settings .section-wrapper > :not(.box-glitch-video):not(.box-glitch-shade):not(a) {
+  position: relative;
+  z-index: 20;
+}
+.profile-settings label,
+.profile-settings p,
+.profile-settings span,
+.profile-settings h1,
+.profile-settings h2,
+.profile-settings h3,
+.profile-settings input,
+.profile-settings textarea,
+.profile-settings button,
+.profile-settings select,
+.profile-settings [role="switch"] {
+  opacity: 1;
+}
+.profile-settings input,
+.profile-settings textarea,
+.profile-settings button,
+.profile-settings [role="switch"] {
+  text-shadow: none;
+}
+.banner-title-wrapper,
+.profile-card {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+.profile-stage { container-type: inline-size; }
+.banner-title-container,
+.banner-display-name-wrapper {
+  position: absolute;
+  z-index: 20;
+  top: 1rem;
+  left: 1.5rem;
+  width: max-content;
+  max-width: calc(100% - 3rem);
+  margin: 0 !important;
+  overflow: visible;
+  pointer-events: none;
+  text-align: left;
+  transform: none !important;
+}
+.banner-display-name-container {
+  position: relative;
+  z-index: 20;
+  overflow: visible;
+}
+.banner-display-name {
+  overflow: visible;
+  white-space: nowrap;
+  font-size: clamp(1.2rem, var(--user-chosen-size, 1.8rem), 2.5rem);
+}
+.profile-avatar,
+.profile-avatar-wrapper,
+.avatar-container {
+  animation: none !important;
+}
+.sovereign-slash { clip-path: polygon(0 0, 100% 0, 85% 100%, 0% 100%); }
 @media (prefers-reduced-motion: reduce) {
-  .profile-banner-animated, .profile-banner-drift, .profile-banner-shimmer { animation: none; }
+  .profile-banner-animated, .profile-banner-drift { animation: none; }
+}
+
+/* Phone keyboards cover fields under 16px and ignore taps while a card is mid-hover. */
+.card-form {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 7.5rem);
+}
+@media (pointer: coarse) {
+  input, textarea, [contenteditable="true"] {
+    font-size: 16px;
+    touch-action: manipulation;
+    -webkit-user-select: text;
+    user-select: text;
+    scroll-margin-top: 5rem;
+    scroll-margin-bottom: 42vh;
+  }
+  .card-form {
+    padding-bottom: max(45vh, calc(env(safe-area-inset-bottom, 0px) + 7.5rem));
+  }
 }

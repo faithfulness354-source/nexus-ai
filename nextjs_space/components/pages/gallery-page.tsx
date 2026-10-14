@@ -251,7 +251,7 @@ export function GalleryPage() {
               loading={loading && library.length === 0}
               onTagClick={setSelectedTag}
               viewerId={access?.userId}
-              isAdmin={access?.isCreatorAdmin}
+              isAdmin={!!access?.isAdmin || !!access?.isCreatorAdmin}
               emptyTitle="No characters yet"
               emptyHint="Characters you create or import will appear here, ready to edit."
             />
@@ -284,7 +284,7 @@ export function GalleryPage() {
               loading={loading && community.length === 0}
               onTagClick={setSelectedTag}
               viewerId={access?.userId}
-              isAdmin={access?.isCreatorAdmin}
+              isAdmin={!!access?.isAdmin || !!access?.isCreatorAdmin}
             />
           </section>
         )}

@@ -39,6 +39,7 @@ function corsHeaders(origin: string): Headers {
 }
 
 export async function proxy(request: NextRequest) {
+  // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
   const requestHeaders = new Headers(request.headers);
   const bearer = requestHeaders.get('authorization') ?? '';
   if (bearer.toLowerCase().startsWith('bearer ')) {

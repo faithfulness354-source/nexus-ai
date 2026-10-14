@@ -9,10 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Save, ArrowLeft, X, Plus, Download, Camera, Loader2, Eye, EyeOff, ChevronDown, ImageIcon, Eraser, Music, Sparkles, Trash2 } from 'lucide-react';
+import { Save, ArrowLeft, X, Plus, Download, Loader2, Eye, EyeOff, ChevronDown, ImageIcon, Eraser, Music, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
-import { CharacterAvatar } from './character-avatar';
+import { mediaVersionUrl } from '@/lib/media-src';
 import { GalleryEditor } from './gallery-editor';
 import { RoleplayText } from '@/components/chat/roleplay-text';
 import { estimateTokens } from '@/lib/tokens';
@@ -139,14 +139,11 @@ function saveDraft(form: CharacterFormState) {
 export function CharacterForm({ initialData, characterId, mode }: CharacterFormProps) {
   const router = useRouter();
   const avatarInput = useRef<HTMLInputElement>(null);
-  const bannerInput = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
   const tagField = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
-  const [portraitBusy, setPortraitBusy] = useState(false);
-  const [bannerUploading, setBannerUploading] = useState(false);
   const [audioUploading, setAudioUploading] = useState(false);
   const [audioStatus, setAudioStatus] = useState('');
   const [tagInput, setTagInput] = useState('');
@@ -358,22 +355,6 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     }
   }
 
-  async function handleBannerFile(file?: File) {
-    if (!file) return;
-    setBannerUploading(true);
-    try {
-      const up = await uploadImage(file, 'banner');
-      updateField('banner', up.url);
-      toast.success('Banner uploaded and cropped to fit the card');
-    } catch (err: any) {
-      console.error('Banner upload failed:', err);
-      toast.error(err?.message ?? 'Upload failed');
-    } finally {
-      setBannerUploading(false);
-      if (bannerInput.current) bannerInput.current.value = '';
-    }
-  }
-
   async function handleAudioFile(file?: File) {
     if (!file) return;
     if (file.type && !file.type.startsWith('audio/')) {
@@ -419,7 +400,8 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     try {
       const up = await uploadImage(file, 'avatar');
       updateField('avatar', up.url);
-      toast.success('Avatar uploaded and cropped to fit');
+      updateField('banner', up.url);
+      toast.success('Main card image saved');
     } catch (err: any) {
       console.error('Avatar upload failed:', err);
       toast.error(err?.message ?? 'Upload failed');
@@ -429,38 +411,13 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     }
   }
 
-  async function generatePortrait() {
-    const id = characterId || initialData?.id;
-    if (!id) {
-      toast.error('Save the character first, then generate a portrait.');
-      return;
-    }
-    const prompt = [form.name, form.title].map((part) => String(part ?? '').trim()).filter(Boolean).join(', ');
-    setPortraitBusy(true);
-    try {
-      const res = await fetch('/api/generate-portrait', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId: id, prompt, isNsfw: form.nsfw === true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? 'Portrait generation failed');
-      updateField('avatar', data.url);
-      toast.success('Portrait ready');
-    } catch (err: any) {
-      toast.error(err?.message ?? 'Portrait generation failed');
-    } finally {
-      setPortraitBusy(false);
-    }
-  }
-
   async function handleSubmit() {
     if (!form.name.trim()) {
       toast.error('Character name is required');
       return;
     }
-    if (audioUploading) {
-      toast.error('Wait for the audio upload to finish, then save');
+    if (audioUploading || avatarUploading) {
+      toast.error('Wait for the upload to finish, then save');
       return;
     }
     setLoading(true);
@@ -486,6 +443,8 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       if (isCreate) clearDraft();
       setDirty(false);
       toast.success(mode === 'edit' ? 'Character updated!' : 'Character created!');
+      window.dispatchEvent(new Event('nexus:cloud-revision'));
+      router.refresh();
       router.push(`/characters/${saved.id}/chat`);
     } catch (err: any) {
       toast.error(err?.message ?? 'Failed to save');
@@ -538,7 +497,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
   const totalTokens = estimateTokens([form.personality, form.scenario, form.exampleDialogue, form.systemPrompt].join('\n'));
 
   return (
-    <div className="max-w-3xl mx-auto py-6 sm:py-8 px-4 pb-24">
+    <div className="card-form max-w-3xl mx-auto px-4 py-6 sm:py-8">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-2 min-w-0">
@@ -622,22 +581,29 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       <div className="space-y-5">
         {/* Identity: avatar + name + title */}
         <section className="rounded-2xl bg-card p-4 sm:p-5 shadow-lg shadow-black/20 ring-1 ring-white/5">
-          <div className="flex flex-col sm:flex-row gap-5 sm:items-center">
-            <div className="flex flex-col items-center gap-2 shrink-0">
-              <button type="button" onClick={() => avatarInput.current?.click()} className="group relative rounded-full" aria-label="Upload avatar">
-                <CharacterAvatar src={form.avatar || null} name={form.name || '?'} className="h-28 w-28 text-4xl ring-4 ring-primary/30" />
-                <span className="absolute inset-0 rounded-full bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                  {avatarUploading ? <Loader2 className="h-6 w-6 animate-spin" /> : <Camera className="h-6 w-6" />}
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="main-card-image">Main Card Image</Label>
+              <button
+                id="main-card-image"
+                type="button"
+                onClick={() => avatarInput.current?.click()}
+                className="group relative mt-2 flex h-44 w-44 items-center justify-center overflow-hidden rounded-xl bg-secondary ring-1 ring-white/10"
+                aria-label="Upload main card image"
+              >
+                {form.avatar ? (
+                  <img key={form.avatar} src={mediaVersionUrl(form.avatar)} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                )}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
+                  {avatarUploading ? <Loader2 className="h-6 w-6 animate-spin" /> : 'Upload'}
                 </span>
               </button>
               <input ref={avatarInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => handleAvatarFile(e.target.files?.[0])} />
-              <span className="text-[11px] text-muted-foreground">{avatarUploading ? 'Uploading…' : 'Click to upload'}</span>
-              <Button type="button" variant="secondary" size="sm" onClick={generatePortrait} disabled={portraitBusy || avatarUploading} className="whitespace-normal">
-                {portraitBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Generate AI Portrait
-              </Button>
+              <p className="mt-1 text-[11px] text-muted-foreground">{avatarUploading ? 'Uploading…' : 'Choose a picture from this device. It is saved as this card’s image.'}</p>
             </div>
-            <div className="flex-1 space-y-3 min-w-0">
+            <div className="space-y-3 min-w-0">
               <div>
                 <Label>Character Name *</Label>
                 <Input value={form.name} onChange={(e) => updateField('name', e.target.value)} placeholder="e.g. Luna Starweaver" className="mt-1 text-base font-semibold" />
@@ -646,29 +612,11 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
                 <Label>Title / Tagline</Label>
                 <Input value={form.title} onChange={(e) => updateField('title', e.target.value)} placeholder="e.g. The exiled moon-priestess who owes you a debt" className="mt-1" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label>Creator</Label>
-                  <Input value={form.creator} onChange={(e) => updateField('creator', e.target.value)} placeholder="Your handle" className="mt-1" />
-                </div>
-                <div>
-                  <Label>Avatar URL</Label>
-                  <Input value={form.avatar} onChange={(e) => updateField('avatar', e.target.value)} placeholder="Or paste an image URL" className="mt-1" />
-                </div>
+              <div>
+                <Label>Creator</Label>
+                <Input value={form.creator} onChange={(e) => updateField('creator', e.target.value)} placeholder="Your handle" className="mt-1" />
               </div>
             </div>
-          </div>
-          <div className="mt-3">
-            <Label>Banner Image</Label>
-            <div className="mt-1 flex gap-2">
-              <Input value={form.banner} onChange={(e) => updateField('banner', e.target.value)} placeholder="Wide image shown on the gallery card (optional) — paste a URL or upload" />
-              <Button type="button" variant="secondary" onClick={() => bannerInput.current?.click()} disabled={bannerUploading} aria-label="Upload banner image">
-                {bannerUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4 sm:mr-1" />}
-                <span className="hidden sm:inline">Upload</span>
-              </Button>
-              <input ref={bannerInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => handleBannerFile(e.target.files?.[0])} />
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">Uploads are auto-cropped from the centre to the card shape (16:10) and scaled down only — never stretched or upscaled.</p>
           </div>
           <div className="mt-3">
             <Label htmlFor="audio-url" className="inline-flex items-center gap-1.5"><Music className="h-3.5 w-3.5" /> Background audio</Label>
@@ -770,7 +718,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
             </div>
           }
         >
-          <GalleryEditor value={form.gallery} onChange={(g) => updateField('gallery', g)} characterName={form.name} onUseAsAvatar={(url) => updateField('avatar', url)} />
+          <GalleryEditor value={form.gallery} onChange={(g) => updateField('gallery', g)} characterName={form.name} onUseAsAvatar={(url) => { updateField('avatar', url); updateField('banner', url); }} />
         </Section>
 
         <Section title="Tags" hint="Help people find your character, e.g. fantasy, romance, sfw. Press Enter, comma or + to add; click a tag to edit it.">
@@ -828,7 +776,10 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
         <p className="text-center text-xs text-muted-foreground">Permanent tokens (definition + scenario + examples): <span className="font-mono">{totalTokens}</span></p>
 
         {mode === 'edit' && initialData?.id && (
-          <div className="fixed bottom-0 inset-x-0 z-30 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-background/95 px-4 py-3 backdrop-blur">
+          <div
+            className="fixed bottom-0 inset-x-0 z-30 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-background/95 px-4 pt-3 backdrop-blur"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
+          >
             <Button type="button" variant="ghost" asChild>
               <Link href="/">Cancel</Link>
             </Button>

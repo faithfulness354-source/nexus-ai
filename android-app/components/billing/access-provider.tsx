@@ -5,6 +5,7 @@ import { AgeGateModal } from '@/components/safety/age-gate-modal';
 import { getAgeVerified, setAgeVerified } from '@/lib/age-gate';
 import { useSession } from 'next-auth/react';
 import type { AccessStatus } from '@/lib/tiers';
+import { useAuth } from '@/lib/use-auth';
 import { PaywallModal, type PaywallReason } from './paywall-modal';
 
 interface AccessContextValue {
@@ -24,6 +25,8 @@ const AccessContext = createContext<AccessContextValue>({
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
   const { status: sessionStatus } = useSession();
+  // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
+  const { is_admin } = useAuth();
   const [status, setStatus] = useState<AccessStatus | null>(null);
   const [paywall, setPaywall] = useState<PaywallReason | null>(null);
 
@@ -40,13 +43,13 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     if (sessionStatus !== 'loading') refresh();
   }, [sessionStatus, refresh]);
 
-  // Creator/admin accounts never see paywalls.
+  // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
   const openPaywall = useCallback(
     (reason: PaywallReason = 'credits') => {
-      if (status?.isAdmin) return;
+      if (is_admin || status?.isAdmin || status?.isCreatorAdmin) return;
       setPaywall(reason);
     },
-    [status?.isAdmin],
+    [is_admin, status?.isAdmin, status?.isCreatorAdmin],
   );
 
   // Age gate: 'form' asks for DOB, 'denied' shows the under-18 message.
@@ -80,13 +83,13 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     settle(false);
     const current = await checkSubscriber();
     // The creator account already confirmed 18+ and bypasses payment and plan limits.
-    if (current?.isAdmin || current?.isCreatorAdmin) return true;
+    if (current?.isAdmin || current?.isCreatorAdmin || is_admin) return true;
     const verified = getAgeVerified();
     if (verified === false) { setAgeGate('denied'); return false; }
     if (verified === true) return allowNsfw(current);
     setAgeGate('form');
     return new Promise<boolean>((resolve) => { resolver.current = resolve; });
-  }, [allowNsfw, checkSubscriber, settle]);
+  }, [allowNsfw, checkSubscriber, is_admin, settle]);
 
   const onAgeSubmit = useCallback(async (age: number) => {
     if (age < 18) {

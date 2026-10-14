@@ -69,7 +69,7 @@ export function appOrigin(request: Request): string {
     const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
     return `${proto.split(',')[0]}://${host.split(',')[0]}`;
   }
-  return process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+  return process.env.NEXTAUTH_URL ?? 'https://nexus-ai-navy-xi.vercel.app';
 }
 
 export const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -93,7 +93,7 @@ export async function sendAuthEmail(opts: { to: string; subject: string; heading
     </div>`;
   if (process.env.NODE_ENV !== 'production') {
     console.info(`[email] To ${opts.to}: ${opts.subject} (${html.length} chars)${opts.code ? ` code=${opts.code}` : ''}${opts.url ? ` ${opts.url}` : ''}`);
-    return { delivered: false };
+    return;
   }
   throw new Error('Email delivery is not configured');
 }

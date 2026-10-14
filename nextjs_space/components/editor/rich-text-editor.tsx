@@ -25,6 +25,7 @@ const FONTS: { group: string; label: string; value: string }[] = [
   { group: 'Script', label: 'Alex Brush', value: '"Alex Brush", cursive' },
   { group: 'Script', label: 'Sacramento', value: '"Sacramento", cursive' },
   { group: 'Calligraphic', label: 'Calligraphic / Ornamental Flourish Script', value: '"Imperial Script", cursive' },
+  { group: 'Display', label: 'Syne', value: 'var(--font-syne), Syne, sans-serif' },
   { group: 'Display', label: 'UnifrakturMaguntia', value: '"UnifrakturMaguntia", serif' },
   { group: 'Display', label: 'Pirata One', value: '"Pirata One", serif' },
   { group: 'Display', label: 'Cinzel Decorative', value: '"Cinzel Decorative", serif' },
@@ -61,7 +62,7 @@ const imageExtension = { name: 'image', enabled: true } as const;
 
 const RICH_SANITIZE = {
   ADD_TAGS: ['img'],
-  ADD_ATTR: ['src', 'alt', 'title', 'width', 'height'],
+  ADD_ATTR: ['src', 'alt', 'title', 'width', 'height', 'style', 'class'],
   FORBID_TAGS: ['script', 'style', 'iframe', 'form', 'input', 'object', 'embed'],
 };
 
@@ -114,7 +115,9 @@ interface RichTextEditorProps {
 export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, className, ariaLabel }: RichTextEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const lastEmitted = useRef<string | null>(null);
+  const composing = useRef(false);
   const savedRange = useRef<Range | null>(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
   const toolbarHold = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const [empty, setEmpty] = useState(!value);
@@ -127,7 +130,8 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
   // Sync external value changes (initial load, snippet inserts) without clobbering typing.
   useEffect(() => {
     const el = ref.current;
-    if (!el || value === lastEmitted.current) return;
+    if (!el || value === lastEmitted.current || composing.current) return;
+    if (document.activeElement === el) return;
     el.innerHTML = toEditorHtml(value);
     lastEmitted.current = value;
     setEmpty(!el.textContent?.trim() && !el.querySelector('img,hr'));
@@ -137,12 +141,18 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
   onChangeRef.current = onChange;
   const emitting = useRef(false);
 
-  const emit = useCallback(() => {
+  const emit = useCallback((materialize = false) => {
     const el = ref.current;
-    if (!el || emitting.current) return;
+    if (!el || emitting.current || composing.current) return;
     emitting.current = true;
     try {
-      materializeImages(el);
+      if (materialize) {
+        materializeImages(el);
+        el.querySelectorAll('b,i,strong,em,span,font,u,s,strike').forEach((node) => {
+          if (!(node instanceof HTMLElement) || node.querySelector('img,hr')) return;
+          if (!node.textContent?.replace(/\u200b/g, '')) node.remove();
+        });
+      }
       const isEmpty = !el.textContent?.trim() && !el.querySelector('img,hr');
       const html = isEmpty ? '' : el.innerHTML;
       setEmpty(isEmpty);
@@ -158,7 +168,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
     if (!el) return;
     const obs = new MutationObserver(() => {
       const node = ref.current;
-      if (!node || node.innerHTML === lastEmitted.current) return;
+      if (!node || composing.current || node.innerHTML === lastEmitted.current) return;
       emit();
     });
     obs.observe(el, { subtree: true, childList: true, characterData: true });
@@ -170,7 +180,19 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
 
   const saveSelection = useCallback(() => {
     const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode)) savedRange.current = sel.getRangeAt(0).cloneRange();
+    const root = ref.current;
+    if (!sel || sel.rangeCount === 0 || !root?.contains(sel.anchorNode)) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    savedRange.current = range;
+    try {
+      const before = document.createRange();
+      before.selectNodeContents(root);
+      before.setEnd(range.startContainer, range.startOffset);
+      const start = before.toString().length;
+      selectionRef.current = { start, end: start + range.toString().length };
+    } catch {
+      selectionRef.current = { start: 0, end: 0 };
+    }
   }, []);
 
   useEffect(() => {
@@ -178,7 +200,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
       if (toolbarHold.current) return;
       saveSelection();
     };
-    const release = () => { toolbarHold.current = false; };
+    const release = () => { window.setTimeout(() => { toolbarHold.current = false; }, 0); };
     document.addEventListener('selectionchange', onSelectionChange);
     document.addEventListener('pointerup', release);
     document.addEventListener('pointercancel', release);
@@ -207,31 +229,85 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
 
   const exec = useCallback((cmd: string, arg?: string) => {
     restoreSelection();
+    saveSelection();
+    const mark = { ...selectionRef.current };
+    const styled = cmd === 'underline' || cmd === 'strikeThrough' || cmd === 'foreColor' || cmd === 'hiliteColor' || cmd === 'removeFormat';
+    if (styled && mark.end <= mark.start) return;
     document.execCommand('styleWithCSS', false, 'true');
     document.execCommand(cmd, false, arg);
-    saveSelection();
+    if (styled) reselectOffsets(mark.start, mark.end);
+    else {
+      saveSelection();
+      restoreSelection();
+    }
     emit();
   }, [restoreSelection, saveSelection, emit]);
 
+  function highlightedRange(): Range | null {
+    restoreSelection();
+    const root = ref.current;
+    const sel = window.getSelection();
+    if (!root || !sel || !sel.rangeCount || !root.contains(sel.anchorNode)) return null;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed || !root.contains(range.commonAncestorContainer)) return null;
+    if (!range.toString().replace(/\u200b/g, '')) return null;
+    saveSelection();
+    if (selectionRef.current.end <= selectionRef.current.start) return null;
+    return range;
+  }
+
+  function reselectOffsets(start: number, end: number) {
+    const root = ref.current;
+    if (!root || end <= start) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    let startNode: Text | null = null;
+    let startOffset = 0;
+    let endNode: Text | null = null;
+    let endOffset = 0;
+    while (walker.nextNode()) {
+      const text = walker.currentNode as Text;
+      const len = text.data.length;
+      if (!startNode && seen + len >= start) {
+        startNode = text;
+        startOffset = start - seen;
+      }
+      if (seen + len >= end) {
+        endNode = text;
+        endOffset = end - seen;
+        break;
+      }
+      seen += len;
+    }
+    if (!startNode || !endNode) return;
+    const range = document.createRange();
+    try {
+      range.setStart(startNode, Math.min(startOffset, startNode.data.length));
+      range.setEnd(endNode, Math.min(endOffset, endNode.data.length));
+    } catch {
+      return;
+    }
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    savedRange.current = range.cloneRange();
+    selectionRef.current = { start, end };
+    root.focus({ preventScroll: true });
+  }
+
   function applySize(v: string) {
-    if (v === 'small') {
-      exec('formatBlock', 'p');
-      exec('fontSize', '2');
-      return;
-    }
-    if (v === 'h1' || v === 'h2') {
-      restoreSelection();
-      document.execCommand('styleWithCSS', false, 'false');
-      const block = `<${v}>`;
-      if (!document.execCommand('formatBlock', false, block)) document.execCommand('formatBlock', false, v);
-      saveSelection();
-      emit();
-      return;
-    }
-    exec('formatBlock', v);
+    if (!highlightedRange()) return;
+    const mark = { ...selectionRef.current };
+    const fontSize = v === 'h1' ? '2rem' : v === 'h2' ? '1.5rem' : v === 'small' ? '0.875rem' : '1rem';
+    wrapSelection('span', '', `font-size: ${fontSize}; line-height: 1.5`);
+    reselectOffsets(mark.start, mark.end);
+    emit();
   }
 
   function wrapSelection(tag: 'strong' | 'em' | 'span', className: string, style?: string) {
+    const { start, end } = selectionRef.current;
+    if (end <= start) return;
     const sel = window.getSelection();
     const root = ref.current;
     if (!sel || !sel.rangeCount || !root) return;
@@ -251,45 +327,42 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
     sel.removeAllRanges();
     sel.addRange(next);
     savedRange.current = next.cloneRange();
+    ref.current?.focus({ preventScroll: true });
+    saveSelection();
   }
 
   function applyInline(kind: 'bold' | 'italic') {
-    restoreSelection();
+    if (!highlightedRange()) return;
+    const mark = { ...selectionRef.current };
     document.execCommand('styleWithCSS', false, 'false');
     const applied = document.execCommand(kind === 'bold' ? 'bold' : 'italic', false);
     if (!applied) wrapSelection(kind === 'bold' ? 'strong' : 'em', kind === 'bold' ? 'rt-bold' : 'rt-italic');
-    saveSelection();
+    reselectOffsets(mark.start, mark.end);
     emit();
   }
 
   function applyFont(family: string) {
-    restoreSelection();
-    const sel = window.getSelection();
-    const root = ref.current;
-    if (!sel || !root) return;
-    if (!sel.rangeCount || !root.contains(sel.anchorNode)) {
-      const end = document.createRange();
-      end.selectNodeContents(root);
-      end.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(end);
-    }
-    const range = sel.getRangeAt(0);
-    if (range.collapsed) {
-      const span = document.createElement('span');
-      span.style.fontFamily = family;
-      span.appendChild(document.createTextNode('\u200b'));
-      range.insertNode(span);
-      const caret = document.createRange();
-      caret.setStart(span.firstChild!, 1);
-      caret.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(caret);
-      savedRange.current = caret.cloneRange();
-    } else {
-      wrapSelection('span', '', `font-family: ${family}`);
-    }
-    saveSelection();
+    if (!highlightedRange()) return;
+    const mark = { ...selectionRef.current };
+    wrapSelection('span', '', `font-family: ${family}`);
+    reselectOffsets(mark.start, mark.end);
+    emit();
+  }
+
+  function applyPaint(cmd: 'foreColor' | 'hiliteColor', value: string) {
+    if (!highlightedRange()) return;
+    const mark = { ...selectionRef.current };
+    const cleared = value === 'transparent' ? 'transparent' : value;
+    wrapSelection('span', '', cmd === 'foreColor' ? `color: ${cleared}` : `background-color: ${cleared}`);
+    reselectOffsets(mark.start, mark.end);
+    emit();
+  }
+
+  function clearFormatting() {
+    if (!highlightedRange()) return;
+    const mark = { ...selectionRef.current };
+    document.execCommand('removeFormat');
+    reselectOffsets(mark.start, mark.end);
     emit();
   }
 
@@ -399,31 +472,48 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
   }
 
   const btn = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors';
-  const keep = (e: React.PointerEvent) => { toolbarHold.current = true; e.preventDefault(); };
+  const keep = (e: React.PointerEvent | React.MouseEvent) => {
+    e.preventDefault();
+    toolbarHold.current = true;
+    saveSelection();
+  };
+  const menuHeld = useRef(false);
+  const keepMenu = (e: React.MouseEvent<HTMLSelectElement> | React.PointerEvent<HTMLSelectElement>) => {
+    toolbarHold.current = true;
+    saveSelection();
+    if ('pointerType' in e) return;
+    e.preventDefault();
+    menuHeld.current = true;
+  };
+  const openMenu = (e: React.MouseEvent<HTMLSelectElement>) => {
+    if (!menuHeld.current) return;
+    menuHeld.current = false;
+    try { e.currentTarget.showPicker(); } catch { /* the menu is already open */ }
+  };
   const sel = 'h-8 max-w-[11rem] rounded-md bg-secondary px-2 text-xs text-foreground ring-1 ring-white/5 focus:outline-none focus:ring-primary';
 
   const colorPanel = (cmd: 'foreColor' | 'hiliteColor', panel: 'color' | 'highlight', Icon: typeof Baseline, label: string) => (
     <Popover open={openPanel === panel} onOpenChange={(o) => setOpenPanel(o ? panel : null)}>
       <PopoverTrigger asChild>
-        <button type="button" onPointerDown={keep} className={btn} aria-label={label} title={label}><Icon className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} className={btn} aria-label={label} title={label}><Icon className="h-4 w-4" /></button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-3" onOpenAutoFocus={(e) => e.preventDefault()}>
         <p className="mb-2 text-xs font-medium">{label}</p>
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.map((p) => (
-            <button key={p.hex} type="button" onPointerDown={keep} onClick={() => { exec(cmd, p.hex); setOpenPanel(null); }} title={p.name} aria-label={`${p.name} ${label}`}
+            <button key={p.hex} type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => { applyPaint(cmd, p.hex); setOpenPanel(null); }} title={p.name} aria-label={`${p.name} ${label}`}
               className="h-7 w-7 rounded-full ring-2 ring-white/10 hover:ring-white/40" style={{ background: p.hex }} />
           ))}
           {cmd === 'hiliteColor' && (
-            <button type="button" onPointerDown={keep} onClick={() => { exec(cmd, 'transparent'); setOpenPanel(null); }} className="h-7 rounded-full px-2 text-[10px] ring-1 ring-white/20">None</button>
+            <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => { applyPaint(cmd, 'transparent'); setOpenPanel(null); }} className="h-7 rounded-full px-2 text-[10px] ring-1 ring-white/20">None</button>
           )}
         </div>
         <div className="mt-3 flex items-center gap-2">
           <input type="color" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="h-8 w-8 cursor-pointer rounded bg-transparent" aria-label="Pick custom color" />
           <Input value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="h-8 font-mono text-xs" aria-label="Custom hex value" />
-          <Button size="sm" type="button" onClick={() => {
+          <Button size="sm" type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => {
             if (!/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(customColor.trim())) return toast.error('Use a hex value like #F5C451');
-            exec(cmd, customColor.trim()); setOpenPanel(null);
+            applyPaint(cmd, customColor.trim()); setOpenPanel(null);
           }}>Apply</Button>
         </div>
       </PopoverContent>
@@ -433,7 +523,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
   return (
     <div className={cn('rounded-xl bg-background ring-1 ring-border focus-within:ring-primary/60 transition-shadow', className)}>
       <div className="sticky z-10 flex flex-wrap items-center gap-1 rounded-t-xl border-b border-border/70 bg-background/95 p-1.5 backdrop-blur-md" style={{ top: 'calc(3.5rem + max(0.5rem, env(safe-area-inset-top)))' }} role="toolbar" aria-label={`${ariaLabel ?? 'Text'} formatting`}>
-        <select aria-label="Font" defaultValue="" className={sel} onPointerDown={saveSelection} onChange={(e) => { if (e.target.value) applyFont(e.target.value); e.target.value = ''; }}>
+        <select aria-label="Font" defaultValue="" className={sel} onMouseDown={keepMenu} onPointerDown={keepMenu} onClick={openMenu} onChange={(e) => { if (e.target.value) applyFont(e.target.value); e.target.value = ''; }}>
           <option value="" disabled>Font</option>
           {FONT_GROUPS.map((group) => (
             <optgroup key={group} label={group}>
@@ -443,7 +533,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
             </optgroup>
           ))}
         </select>
-        <select aria-label="Text size" defaultValue="" className={sel} onMouseDown={saveSelection} onChange={(e) => { if (e.target.value) applySize(e.target.value); e.target.value = ''; }}>
+        <select aria-label="Text size" defaultValue="" className={sel} onMouseDown={keepMenu} onPointerDown={keepMenu} onClick={openMenu} onChange={(e) => { if (e.target.value) applySize(e.target.value); e.target.value = ''; }}>
           <option value="" disabled>Size</option>
           {SIZES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
@@ -451,23 +541,23 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
         {colorPanel('foreColor', 'color', Baseline, 'Text color')}
         {colorPanel('hiliteColor', 'highlight', Highlighter, 'Highlight color')}
         <span className="mx-0.5 h-5 w-px bg-border" />
-        <button type="button" onPointerDown={keep} onClick={() => applyInline('bold')} className={btn} aria-label="Bold" title="Bold"><Bold className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => applyInline('italic')} className={btn} aria-label="Italic" title="Italic"><Italic className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => exec('underline')} className={btn} aria-label="Underline" title="Underline"><Underline className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => exec('strikeThrough')} className={btn} aria-label="Strikethrough" title="Strikethrough"><Strikethrough className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => applyInline('bold')} className={btn} aria-label="Bold" title="Bold"><Bold className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => applyInline('italic')} className={btn} aria-label="Italic" title="Italic"><Italic className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('underline')} className={btn} aria-label="Underline" title="Underline"><Underline className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('strikeThrough')} className={btn} aria-label="Strikethrough" title="Strikethrough"><Strikethrough className="h-4 w-4" /></button>
         <span className="mx-0.5 h-5 w-px bg-border" />
         {([['left', AlignLeft, 'Align left'], ['center', AlignCenter, 'Align center'], ['right', AlignRight, 'Align right'], ['justify', AlignJustify, 'Justify']] as const).map(([align, Icon, label]) => (
-          <button key={align} type="button" onPointerDown={keep} onClick={() => applyAlign(align)} className={btn} aria-label={label} title={label}><Icon className="h-4 w-4" /></button>
+          <button key={align} type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => applyAlign(align)} className={btn} aria-label={label} title={label}><Icon className="h-4 w-4" /></button>
         ))}
         <span className="mx-0.5 h-5 w-px bg-border" />
-        <button type="button" onPointerDown={keep} onClick={() => exec('insertUnorderedList')} className={btn} aria-label="Bulleted list" title="Bulleted list"><List className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => exec('insertOrderedList')} className={btn} aria-label="Numbered list" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => exec('formatBlock', 'blockquote')} className={btn} aria-label="Blockquote" title="Blockquote"><Quote className="h-4 w-4" /></button>
-        <button type="button" onPointerDown={keep} onClick={() => exec('insertHorizontalRule')} className={btn} aria-label="Horizontal rule" title="Horizontal rule"><Minus className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('insertUnorderedList')} className={btn} aria-label="Bulleted list" title="Bulleted list"><List className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('insertOrderedList')} className={btn} aria-label="Numbered list" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('formatBlock', 'blockquote')} className={btn} aria-label="Blockquote" title="Blockquote"><Quote className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={() => exec('insertHorizontalRule')} className={btn} aria-label="Horizontal rule" title="Horizontal rule"><Minus className="h-4 w-4" /></button>
         <span className="mx-0.5 h-5 w-px bg-border" />
         <Popover open={openPanel === 'link'} onOpenChange={(o) => { if (o) saveSelection(); setOpenPanel(o ? 'link' : null); }}>
           <PopoverTrigger asChild>
-            <button type="button" onPointerDown={keep} className={btn} aria-label="Insert link" title="Insert link"><Link2 className="h-4 w-4" /></button>
+            <button type="button" onMouseDown={keep} onPointerDown={keep} className={btn} aria-label="Insert link" title="Insert link"><Link2 className="h-4 w-4" /></button>
           </PopoverTrigger>
           <PopoverContent className="w-72 p-3">
             <p className="mb-2 text-xs font-medium">Insert link</p>
@@ -480,7 +570,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
         </Popover>
         <Popover open={openPanel === 'image'} onOpenChange={(o) => { if (o) saveSelection(); setOpenPanel(o ? 'image' : null); }}>
           <PopoverTrigger asChild>
-            <button type="button" onPointerDown={keep} className={btn} aria-label="Insert image" title="Insert image"><ImagePlus className="h-4 w-4" /></button>
+            <button type="button" onMouseDown={keep} onPointerDown={keep} className={btn} aria-label="Insert image" title="Insert image"><ImagePlus className="h-4 w-4" /></button>
           </PopoverTrigger>
           <PopoverContent className="w-72 p-3">
             <p className="mb-2 text-xs font-medium">Insert image</p>
@@ -495,7 +585,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
             <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
           </PopoverContent>
         </Popover>
-        <button type="button" onPointerDown={keep} onClick={() => exec('removeFormat')} className={btn} aria-label="Clear formatting" title="Clear formatting"><RemoveFormatting className="h-4 w-4" /></button>
+        <button type="button" onMouseDown={keep} onPointerDown={keep} onClick={clearFormatting} className={btn} aria-label="Clear formatting" title="Clear formatting"><RemoveFormatting className="h-4 w-4" /></button>
       </div>
       <div className="relative">
         {empty && placeholder && (
@@ -506,15 +596,22 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
           role="textbox"
           aria-multiline="true"
           aria-label={ariaLabel}
-          contentEditable
+          contentEditable={true}
           suppressContentEditableWarning
-          onInput={emit}
+          inputMode="text"
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => { composing.current = false; emit(true); }}
+          onInput={() => emit(false)}
           onPaste={onPaste}
-          onBlur={() => { saveSelection(); emit(); }}
+          onFocus={(e) => {
+            const node = e.currentTarget;
+            window.setTimeout(() => node.scrollIntoView({ block: 'center', inline: 'nearest' }), 280);
+          }}
+          onBlur={() => { saveSelection(); emit(true); }}
           onKeyUp={saveSelection}
           onMouseUp={saveSelection}
-          className="rich-content break-words px-3 py-2.5 text-sm outline-none [overflow-wrap:anywhere]"
-          style={{ minHeight }}
+          className="rich-content break-words px-3 py-2.5 text-base outline-none [overflow-wrap:anywhere] touch-manipulation"
+          style={{ minHeight, WebkitUserSelect: 'text', userSelect: 'text' }}
         />
       </div>
     </div>

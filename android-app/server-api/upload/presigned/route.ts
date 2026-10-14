@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     const cleanName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
     const cloud_storage_path = `${Date.now()}-${cleanName}`;
     
-    const origin = request.nextUrl.origin || 'http://127.0.0.1:3000';
+    const origin = request.nextUrl.origin || 'https://nexus-ai-navy-xi.vercel.app';
     // Dynamically match whichever path variant the frontend is shouting at
     const incomingPath = request.nextUrl.pathname;
     const uploadUrl = `${origin}${incomingPath}?path=${encodeURIComponent(cloud_storage_path)}`;

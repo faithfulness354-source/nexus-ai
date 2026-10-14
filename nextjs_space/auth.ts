@@ -5,6 +5,7 @@ import { PrismaAdapter } from '@auth/prisma-adapter';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { isWhitelistedEmail } from '@/lib/admin';
+import { hasAdminRole } from '@/lib/admin-role';
 import { consumeAuthToken } from '@/lib/auth-tokens';
 
 function authLookupError(error: unknown): null {
@@ -73,7 +74,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             console.error('[auth] sign-in rejected', { provider: 'credentials', reason: 'password-mismatch', whitelist: isWhitelistedEmail(email) });
             return null;
           }
-          const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email);
+          // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
+          const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email) || hasAdminRole(user.role, user.isWhitelisted);
           if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
             await prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR_ADMIN', isWhitelisted: true } });
           }
@@ -102,7 +104,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             update: { emailVerified: new Date(), ...(admin ? { role: 'CREATOR_ADMIN' as const, isWhitelisted: true } : {}) },
             create: { email, name: email.split('@')[0], emailVerified: new Date(), role: admin ? 'CREATOR_ADMIN' : 'USER', isWhitelisted: admin },
           });
-          const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || admin;
+          // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
+          const isAdmin = user.role === 'CREATOR_ADMIN' || user.isWhitelisted || admin || hasAdminRole(user.role, user.isWhitelisted);
           return { id: user.id, email: user.email, name: user.name, role: isAdmin ? 'CREATOR_ADMIN' : 'USER' };
         } catch (error) {
           console.error('[auth] sign-in rejected', { provider: 'magic-link', reason: 'lookup-failed', message: error instanceof Error ? error.message : '' });

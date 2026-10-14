@@ -82,13 +82,12 @@ export function GalleryPage() {
       params.set('nsfw', nsfwEnabled ? 'true' : 'false');
       if (tab === 'mine') params.set('mine', 'true');
       const res = await fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' });
-      const data = await res.json();
+      const data = res.ok ? await res.json().catch(() => null) : null;
       // A slower browse response must not replace the full owned list.
       if (seq !== loadSeq.current) return;
       setCharacters(Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch {
       if (seq !== loadSeq.current) return;
-      console.error('Failed to load characters', err);
       setCharacters([]);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
@@ -107,11 +106,11 @@ export function GalleryPage() {
   const loadTags = useCallback(async () => {
     try {
       const res = await fetch(`/api/characters?nsfw=${nsfwEnabled ? 'true' : 'false'}`);
-      const data = await res.json();
+      const data = res.ok ? await res.json().catch(() => null) : null;
       const tags = Array.isArray(data) ? data.flatMap((c: any) => c?.tags ?? []) : [];
       setAllTags(Array.from(new Set<string>(tags)).sort());
-    } catch (err) {
-      console.error('Failed to load tags', err);
+    } catch {
+      setAllTags([]);
     }
   }, [nsfwEnabled]);
 
@@ -194,7 +193,7 @@ export function GalleryPage() {
           loading={loading}
           onTagClick={setSelectedTag}
           viewerId={access?.userId}
-          isAdmin={access?.isCreatorAdmin}
+          isAdmin={!!access?.isAdmin || !!access?.isCreatorAdmin}
           emptyTitle={showMine ? 'No characters yet' : undefined}
           emptyHint={showMine ? 'Characters you create or import will appear here, ready to edit.' : undefined}
         />

@@ -104,8 +104,15 @@ export function ProfileHub() {
   const pinned = p.pinnedCharacterIds.map((id) => p.characters.find((c) => c.id === id)).filter(Boolean) as ProfileCharacter[];
 
   return (
-    <section>
-      <div className="flex flex-wrap items-end justify-between gap-3 mb-5">
+    <section className="flex flex-col gap-6 lg:grid lg:grid-cols-2">
+      <div className="order-1 min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live preview</p>
+        <div className="rounded-2xl bg-background ring-1 ring-white/10 pb-6">
+          <PublicProfile compact profile={{ ...p, username: username || null }} pinned={pinned} creations={p.characters} />
+        </div>
+      </div>
+
+      <div className="order-2 flex flex-wrap items-end justify-between gap-3 lg:col-start-1">
         <div>
           <h2 className="font-display text-xl font-bold">Profile Customization</h2>
           <p className="text-sm text-muted-foreground">Design the public page other users see when they visit you.</p>
@@ -123,8 +130,7 @@ export function ProfileHub() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="space-y-5 min-w-0">
+      <div className="order-3 min-w-0 space-y-5 lg:col-start-1">
           <div className="rounded-2xl bg-card p-5 ring-1 ring-white/5 space-y-4">
             <div className="flex gap-4 items-start">
               <ImageField value={p.image} onChange={(image) => void changeAvatar(image)} label="Profile avatar" />
@@ -132,7 +138,7 @@ export function ProfileHub() {
                 <div>
                   <Label htmlFor="pf-user">Username</Label>
                   <div className="relative">
-                    <AtSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <AtSign className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input id="pf-user" className={cn('pl-8', usernameInvalid && 'ring-1 ring-destructive')} value={p.username ?? ''} maxLength={24}
                       onChange={(e) => set({ username: e.target.value.replace(/\s/g, '') })} placeholder="your_handle" />
                   </div>
@@ -233,16 +239,6 @@ export function ProfileHub() {
               </div>
             )}
           </div>
-        </div>
-
-        <div className="min-w-0">
-          <div className="lg:sticky lg:top-20">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live preview</p>
-            <div className="rounded-2xl bg-background ring-1 ring-white/10 pb-6">
-              <PublicProfile compact profile={{ ...p, username: username || null }} pinned={pinned} creations={p.characters} />
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   );

@@ -1,11 +1,13 @@
 import { prisma } from '@/lib/db';
 import { auth } from '@/auth';
 import { isWhitelistedEmail } from '@/lib/admin';
+import { hasAdminRole } from '@/lib/admin-role';
 import { TIERS, type AccessStatus, type TierFeature, type TierId } from '@/lib/tiers';
 import type { User } from '@prisma/client';
 
+// HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
 export function isAdminUser(user: Pick<User, 'role' | 'isWhitelisted' | 'email'>): boolean {
-  return user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email);
+  return user.role === 'CREATOR_ADMIN' || user.isWhitelisted || isWhitelistedEmail(user.email) || hasAdminRole(user.role, user.isWhitelisted);
 }
 
 const ACTIVE_STATUSES = new Set(['active', 'trialing']);
@@ -169,9 +171,10 @@ export function canAccessSession(viewer: Viewer, session: { userId: string | nul
   return session.userId ? session.userId === viewer.user.id || viewer.isAdmin : viewer.isAdmin;
 }
 
-/** The card's author, or the creator/admin account, which can edit every card including private drafts. */
+/** The card's author, or an admin account, which can edit every card including private drafts. */
 export function canEditCharacter(viewer: Viewer, character: { ownerId: string | null }): boolean {
-  return viewer.isCreatorAdmin || (!!character.ownerId && character.ownerId === viewer.user.id);
+  // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
+  return viewer.isAdmin || viewer.isCreatorAdmin || (!!character.ownerId && character.ownerId === viewer.user.id);
 }
 
 /** 18+ NSFW content requires an active Premium/Ultimate subscription or a whitelisted creator admin. */
