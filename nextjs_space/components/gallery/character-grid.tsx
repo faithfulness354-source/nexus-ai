@@ -1,6 +1,6 @@
 'use client';
 
-import { CharacterCard } from './character-card';
+import { CharacterCard, cardAudioTrack } from './character-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserPlus } from 'lucide-react';
 import Link from 'next/link';
@@ -22,7 +22,7 @@ const GRID = 'grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-co
 
 export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdmin, emptyTitle, emptyHint }: CharacterGridProps) {
   const showNsfw = useNsfwView();
-  const visible = showNsfw ? (characters ?? []) : (characters ?? []).filter((character) => !character?.nsfw);
+  const visible = (characters ?? []).filter((character) => showNsfw || !character?.nsfw || (!!viewerId && character.ownerId === viewerId) || isAdmin);
   if (loading) {
     return (
       <div className={GRID}>
@@ -58,11 +58,12 @@ export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdm
 
   return (
     <div className={GRID}>
-      {visible.map((char: any) => (
+      {visible.map((item) => (
         <CharacterCard
-          key={char.id}
-          {...char}
-          canEdit={!!isAdmin || (!!viewerId && char.ownerId === viewerId)}
+          key={item.id}
+          {...item}
+          audioUrl={cardAudioTrack(item)}
+          canEdit={!!isAdmin || (!!viewerId && item.ownerId === viewerId)}
           onTagClick={onTagClick}
         />
       ))}

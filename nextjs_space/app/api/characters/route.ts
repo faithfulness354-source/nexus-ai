@@ -26,31 +26,38 @@ export async function GET(request: NextRequest) {
     const tag = url.searchParams.get('tag') ?? '';
     const mine = url.searchParams.get('mine') === 'true';
     const viewer = await getViewer();
-    // Browse, search, and My Characters include adult cards only for a paid account that turned the profile setting on.
     const showNsfw = await adultCardsEnabled(viewer);
-    const where: any = {};
+    const filters: Record<string, unknown>[] = [];
     if (mine) {
       if (!viewer) return unauthorized();
       await pullCloudLibrary(viewer.user, { force: url.searchParams.get('refresh') === '1' });
-      where.ownerId = viewer.user.id;
+      filters.push({ ownerId: viewer.user.id });
+    } else if (viewer) {
+      filters.push({
+        OR: [
+          { visibility: 'PUBLIC', moderated: false },
+          { ownerId: viewer.user.id },
+        ],
+      });
     } else {
-      where.visibility = 'PUBLIC';
-      where.moderated = false;
+      filters.push({ visibility: 'PUBLIC', moderated: false });
     }
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { summary: { contains: search, mode: 'insensitive' } },
-        { scenario: { contains: search, mode: 'insensitive' } },
-        { creator: { contains: search, mode: 'insensitive' } },
-      ];
+      filters.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { summary: { contains: search, mode: 'insensitive' } },
+          { scenario: { contains: search, mode: 'insensitive' } },
+          { creator: { contains: search, mode: 'insensitive' } },
+        ],
+      });
     }
-    if (tag) {
-    where.tags = { contains: tag, mode: 'insensitive' };
-
+    if (tag) filters.push({ tags: { contains: tag, mode: 'insensitive' } });
+    // Visitors only see non-adult public cards. The owner still receives every card they created.
+    if (!mine && !showNsfw) {
+      filters.push(viewer ? { OR: [{ nsfw: false }, { ownerId: viewer.user.id }] } : { nsfw: false });
     }
-    // Safe by default on every list, including My Characters and search.
-    if (!showNsfw) where.nsfw = false;
+    const where = { AND: filters };
 
     let characters = await prisma.character.findMany({
       where,
@@ -68,7 +75,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       characters.flatMap(({ _count, ...c }) => {
         const flagged = c.nsfw || characterImpliesNsfw(c);
-        if (!showNsfw && flagged) return [];
+        const owned = !!viewer && c.ownerId === viewer.user.id;
+        if (!showNsfw && flagged && !owned) return [];
         const editable = !!viewer && canEditCharacter(viewer, c);
         return [{
           id: c.id,
