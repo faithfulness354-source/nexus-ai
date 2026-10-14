@@ -8,6 +8,7 @@ import { ACCENT_THEMES, ROYAL_BLUE_ALLOY, bannerFocusPosition, isAccentTheme, ty
 import { cn } from '@/lib/utils';
 import { uploadProfileAudio } from '@/lib/upload-client';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
+import { CommentThread } from '@/components/comments/comment-thread';
 
 const BADGE_STYLE: Record<ProfileBadge['id'], { icon: typeof Crown; cls: string }> = {
   ADMIN: { icon: Crown, cls: 'bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-amber-950' },
@@ -130,6 +131,7 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
               </div>
             )}
           </section>
+          {profile.id && <CommentThread type="profile" targetId={profile.id} title="Guestbook" />}
         </div>
       </div>
 
@@ -170,6 +172,7 @@ function MobileCard({ item, canEdit }: { item: ProfileCharacter; canEdit: boolea
         <p className="truncate px-2.5 pt-2 text-sm font-semibold">{item.name}</p>
         <p className="truncate px-2.5 pb-2 text-xs text-muted-foreground">{item.title || 'Open card'}</p>
       </Link>
+      <Link href={`/characters/${item.id}`} className="block px-2.5 pb-1 text-xs font-semibold text-primary">View card</Link>
       {canEdit && <Link href={`/characters/${item.id}/edit`} className="block px-2.5 pb-2.5 text-xs font-semibold text-primary">Edit</Link>}
     </article>
   );

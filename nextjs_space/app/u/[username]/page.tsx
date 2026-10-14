@@ -59,7 +59,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
         <PublicProfile
           key={user.username}
           profile={{
-            username: user.username, displayName: user.displayName, image: user.image, bio: user.bio,
+            id: user.id, username: user.username, displayName: user.displayName, image: user.image, bio: user.bio,
             banner: user.banner, bannerAnimated: user.bannerAnimated, bannerPositionY: user.bannerPositionY || 15, accentTheme: user.accentTheme,
             badges: applyBadgePrefs(profileBadges(user, stats), extras.badgePrefs), stats,
             profileSongUrl: extras.profileSongUrl, profileStyle: extras.profileStyle,

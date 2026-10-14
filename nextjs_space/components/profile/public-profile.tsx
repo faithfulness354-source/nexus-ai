@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { useAccess } from '@/components/billing/access-provider';
 import { useNsfwView } from '@/lib/nsfw-view';
 import { MobileProfileView } from '@/components/profile/mobile-profile-view';
+import { CommentThread } from '@/components/comments/comment-thread';
 
 export interface ProfileCharacter {
   id: string; name: string; title?: string; summary: string; creator?: string; tags: string[];
@@ -30,6 +31,7 @@ export interface PublicProfileData {
   bannerPositionY: number;
   accentTheme: string;
   badges: ProfileBadge[];
+  id?: string;
   stats: { characters: number; loreEntries: number; chats: number };
   profileSongUrl?: string;
   profileStyle?: ProfileStyle;
@@ -275,6 +277,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
       <Section title={`${ownProfile ? 'My Created Cards' : 'Created Cards'} (${library.length})`} icon={Sparkles} accent={typeColor} compact={compact}>
         {library.length === 0 ? <p className="text-sm text-muted-foreground col-span-full">No characters yet.</p> : library.map((item) => <CharacterCard key={item.id} {...item} audioUrl={cardAudioTrack(item)} canEdit={canEdit(item)} showVisibility={canEdit(item)} coverBlur={style.cardBlur} frameStyle={frameStyle} className="profile-card" />)}
       </Section>
+      {profile.id && <div className="px-4 sm:px-8"><CommentThread type="profile" targetId={profile.id} title="Guestbook" /></div>}
       {songUrl && <ProfileSong url={songUrl} autoplay={!compact && style.songAutoplay} accent={typeColor} />}
       </div>
     </div>

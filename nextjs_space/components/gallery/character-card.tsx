@@ -121,6 +121,7 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
       {/* Body */}
       <div className="relative flex flex-1 flex-col px-3 pb-3 pt-3">
         <h3 className="font-display font-bold text-[15px] leading-tight truncate">{name || 'Unnamed'}</h3>
+        <Link href={`/characters/${id}`} className="relative z-20 mt-1 inline-flex text-[11px] font-semibold text-primary">View card</Link>
         {title?.trim() && <p className="mt-0.5 text-[11px] italic text-muted-foreground truncate">{title}</p>}
         <span className="mt-1 inline-flex w-fit max-w-full items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
           <BadgeCheck className="h-3 w-3 shrink-0" />
