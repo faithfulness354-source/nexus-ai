@@ -34,14 +34,14 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
     where: {
       ownerId: user.id,
       ...(seeAll ? {} : { visibility: 'PUBLIC' as const, moderated: false }),
-      ...(seeAll || includeNsfw ? {} : { nsfw: false }),
+      ...(includeNsfw ? {} : { nsfw: false }),
     },
     orderBy: { updatedAt: 'desc' },
     include: { _count: { select: { sessions: true } } },
   });
   const creations = rows.flatMap((c) => {
     const flagged = c.nsfw || characterImpliesNsfw(c);
-    if (!seeAll && !includeNsfw && flagged) return [];
+    if (!includeNsfw && flagged) return [];
     return [{
       id: c.id, name: c.name, title: c.title, summary: c.summary, creator: c.creator, tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       avatar: c.avatar, banner: c.banner, updatedAt: c.updatedAt.toISOString(), nsfw: flagged, chatCount: c._count.sessions, ownerId: c.ownerId,

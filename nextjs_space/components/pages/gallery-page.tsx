@@ -169,7 +169,7 @@ export function GalleryPage() {
     };
   }, [loadFeed, loadTags]);
 
-  const picks = library.slice(0, 8);
+  const picks = library.filter((item) => nsfwEnabled || !item.nsfw).slice(0, 8);
 
   return (
     <div className="min-h-[100dvh] w-full max-w-full bg-background">

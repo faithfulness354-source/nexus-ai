@@ -50,15 +50,16 @@ async function payload(viewer: Viewer) {
     bannerVideoUrl: extras.bannerVideoUrl,
     badges: applyBadgePrefs(profileBadges(user, stats), extras.badgePrefs),
     earnedBadges: profileBadges(user, stats),
-    characters: characters.map((c) => {
+    characters: characters.flatMap((c) => {
       const flagged = c.nsfw || characterImpliesNsfw(c);
-      return {
+      if (!showNsfw && flagged) return [];
+      return [{
         id: c.id, name: c.name, avatar: c.avatar, title: c.title, summary: c.summary, banner: c.banner, updatedAt: c.updatedAt,
         creator: c.creator, ownerId: c.ownerId, visibility: c.visibility, moderated: c.moderated,
         nsfw: flagged,
         hiddenFromPublic: flagged && showNsfw,
         tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
-      };
+      }];
     }),
   };
 }

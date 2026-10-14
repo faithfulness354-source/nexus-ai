@@ -62,7 +62,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
   const showNsfw = useNsfwView();
   const [owned, setOwned] = useState(creations);
   const canEdit = (c: ProfileCharacter) => !!access?.isCreatorAdmin || (!!access?.userId && c.ownerId === access.userId);
-  const keepCard = (c: ProfileCharacter) => showNsfw || !c.nsfw || !!access?.isCreatorAdmin || (!!access?.userId && c.ownerId === access.userId);
+  const keepCard = (c: ProfileCharacter) => showNsfw || !c.nsfw;
   const visibleOwned = owned.filter(keepCard);
   const visiblePinned = pinned.filter(keepCard);
 

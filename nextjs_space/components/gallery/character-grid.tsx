@@ -22,7 +22,7 @@ const GRID = 'grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-co
 
 export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdmin, emptyTitle, emptyHint }: CharacterGridProps) {
   const showNsfw = useNsfwView();
-  const visible = (characters ?? []).filter((character) => showNsfw || !character?.nsfw || (!!viewerId && character.ownerId === viewerId) || isAdmin);
+  const visible = (characters ?? []).filter((character) => showNsfw || !character?.nsfw);
   if (loading) {
     return (
       <div className={GRID}>

@@ -39,8 +39,8 @@ export async function GET(request: NextRequest) {
       });
     }
     if (tag) filters.push({ tags: { contains: tag, mode: 'insensitive' } });
-    if (!mine && (nsfw !== 'true' || !canViewNsfw(viewer))) {
-      filters.push(viewer ? { OR: [{ nsfw: false }, { ownerId: viewer.user.id }] } : { nsfw: false });
+    if (nsfw !== 'true' || !canViewNsfw(viewer)) {
+      filters.push({ nsfw: false });
     }
     const where = { AND: filters };
 

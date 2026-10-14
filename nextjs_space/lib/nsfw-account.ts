@@ -24,10 +24,11 @@ export async function writeAccountNsfwEnabled(userId: string, on: boolean): Prom
   `;
 }
 
-/** Adult cards stay available to admin accounts. Other accounts need an active NSFW plan and the profile setting. */
+/** Admins skip the plan lock and follow the saved toggle. Other accounts need an active NSFW plan and that same toggle. */
 export async function adultCardsEnabled(viewer: Viewer | null): Promise<boolean> {
   // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
-  if (viewer?.isAdmin || viewer?.isCreatorAdmin) return true;
-  if (!viewer || !canViewNsfw(viewer)) return false;
+  if (!viewer) return false;
+  if (viewer.isAdmin || viewer.isCreatorAdmin) return readAccountNsfwEnabled(viewer.user.id);
+  if (!canViewNsfw(viewer)) return false;
   return readAccountNsfwEnabled(viewer.user.id);
 }
