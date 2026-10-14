@@ -6,12 +6,8 @@ import { getViewer, unauthorized } from '@/lib/access';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 const MAX_BYTES = 15 * 1024 * 1024;
-const BUCKET = 'card-images';
-const ALLOWED_MIME = [
-  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
-  'video/mp4', 'video/webm',
-  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/x-m4a',
-];
+const BUCKET = 'profile-audio';
+const ALLOWED_MIME = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/x-m4a'];
 
 function audioExtension(contentType: string, fileName: string): string | null {
   const type = contentType.toLowerCase().split(';')[0].trim();
@@ -44,21 +40,20 @@ function audioName(fileName: string, ext: string): string {
 async function ensureAudioBucket() {
   const admin = supabaseAdmin();
   if (!admin) return null;
-  try {
-    const existing = await admin.storage.getBucket(BUCKET);
-    if (existing.error || !existing.data) {
-      const created = await admin.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024, allowedMimeTypes: ALLOWED_MIME });
-      if (created.error && !/already exists/i.test(created.error.message)) throw created.error;
-    } else {
-      const allowed = existing.data.allowed_mime_types ?? [];
-      const missingAudio = allowed.length > 0 && ALLOWED_MIME.some((type) => type.startsWith('audio/') && !allowed.includes(type));
-      if (missingAudio || existing.data.public === false) {
-        const updated = await admin.storage.updateBucket(BUCKET, { public: true, allowedMimeTypes: Array.from(new Set([...allowed, ...ALLOWED_MIME])), fileSizeLimit: existing.data.file_size_limit ?? 20 * 1024 * 1024 });
-        if (updated.error) throw updated.error;
-      }
+  const existing = await admin.storage.getBucket(BUCKET);
+  if (existing.error || !existing.data) {
+    const created = await admin.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024, allowedMimeTypes: ALLOWED_MIME });
+    if (created.error && !/already exists/i.test(created.error.message)) {
+      const open = await admin.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 20 * 1024 * 1024 });
+      if (open.error && !/already exists/i.test(open.error.message)) throw open.error;
     }
-  } catch (err) {
-    console.error('Audio bucket update failed:', err instanceof Error ? err.message : 'unknown');
+    return admin;
+  }
+  const allowed = existing.data.allowed_mime_types ?? [];
+  const missingAudio = allowed.length > 0 && !allowed.includes('audio/mpeg');
+  if (missingAudio || existing.data.public === false) {
+    const updated = await admin.storage.updateBucket(BUCKET, { public: true, allowedMimeTypes: ALLOWED_MIME, fileSizeLimit: 20 * 1024 * 1024 });
+    if (updated.error) throw updated.error;
   }
   return admin;
 }

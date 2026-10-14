@@ -163,22 +163,37 @@ export async function uploadProfileAudio(file: File): Promise<{ url: string }> {
   if (!contentType) throw new Error('Use an mp3, wav, ogg, m4a, or aac file');
   if (file.size > 15 * 1024 * 1024) throw new Error('That audio file is larger than 15 MB');
   const named = file.name && (AUDIO_TYPES[ext] || declared.startsWith('audio/')) ? file.name : `track.${ext || 'mp3'}`;
-  const body = new FormData();
-  body.set('file', new File([await file.arrayBuffer()], named, { type: contentType }));
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 90_000);
-  try {
-    const res = await fetch('/api/upload/audio', { method: 'POST', body, signal: ctrl.signal });
-    const data = await res.json().catch(() => ({}));
-    const url = publicImageUrl(data?.url);
-    if (!res.ok || !url) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not upload that song');
-    return { url };
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Upload timed out. Try again.');
-    throw err;
-  } finally {
-    clearTimeout(timer);
+  const typed = new File([file], named, { type: contentType });
+  const res = await fetch('/api/upload/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: named, contentType }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const url = publicImageUrl(data?.url);
+  if (!res.ok || !url) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not upload that song');
+  const target = httpUrl(data?.uploadUrl);
+  if (data?.provider === 'supabase') {
+    if (!target) throw new Error('Could not store that song');
+    const body = new FormData();
+    body.append('cacheControl', '3600');
+    body.append('', typed, named);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90_000);
+    try {
+      const put = await fetch(target.toString(), { method: 'PUT', headers: { 'x-upsert': 'true' }, body, signal: ctrl.signal });
+      if (!put.ok) {
+        const detail = (await put.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
+        throw new Error(detail || 'Could not store that song');
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Upload timed out. Try again.');
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return { url };
 }
 
 /** Uploads an MP4 or WebM backdrop. Clips longer than 10 seconds are refused. */
