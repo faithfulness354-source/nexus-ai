@@ -57,6 +57,7 @@ export function ProfileHub() {
   const [p, setP] = useState<ProfileState | null>(null);
   const [saving, setSaving] = useState(false);
   const [songUploading, setSongUploading] = useState(false);
+  const [songName, setSongName] = useState('');
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
 
   useEffect(() => {
@@ -407,11 +408,12 @@ export function ProfileHub() {
               className="block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void uploadSong(file);
+                if (!file) return;
+                setSongName(file.name);
+                void uploadSong(file);
               }}
             />
-            <p className="text-[11px] text-muted-foreground">{songUploading ? 'Uploading…' : 'Choose an audio file from your device, or paste a link.'}</p>
+            <p className="text-sm font-semibold">{songUploading ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : p.profileSongUrl ? 'Song attached' : 'No song attached yet. Choose a file, or paste a link.'}</p>
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">Autoplay on your public page. Visitors can mute it.</p>
               <Switch checked={p.profileStyle.songAutoplay} onCheckedChange={(songAutoplay) => set({ profileStyle: { ...p.profileStyle, songAutoplay } })} aria-label="Autoplay profile song" />

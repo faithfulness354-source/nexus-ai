@@ -182,16 +182,24 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(url ?? '');
+  const [songName, setSongName] = useState('');
+  const [songError, setSongError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { setCurrent(url ?? ''); }, [url]);
 
   async function upload(next: File) {
+    setSongName(next.name);
+    setSongError('');
     setBusy(true);
     try {
       const payload = await uploadProfileAudio(next);
       setCurrent(payload.url);
-      await saveProfile({ profileSongUrl: payload.url });
+      const saved = await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profileSongUrl: payload.url }) });
+      const data = await saved.json().catch(() => ({}));
+      if (!saved.ok) throw new Error(data?.error || 'Could not save the song');
+    } catch (err) {
+      setSongError(err instanceof Error ? err.message : 'Could not attach that song');
     } finally {
       setBusy(false);
     }
@@ -253,11 +261,12 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
           className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
           onChange={(event) => {
             const next = event.target.files?.[0];
-            event.target.value = '';
             if (next) void upload(next);
           }}
         />
       )}
+      <p className="mt-2 text-sm font-semibold">{busy ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : current ? 'Song attached' : 'No song attached yet.'}</p>
+      {songError && <p className="mt-1 text-sm text-destructive">{songError}</p>}
     </div>
   );
 }

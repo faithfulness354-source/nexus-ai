@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
     if (admin) {
       const filePath = `audio/${viewer.user.id}/${audioName(original, ext)}`;
       const stored = await admin.storage.from(BUCKET).upload(filePath, bytes, { contentType: audioContentType(ext, file.type), upsert: true });
-      if (stored.error) throw stored.error;
+      if (stored.error) throw new Error(stored.error.message || 'Could not store that song');
       const pub = admin.storage.from(BUCKET).getPublicUrl(stored.data.path);
       if (!pub.data.publicUrl) throw new Error('Upload did not return an audio address');
       return NextResponse.json({ url: pub.data.publicUrl });

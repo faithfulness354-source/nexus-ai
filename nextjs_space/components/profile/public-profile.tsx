@@ -82,6 +82,8 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
   const bannerFocus = bannerFocusPosition(profile.bannerPositionY);
   const name = profile.displayName || profile.username || 'Creator';
   const [songUrl, setSongUrl] = useState(profile.profileSongUrl ?? '');
+  const [songName, setSongName] = useState('');
+  const [songError, setSongError] = useState('');
   const [songBusy, setSongBusy] = useState(false);
   useEffect(() => { setSongUrl(profile.profileSongUrl ?? ''); }, [profile.profileSongUrl]);
   const library = visibleOwned;
@@ -191,8 +193,9 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
             className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              event.target.value = '';
               if (!file) return;
+              setSongName(file.name);
+              setSongError('');
               setSongBusy(true);
               void uploadProfileAudio(file)
                 .then(async (payload) => {
@@ -206,15 +209,21 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
                   const data = await saved.json().catch(() => ({}));
                   if (!saved.ok) throw new Error(data?.error || 'Could not save the song');
                   const savedUrl = typeof data?.profileSongUrl === 'string' && data.profileSongUrl ? data.profileSongUrl : payload.url;
+                  if (!savedUrl) throw new Error('The song did not save on the profile');
                   setSongUrl(savedUrl);
                   onProfileSong?.(savedUrl);
-                  toast.success('Profile song updated');
+                  toast.success('Profile song attached');
                 })
-                .catch((err: Error) => toast.error(err?.message || 'Could not upload that song'))
+                .catch((err: Error) => {
+                  const message = err?.message || 'Could not attach that song';
+                  setSongError(message);
+                  toast.error(message);
+                })
                 .finally(() => setSongBusy(false));
             }}
           />
-          <p className="mt-2 truncate text-[11px] text-muted-foreground">{songBusy ? 'Uploading…' : songUrl || 'Choose an audio file from your device.'}</p>
+          <p className="mt-2 text-sm font-semibold">{songBusy ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : songUrl ? 'Song attached' : 'No song attached yet.'}</p>
+          {songError && <p className="mt-1 text-sm text-destructive">{songError}</p>}
         </div>
       )}
 
