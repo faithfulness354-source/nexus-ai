@@ -11,7 +11,7 @@ async function main() {
   // Admin accounts (creator whitelist). Existing passwords are never overwritten.
   const admins = [
     { email: 'test-admin@example.com', password: process.env.SEED_TEST_ADMIN_PASSWORD ?? '', name: 'Test Admin' },
-    { email: 'faithfulness354@gmail.com', password: process.env.SEED_CREATOR_PASSWORD ?? '', name: 'Creator' },
+    { email: 'entityxil4@gmail.com', password: process.env.SEED_CREATOR_PASSWORD ?? '', name: 'Creator' },
   ].filter((a) => a.password);
   for (const a of admins) {
     await prisma.user.upsert({
