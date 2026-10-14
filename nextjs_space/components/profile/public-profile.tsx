@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Crown, Gem, Globe2, MessageSquare, BookOpen, Sparkles, Pin, Users, Volume2, VolumeX } from 'lucide-react';
+import { Crown, Gem, Globe2, MessageSquare, BookOpen, Sparkles, Pin, Users, Volume2, VolumeX, Play, Pause } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadProfileAudio } from '@/lib/upload-client';
 import { RichContent } from '@/components/editor/rich-content';
@@ -85,6 +85,8 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
   const [songName, setSongName] = useState('');
   const [songError, setSongError] = useState('');
   const [songBusy, setSongBusy] = useState(false);
+  const [songPlaying, setSongPlaying] = useState(false);
+  const songAudio = useRef<HTMLAudioElement | null>(null);
   useEffect(() => { setSongUrl(profile.profileSongUrl ?? ''); }, [profile.profileSongUrl]);
   const library = visibleOwned;
   const ownProfile = !!access?.username && profile.username === access.username;
@@ -222,7 +224,33 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
                 .finally(() => setSongBusy(false));
             }}
           />
-          <p className="mt-2 text-sm font-semibold">{songBusy ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : songUrl ? 'Song attached' : 'No song attached yet.'}</p>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              disabled={!songUrl || songBusy}
+              aria-label={songPlaying ? 'Pause profile song' : 'Play profile song'}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-black disabled:opacity-40"
+              style={{ backgroundColor: typeColor }}
+              onClick={() => {
+                const node = songAudio.current;
+                if (!node || !songUrl) return;
+                if (node.paused) {
+                  node.muted = false;
+                  node.play().then(() => setSongPlaying(true)).catch(() => { setSongPlaying(false); setSongError('This song file could not be played.'); });
+                } else {
+                  node.pause();
+                  setSongPlaying(false);
+                }
+              }}
+            >
+              {songPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+            </button>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{songBusy ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : songUrl ? 'Song attached' : 'No song attached yet.'}</p>
+              <p className="text-[11px] text-muted-foreground">{songUrl ? 'Press play to hear it.' : 'Choose a file, then press play.'}</p>
+            </div>
+          </div>
+          <audio ref={songAudio} src={songUrl || undefined} preload="metadata" onEnded={() => setSongPlaying(false)} />
           {songError && <p className="mt-1 text-sm text-destructive">{songError}</p>}
         </div>
       )}
@@ -276,7 +304,11 @@ function ProfileSong({ url, autoplay, accent }: { url: string; autoplay: boolean
         onClick={() => {
           const node = audio.current;
           if (!node) return;
-          if (node.paused) node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+          if (node.paused) {
+            node.muted = false;
+            setMuted(false);
+            node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+          }
           else { node.pause(); setPlaying(false); }
         }}
       >

@@ -230,7 +230,10 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
           onClick={() => {
             const node = audio.current;
             if (!node) return;
-            if (node.paused) node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+            if (node.paused) {
+              node.muted = false;
+              node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+            }
             else { node.pause(); setPlaying(false); }
           }}
         >

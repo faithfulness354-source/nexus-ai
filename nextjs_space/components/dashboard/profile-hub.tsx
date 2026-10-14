@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, Save, ExternalLink, Check, Pin, AtSign, Lock } from 'lucide-react';
+import { Loader2, Save, ExternalLink, Check, Pin, AtSign, Lock, Play, Pause } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +58,8 @@ export function ProfileHub() {
   const [saving, setSaving] = useState(false);
   const [songUploading, setSongUploading] = useState(false);
   const [songName, setSongName] = useState('');
+  const [songPlaying, setSongPlaying] = useState(false);
+  const songAudio = useRef<HTMLAudioElement | null>(null);
   const [savedUsername, setSavedUsername] = useState<string | null>(null);
 
   useEffect(() => {
@@ -413,7 +415,24 @@ export function ProfileHub() {
                 void uploadSong(file);
               }}
             />
-            <p className="text-sm font-semibold">{songUploading ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : p.profileSongUrl ? 'Song attached' : 'No song attached yet. Choose a file, or paste a link.'}</p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={!p.profileSongUrl || songUploading}
+                aria-label={songPlaying ? 'Pause profile song' : 'Play profile song'}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
+                onClick={() => {
+                  const node = songAudio.current;
+                  if (!node || !p.profileSongUrl) return;
+                  if (node.paused) node.play().then(() => setSongPlaying(true)).catch(() => setSongPlaying(false));
+                  else { node.pause(); setSongPlaying(false); }
+                }}
+              >
+                {songPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+              </button>
+              <p className="text-sm font-semibold">{songUploading ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : p.profileSongUrl ? 'Song attached' : 'No song attached yet. Choose a file, or paste a link.'}</p>
+            </div>
+            <audio ref={songAudio} src={p.profileSongUrl || undefined} preload="metadata" onEnded={() => setSongPlaying(false)} />
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">Autoplay on your public page. Visitors can mute it.</p>
               <Switch checked={p.profileStyle.songAutoplay} onCheckedChange={(songAutoplay) => set({ profileStyle: { ...p.profileStyle, songAutoplay } })} aria-label="Autoplay profile song" />
