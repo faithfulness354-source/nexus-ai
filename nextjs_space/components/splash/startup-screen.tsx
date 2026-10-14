@@ -2,17 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const EDGE = '#050B14';
+const EDGE = '#000';
 const SRC = '/splash/intro.mp4';
-const SCALE = 0.686375;
 
 type Props = { onComplete?: () => void };
 
 export function StartupSplash({ onComplete }: Props) {
   const [open, setOpen] = useState(true);
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const done = useRef(false);
+  const started = useRef(false);
 
   function finish() {
     if (done.current) return;
@@ -34,54 +34,68 @@ export function StartupSplash({ onComplete }: Props) {
     const video = videoRef.current;
     if (!video || done.current) return;
     if (video.error?.code === MediaError.MEDIA_ERR_ABORTED) return;
-    console.warn('Splash video play blocked, bypassing:', video.error?.message || 'media error');
-    finish();
+    console.warn('Splash video could not play:', video.error?.message || 'media error');
   }
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const close = () => finish();
-    video.parentElement?.setAttribute('data-splash', 'live');
-    video.addEventListener('ended', close);
-    const watch = window.setInterval(() => {
-      if (video.ended || (video.duration > 0 && video.currentTime >= video.duration - 0.2)) close();
-    }, 300);
-    const watchdog = window.setTimeout(close, 17000);
-    const stall = window.setTimeout(() => {
+    const closeAfterPlay = () => {
+      if (!started.current) return;
+      finish();
+    };
+    const markStarted = () => {
       if (done.current) return;
-      const current = videoRef.current;
-      const started = !!current && !current.error && current.currentTime > 0 && !current.paused;
-      if (!started) {
-        console.warn('Splash video play blocked, bypassing: playback stalled');
-        finish();
-      }
-    }, 3500);
-
-    const reveal = () => {
+      started.current = true;
+      setShown(true);
+    };
+    const startPlayback = () => {
       if (done.current) return;
       video.muted = false;
       video.volume = 1;
-      setShown(true);
-      if (video.paused) {
-        void video.play().catch((err) => {
-          console.warn('Splash video play blocked, bypassing:', err);
-          finish();
+      void video.play().then(markStarted).catch(() => {
+        if (done.current) return;
+        video.muted = true;
+        void video.play().then(markStarted).catch((err) => {
+          console.warn('Splash video play blocked, keeping the splash up:', err);
         });
-      }
+      });
     };
-    video.muted = true;
-    void video.play().then(reveal).catch((err) => {
-      console.warn('Splash video play blocked, bypassing:', err);
-      finish();
-    });
+
+    video.parentElement?.setAttribute('data-splash', 'live');
+    video.addEventListener('ended', closeAfterPlay);
+    video.addEventListener('playing', markStarted);
+    const watch = window.setInterval(() => {
+      if (!started.current || done.current) return;
+      const duration = video.duration;
+      if (!Number.isFinite(duration) || duration < 1) return;
+      if (video.ended || video.currentTime >= duration - 0.2) closeAfterPlay();
+    }, 300);
+    startPlayback();
+    const retry = window.setInterval(() => {
+      if (done.current || started.current || !video.paused) return;
+      startPlayback();
+    }, 1000);
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      done.current = false;
+      started.current = false;
+      setOpen(true);
+      setShown(true);
+      video.src = SRC;
+      try { video.currentTime = 0; } catch { /* The file may still be loading. */ }
+      startPlayback();
+    };
+    window.addEventListener('pageshow', onPageShow);
 
     return () => {
-      video.removeEventListener('ended', close);
+      video.removeEventListener('ended', closeAfterPlay);
+      video.removeEventListener('playing', markStarted);
       window.clearInterval(watch);
-      window.clearTimeout(watchdog);
-      window.clearTimeout(stall);
+      window.clearInterval(retry);
+      window.removeEventListener('pageshow', onPageShow);
     };
   }, []);
 
@@ -95,14 +109,14 @@ export function StartupSplash({ onComplete }: Props) {
       style={{
         position: 'fixed',
         top: 0,
-        right: 0,
-        bottom: 0,
         left: 0,
-        zIndex: 200,
-        width: '100%',
-        height: '100%',
-        backgroundColor: EDGE,
+        width: '100vw',
+        height: '100vh',
+        zIndex: 9999,
+        margin: 0,
+        padding: 0,
         overflow: 'hidden',
+        backgroundColor: '#000',
       }}
     >
       <style>{`
@@ -117,6 +131,26 @@ export function StartupSplash({ onComplete }: Props) {
           -webkit-appearance: none;
           pointer-events: none;
         }
+        html[data-native-app="1"] [data-splash] {
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          z-index: 200 !important;
+          background-color: #050B14 !important;
+        }
+        html[data-native-app="1"] [data-splash] video {
+          top: 50% !important;
+          left: 50% !important;
+          transform: translate(-50%, -50%) !important;
+          width: max(calc(100vw * 0.686375), calc(100vh * 1.2206666667)) !important;
+          height: max(calc(100vh * 0.686375), calc(100vw * 0.3860859375)) !important;
+          max-width: none !important;
+          margin: 0 !important;
+          object-fit: fill !important;
+          object-position: center !important;
+          background-color: #050B14 !important;
+        }
       `}</style>
       <video
         ref={videoRef}
@@ -124,7 +158,6 @@ export function StartupSplash({ onComplete }: Props) {
         autoPlay
         muted
         controls={false}
-        loop
         playsInline
         preload="auto"
         onPlaying={() => setShown(true)}
@@ -132,13 +165,13 @@ export function StartupSplash({ onComplete }: Props) {
         onError={onVideoError}
         style={{
           position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: `max(calc(100vw * ${SCALE}), calc(100vh * ${(1280 / 720) * SCALE}))`,
-          height: `max(calc(100vh * ${SCALE}), calc(100vw * ${(720 / 1280) * SCALE}))`,
-          maxWidth: 'none',
-          objectFit: 'fill',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          margin: 0,
+          objectFit: 'cover',
+          objectPosition: 'center',
           backgroundColor: EDGE,
           opacity: shown ? 1 : 0,
           pointerEvents: 'none',

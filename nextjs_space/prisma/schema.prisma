@@ -165,8 +165,32 @@ model User {
   bannerAnimated       Boolean       @default(true)
   /// Vertical crop of the profile banner. 15 keeps faces in frame, 100 shows the bottom.
   bannerPositionY      Int           @default(15)
+  /// image | video. Chooses the banner header media.
+  bannerMediaType      String        @default("image")
+  /// Looping banner header. MP4 or WebM. Empty keeps the still banner.
+  bannerVideoUrl       String        @default("")
+  /// Banner title size in rem. Clamped from 1.2 to 2.5.
+  bannerNameSize       Float         @default(1.8)
+  /// Banner title color. Empty uses the accent theme.
+  bannerNameColor      String        @default("")
+  /// Blend the banner title with the Sovereign RGB glitch shadow.
+  bannerNameGlow       Boolean       @default(false)
+  /// image | video. Chooses which backdrop plays behind the profile.
+  profileBgType        String        @default("image")
+  /// Static profile backdrop. Empty uses the accent gradient.
+  profileBgUrl         String        @default("")
+  /// Short looping backdrop. MP4 or WebM, about 10 seconds.
+  profileBgVideoUrl    String        @default("")
+  /// Floating card fill, 0 (clear) through 100 (solid). Default 35.
+  profileCardOpacity   Int           @default(35)
   accentTheme          String        @default("OBSIDIAN")
   pinnedCharacterIds   String?      
+  /// Public profile background track. Empty until the creator sets an audio URL.
+  profileSongUrl       String        @default("")
+  /// MySpace-style card blur, opacity, glow, and type accent. JSON text.
+  profileStyle         String        @default("")
+  /// Badge display order and which earned badges stay hidden. JSON text.
+  badgePrefs           String        @default("")
   /// Profile setting. Adult cards stay hidden until a paid account turns this on.
   nsfwEnabled          Boolean       @default(false)
   accounts             Account[]

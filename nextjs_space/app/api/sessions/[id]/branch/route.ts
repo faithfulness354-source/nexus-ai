@@ -34,8 +34,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
 
     // Copy messages up to branch point
-    const activeMessages = (await listActiveMessages(id)).filter((msg) => msg.index <= messageIndex);
-    for (const msg of activeMessages) {
+    for (const msg of (originalSession?.messages ?? [])) {
       await prisma.message.create({
         data: {
           sessionId: newSession.id,

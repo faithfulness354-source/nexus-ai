@@ -72,7 +72,7 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
                     <Star className="h-3.5 w-3.5" />
                   </button>
                 )}
-                <button type="button" title="Use as avatar" aria-label="Use as avatar" onClick={() => { onUseAsAvatar(g.url); toast.success('Avatar updated'); }} className="rounded-md bg-black/60 p-1.5 text-white hover:bg-black/80">
+                <button type="button" title="Use as card image" aria-label="Use as card image" onClick={() => { onUseAsAvatar(g.url); toast.success('Card image updated'); }} className="rounded-md bg-black/60 p-1.5 text-white hover:bg-black/80">
                   <UserCircle2 className="h-3.5 w-3.5" />
                 </button>
                 <button type="button" title="Remove" aria-label="Remove image" onClick={() => onChange(value.filter((x) => x.id !== g.id))} className="rounded-md bg-black/60 p-1.5 text-white hover:bg-rose-600">

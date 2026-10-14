@@ -4,6 +4,8 @@ import fs from 'fs';
 import { getViewer, unauthorized } from '@/lib/access';
 import { generatePresignedUploadUrl, getFileUrl } from '@/lib/s3';
 import { extensionForImage, savePublicUpload } from '@/lib/local-upload';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +34,77 @@ function requestOrigin(request: NextRequest): string {
   }
 }
 
+const CARD_IMAGES = 'card-images';
+let cardImagesReady = false;
+
+function safeStem(fileName: string): string {
+  return path.basename(fileName).replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(-60) || 'image';
+}
+
+const MEDIA_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm'];
+
+function mediaExtension(contentType: string, fileName: string): string | null {
+  const image = extensionForImage(contentType, fileName);
+  if (image) return image;
+  const type = contentType.toLowerCase().split(';')[0].trim();
+  if (type === 'video/mp4') return 'mp4';
+  if (type === 'video/webm') return 'webm';
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'mp4' || ext === 'webm') return ext;
+  return null;
+}
+
+function imageObjectPath(userId: string, fileName: string, contentType: string): string {
+  const ext = mediaExtension(contentType, fileName) || 'png';
+  return `cards/${userId}/${crypto.randomUUID()}-${safeStem(fileName)}.${ext}`;
+}
+
+async function ensureCardImagesBucket(admin: SupabaseClient) {
+  if (cardImagesReady) return;
+  const existing = await admin.storage.getBucket(CARD_IMAGES);
+  if (existing.error || !existing.data) {
+    const created = await admin.storage.createBucket(CARD_IMAGES, {
+      public: true,
+      fileSizeLimit: 20 * 1024 * 1024,
+      allowedMimeTypes: MEDIA_MIME,
+    });
+    if (created.error && !/already exists/i.test(created.error.message)) {
+      console.error('Upload URL Generation Error:', created.error);
+      throw created.error;
+    }
+  } else {
+    const updated = await admin.storage.updateBucket(CARD_IMAGES, { public: true, allowedMimeTypes: MEDIA_MIME, fileSizeLimit: 20 * 1024 * 1024 });
+    if (updated.error) {
+      console.error('Upload URL Generation Error:', updated.error);
+      throw updated.error;
+    }
+  }
+  cardImagesReady = true;
+}
+
+async function supabaseUploadTarget(userId: string, fileName: string, contentType: string) {
+  const admin = supabaseAdmin();
+  if (!admin) return null;
+  await ensureCardImagesBucket(admin);
+  const filePath = imageObjectPath(userId, fileName, contentType);
+  const bucket = admin.storage.from(CARD_IMAGES);
+  const signed = await bucket.createSignedUploadUrl(filePath, { upsert: true });
+  if (signed.error || !signed.data?.signedUrl) {
+    console.error('Upload URL Generation Error:', signed.error);
+    throw signed.error ?? new Error('Signed upload URL was empty');
+  }
+  const pub = bucket.getPublicUrl(signed.data.path);
+  if (!pub.data.publicUrl) throw new Error('Upload did not return an image address');
+  return {
+    uploadUrl: signed.data.signedUrl,
+    token: signed.data.token,
+    cloud_storage_path: signed.data.path,
+    url: pub.data.publicUrl,
+    isPublic: true,
+    provider: 'supabase' as const,
+  };
+}
+
 async function cloudTarget(fileName: string, contentType: string) {
   if (!process.env.AWS_BUCKET_NAME?.trim()) return null;
   try {
@@ -54,7 +127,8 @@ export async function OPTIONS() {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!(await getViewer())) return unauthorized();
+    const viewer = await getViewer();
+    if (!viewer) return unauthorized();
     const contentTypeHeader = request.headers.get('content-type') ?? '';
 
     if (contentTypeHeader.includes('multipart/form-data')) {
@@ -62,8 +136,33 @@ export async function POST(request: NextRequest) {
       const file = form.get('file');
       if (!(file instanceof File)) return NextResponse.json({ error: 'No image was uploaded' }, { status: 400, headers: corsHeaders });
       const contentType = file.type || 'application/octet-stream';
-      if (!extensionForImage(contentType, file.name)) {
-        return NextResponse.json({ error: 'That file is not a supported image' }, { status: 400, headers: corsHeaders });
+      if (!mediaExtension(contentType, file.name)) {
+        return NextResponse.json({ error: 'That file is not a supported image or short video' }, { status: 400, headers: corsHeaders });
+      }
+      const admin = supabaseAdmin();
+      if (admin) {
+        await ensureCardImagesBucket(admin);
+        const filePath = imageObjectPath(viewer.user.id, file.name || 'image.png', contentType);
+        const stored = await admin.storage.from(CARD_IMAGES).upload(filePath, Buffer.from(await file.arrayBuffer()), {
+          contentType,
+          upsert: true,
+        });
+        if (stored.error) {
+          console.error('Upload URL Generation Error:', stored.error);
+          return NextResponse.json({ error: 'Could not create upload URL', code: 'UPLOAD_URL_FAILED' }, { status: 500, headers: corsHeaders });
+        }
+        const pub = admin.storage.from(CARD_IMAGES).getPublicUrl(stored.data.path);
+        const publicUrl = pub.data.publicUrl;
+        if (!publicUrl) {
+          return NextResponse.json({ error: 'Upload did not return an image address' }, { status: 500, headers: corsHeaders });
+        }
+        return NextResponse.json({
+          uploadUrl: '',
+          cloud_storage_path: stored.data.path,
+          url: publicUrl,
+          isPublic: true,
+          provider: 'supabase',
+        }, { headers: corsHeaders });
       }
       const url = savePublicUpload(file.name || 'image.png', Buffer.from(await file.arrayBuffer()), contentType);
       return NextResponse.json({ uploadUrl: '', cloud_storage_path: url.slice(1), url, isPublic: true }, { headers: corsHeaders });
@@ -72,9 +171,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const fileName = String(body.fileName || body.filename || 'upload.png');
     const contentType = String(body.contentType || 'image/png');
-    if (!extensionForImage(contentType, fileName)) {
-      return NextResponse.json({ error: 'That file is not a supported image' }, { status: 400, headers: corsHeaders });
+    if (!mediaExtension(contentType, fileName)) {
+      return NextResponse.json({ error: 'That file is not a supported image or short video' }, { status: 400, headers: corsHeaders });
     }
+
+    const supabase = await supabaseUploadTarget(viewer.user.id, fileName, contentType);
+    if (supabase) return NextResponse.json(supabase, { headers: corsHeaders });
 
     const cloud = await cloudTarget(fileName, contentType);
     if (cloud) return NextResponse.json(cloud, { headers: corsHeaders });
@@ -90,8 +192,8 @@ export async function POST(request: NextRequest) {
       isPublic: true,
     }, { headers: corsHeaders });
   } catch (err: any) {
-    console.error('POST upload error:', err instanceof Error ? err.name : 'Error');
-    return NextResponse.json({ error: 'Could not create upload URL' }, { status: 500, headers: corsHeaders });
+    console.error('Upload URL Generation Error:', err);
+    return NextResponse.json({ error: 'Could not create upload URL', code: 'UPLOAD_URL_FAILED' }, { status: 500, headers: corsHeaders });
   }
 }
 

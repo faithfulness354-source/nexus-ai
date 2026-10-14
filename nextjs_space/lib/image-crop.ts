@@ -16,12 +16,25 @@ async function loadImage(file: File): Promise<HTMLImageElement> {
     const img = new Image();
     img.decoding = 'async';
     img.src = url;
-    await img.decode();
+    await Promise.race([
+      img.decode(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Image processing timed out')), 15_000)),
+    ]);
     return img;
   } finally {
     // Safe to revoke once decoded; the bitmap stays in memory.
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
+}
+
+function blobFromCanvas(canvas: HTMLCanvasElement, type: string): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 15_000);
+    canvas.toBlob((blob) => {
+      clearTimeout(timer);
+      resolve(blob);
+    }, type, 0.92);
+  });
 }
 
 /**
@@ -65,9 +78,9 @@ export async function cropToAspect(file: File, { aspect, maxSize }: CropOptions)
     // Keep PNG for transparency; everything else becomes high-quality WebP (JPEG fallback).
     const keepPng = file.type === 'image/png';
     const type = keepPng ? 'image/png' : 'image/webp';
-    let blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, type, 0.92));
+    let blob = await blobFromCanvas(canvas, type);
     if (!blob || (!keepPng && blob.type !== 'image/webp')) {
-      blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
+      blob = await blobFromCanvas(canvas, 'image/jpeg');
     }
     if (!blob) return file;
     const ext = blob.type.split('/')[1] === 'jpeg' ? 'jpg' : blob.type.split('/')[1];

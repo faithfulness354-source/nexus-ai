@@ -768,24 +768,26 @@ export function ChatView({ characterId }: ChatViewProps) {
         />
       )}
       <PersonaEditor persona={editingPersona} onClose={() => setEditingPersona(null)} onSaved={refreshPersona} />
-      {canHearAudio && character?.audioUrl?.trim() && (
-        <CharacterAudioPlayer audioUrl={character.audioUrl} label={character.name} className="fixed bottom-24 right-4 z-40" />
-      )}
       <AppHeader
         left={
-          <button
-            type="button"
-            onClick={() => openDetails('memory')}
-            className="flex items-center gap-2.5 min-w-0 rounded-lg px-1.5 py-1 hover:bg-secondary transition-colors text-left"
-          >
-            <CharacterAvatar src={character?.avatar} name={character?.name} className="h-9 w-9 text-sm ring-2 ring-primary/40" />
-            <div className="min-w-0">
-              <p className="font-display font-semibold leading-tight truncate">{character?.name ?? 'Character'}</p>
-              <p className="text-[11px] text-muted-foreground truncate max-w-[42vw] sm:max-w-md">
-                {htmlToPlainText(character?.summary ?? '').replace(/[#*_`>]/g, '').trim() || currentModel}
-              </p>
-            </div>
-          </button>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => openDetails('memory')}
+              className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left hover:bg-secondary transition-colors"
+            >
+              <CharacterAvatar src={character?.avatar} name={character?.name} className="h-9 w-9 text-sm ring-2 ring-primary/40" />
+              <div className="min-w-0">
+                <p className="font-display font-semibold leading-tight truncate">{character?.name ?? 'Character'}</p>
+                <p className="text-[11px] text-muted-foreground truncate max-w-[28vw] sm:max-w-md">
+                  {htmlToPlainText(character?.summary ?? '').replace(/[#*_`>]/g, '').trim() || currentModel}
+                </p>
+              </div>
+            </button>
+            {canHearAudio && character?.audioUrl?.trim() && (
+              <CharacterAudioPlayer audioUrl={character.audioUrl} label={character.name} autoplay className="shrink-0" />
+            )}
+          </div>
         }
         right={
           <>

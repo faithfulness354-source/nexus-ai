@@ -16,7 +16,8 @@ function plainBio(value: string): string {
 }
 
 export default async function ProfilesDirectoryPage() {
-  const viewerId = null;
+  const session = await auth();
+  const viewerId = session?.user?.id ?? null;
   const rows = await prisma.user.findMany({
     where: { username: { not: null } },
     select: {

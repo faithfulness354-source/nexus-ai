@@ -1,6 +1,6 @@
 'use client';
 
-import { CharacterCard } from './character-card';
+import { CharacterCard, cardAudioTrack } from './character-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserPlus } from 'lucide-react';
 import Link from 'next/link';
@@ -55,11 +55,12 @@ export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdm
 
   return (
     <div className={GRID}>
-      {characters.map((char: any) => (
+      {characters.map((item) => (
         <CharacterCard
-          key={char.id}
-          {...char}
-          canEdit={!!isAdmin || (!!viewerId && char.ownerId === viewerId)}
+          key={item.id}
+          {...item}
+          audioUrl={cardAudioTrack(item)}
+          canEdit={!!isAdmin || (!!viewerId && item.ownerId === viewerId)}
           onTagClick={onTagClick}
         />
       ))}

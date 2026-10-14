@@ -13,12 +13,7 @@ export async function GET() {
     include: { entries: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] } },
     orderBy: { updatedAt: 'desc' },
   });
-  return json(books.map((book) => ({
-    ...book,
-    characterIds: unpackList(book.characterIds),
-    personaIds: unpackList(book.personaIds),
-    entries: book.entries.map((entry) => ({ ...entry, keys: unpackList(entry.keys) })),
-  })));
+  return json(books);
 }
 
 export async function POST(request: Request) {
@@ -31,21 +26,10 @@ export async function POST(request: Request) {
     if (!data.name) return json({ error: 'Lorebook name is required' }, 400);
     if ((await prisma.lorebook.count({ where: { userId: viewer.user.id } })) >= 100) return json({ error: 'You can have up to 100 lorebooks.' }, 400);
     const book = await prisma.lorebook.create({
-      data: {
-        ...data,
-        characterIds: packList(data.characterIds),
-        personaIds: packList(data.personaIds),
-        userId: viewer.user.id,
-        entries: { create: entriesInput(body?.entries).map((entry) => ({ ...entry, keys: packList(entry.keys) })) },
-      },
+      data: { ...data, userId: viewer.user.id, entries: { create: entriesInput(body?.entries) } },
       include: { entries: { orderBy: { order: 'asc' } } },
     });
-    return json({
-      ...book,
-      characterIds: unpackList(book.characterIds),
-      personaIds: unpackList(book.personaIds),
-      entries: book.entries.map((entry) => ({ ...entry, keys: unpackList(entry.keys) })),
-    }, 201);
+    return json(book, 201);
   } catch (err: any) {
     console.error('POST /api/lorebooks error:', err);
     return json({ error: err?.message ?? 'Failed to save lorebook' }, 500);

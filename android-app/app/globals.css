@@ -196,8 +196,7 @@
   }
   .rich-content code { font-family: ui-monospace, monospace; font-size: 0.9em; background: hsl(var(--secondary)); padding: 0.1em 0.35em; border-radius: 4px; }
   .rich-content pre { background: hsl(var(--secondary)); padding: 0.75em; border-radius: 8px; overflow-x: auto; }
-  .rich-content strong, .rich-content b, .rich-content .rt-bold { font-weight: 700; }
-  .rich-content em, .rich-content i, .rich-content .rt-italic { font-style: italic; }
+  .rich-content strong, .rich-content b { font-weight: 700; }
 
   /* Roleplay formatting: *actions* soft purple-gray italics, "dialogue" bold */
   .rp-action { font-style: italic; color: hsl(258 30% 72%); }

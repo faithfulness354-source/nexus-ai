@@ -112,12 +112,28 @@ export function CharacterAudioPlayer({
     }
   }
 
+  function keep(e: React.SyntheticEvent) {
+    e.stopPropagation();
+  }
+
+  function hold(e: React.SyntheticEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   return (
-    <div className={cn('pointer-events-auto flex items-center gap-1 rounded-full bg-black/75 p-1 text-white shadow-lg ring-1 ring-white/15', className)}>
+    <div
+      className={cn('pointer-events-auto flex items-center gap-1 rounded-full bg-black/75 p-1 text-white shadow-lg ring-1 ring-white/15', className)}
+      onPointerDown={keep}
+      onMouseDown={keep}
+      onClick={hold}
+    >
       <audio ref={audioRef} src={src} preload="auto" loop playsInline data-character-audio={id} />
       <button
         type="button"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); void togglePlay(); }}
+        onPointerDown={keep}
+        onMouseDown={keep}
+        onClick={(e) => { hold(e); void togglePlay(); }}
         aria-label={playing ? `Pause ${label} audio` : `Play ${label} audio`}
         title={needsGesture ? 'Tap to play' : playing ? 'Pause' : 'Play'}
         className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
@@ -126,7 +142,9 @@ export function CharacterAudioPlayer({
       </button>
       <button
         type="button"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); void toggleMute(); }}
+        onPointerDown={keep}
+        onMouseDown={keep}
+        onClick={(e) => { hold(e); void toggleMute(); }}
         aria-label={muted ? `Unmute ${label} audio` : `Mute ${label} audio`}
         aria-pressed={muted}
         className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"

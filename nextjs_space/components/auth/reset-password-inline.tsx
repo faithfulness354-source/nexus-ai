@@ -113,14 +113,8 @@ export function ResetPasswordInline({ initialEmail, target, onBack }: { initialE
             autoComplete="one-time-code"
             className="font-mono tracking-[0.3em] uppercase"
           />
-          {previewCode ? (
-            <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
-              Email is not set up on this server, so the code is here: <span className="font-mono font-semibold tracking-[0.2em]">{previewCode}</span>
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">Sent to {email} if the account exists. Valid for 15 minutes.</p>
-          )}
           <p className="text-xs text-muted-foreground">
+            Sent to {email} if the account exists. Valid for 15 minutes.{' '}
             <button type="button" onClick={resend} className="font-medium text-primary hover:underline">Resend</button>
           </p>
         </div>

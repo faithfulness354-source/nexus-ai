@@ -40,7 +40,7 @@ export function PersonasHub() {
 
   async function load() {
     try {
-      const r = await fetch('/api/personas');
+      const r = await fetch('/api/personas', { cache: 'no-store' });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.error ?? 'Failed to load personas');
       setPersonas(d);
@@ -77,6 +77,7 @@ export function PersonasHub() {
       toast.success('Persona saved');
       setEditing(null);
       await load();
+      window.dispatchEvent(new Event('nexus:cloud-revision'));
     } catch (err: any) {
       toast.error(err?.message ?? 'Failed to save persona');
     } finally {

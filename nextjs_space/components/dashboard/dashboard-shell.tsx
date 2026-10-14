@@ -17,9 +17,9 @@ export const HUBS = [
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
-    <div className="min-h-screen bg-background">
+    <div className={cn('min-h-screen', pathname === '/dashboard/profile' ? 'bg-black' : 'bg-background')}>
       <AppHeader />
-      <div className="mx-auto w-full max-w-6xl px-4 pt-6 pb-16">
+      <div className={cn('mx-auto w-full pb-16', pathname === '/dashboard/profile' ? 'max-w-none p-4 sm:p-6 lg:p-8' : 'max-w-6xl px-4 pt-6')}>
         <div className="mb-6">
           <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage everything that shapes your roleplay.</p>
