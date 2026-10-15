@@ -32,7 +32,11 @@ export function PersonaEditor({
 }) {
   const [draft, setDraft] = useState<PersonaData | null>(persona);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setDraft(persona); }, [persona]);
+  const [personaSeen, setPersonaSeen] = useState(persona);
+  if (personaSeen !== persona) {
+    setPersonaSeen(persona);
+    setDraft(persona);
+  }
   const appearance = draft ? parseAppearance(draft.appearance) : null;
   const pronounPreset = draft ? (PRONOUN_OPTIONS as readonly string[]).includes(draft.pronouns) : true;
 

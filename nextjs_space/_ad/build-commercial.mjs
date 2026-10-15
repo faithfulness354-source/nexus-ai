@@ -1,11 +1,11 @@
-const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const ffmpeg = path.join(
   'C:\\Users\\faith\\Downloads\\nexus_roleplay\\nextjs_space\\_splash-tools\\node_modules\\ffmpeg-static\\ffmpeg.exe',
 );
-const dir = __dirname;
+const dir = import.meta.dirname;
 const assets = 'C:\\Users\\faith\\.cursor\\projects\\c-Users-faith-Downloads-nexus-roleplay\\assets';
 const song = 'C:\\Users\\faith\\Downloads\\Threshold_of_the_New_World.mp3';
 const out = 'C:\\Users\\faith\\Downloads\\Nexus_AI_Commercial.mp4';

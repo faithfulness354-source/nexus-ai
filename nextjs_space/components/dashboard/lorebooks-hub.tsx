@@ -54,7 +54,9 @@ export function LorebooksHub() {
       setLoading(false);
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void (async () => { await load(); })();
+  }, []);
 
   const triggered = useMemo(() => {
     if (!draft || !testText.trim()) return [];

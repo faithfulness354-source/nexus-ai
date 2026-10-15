@@ -41,7 +41,9 @@ export function MaintenancePanel() {
     setData(await res.json());
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void (async () => { await load(); })();
+  }, [load]);
 
   async function runReport() {
     setRunning(true);

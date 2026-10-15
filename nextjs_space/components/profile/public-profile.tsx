@@ -63,15 +63,18 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
   const { status: access } = useAccess();
   const showNsfw = useNsfwView();
   const [owned, setOwned] = useState(creations);
+  const [ownedSource, setOwnedSource] = useState(creations);
+  const [ownedUser, setOwnedUser] = useState(profile.username);
+  if (ownedSource !== creations || ownedUser !== profile.username) {
+    setOwnedSource(creations);
+    setOwnedUser(profile.username);
+    setOwned(creations);
+  }
   const canEdit = (c: ProfileCharacter) => !!access?.isCreatorAdmin || (!!access?.userId && c.ownerId === access.userId);
   const keepCard = (c: ProfileCharacter) => showNsfw || !c.nsfw;
   const visibleOwned = owned.filter(keepCard);
   const visiblePinned = pinned.filter(keepCard);
 
-  // Re-apply the full server list when the profile changes so a short first paint cannot stick.
-  useEffect(() => {
-    setOwned(creations);
-  }, [profile.username, creations]);
   const theme = ACCENT_THEMES[isAccentTheme(profile.accentTheme) ? profile.accentTheme : 'OBSIDIAN'];
   const style = profile.profileStyle ?? DEFAULT_PROFILE_STYLE;
   const typeColor = style.typeAccent || theme.accent;
@@ -84,12 +87,17 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
   const bannerFocus = bannerFocusPosition(profile.bannerPositionY);
   const name = profile.displayName || profile.username || 'Creator';
   const [songUrl, setSongUrl] = useState(profile.profileSongUrl ?? '');
+  const nextSong = profile.profileSongUrl ?? '';
+  const [songSource, setSongSource] = useState(nextSong);
+  if (nextSong !== songSource) {
+    setSongSource(nextSong);
+    setSongUrl(nextSong);
+  }
   const [songName, setSongName] = useState('');
   const [songError, setSongError] = useState('');
   const [songBusy, setSongBusy] = useState(false);
   const [songPlaying, setSongPlaying] = useState(false);
   const songAudio = useRef<HTMLAudioElement | null>(null);
-  useEffect(() => { setSongUrl(profile.profileSongUrl ?? ''); }, [profile.profileSongUrl]);
   const library = visibleOwned;
   const ownProfile = !!access?.username && profile.username === access.username;
 
@@ -134,6 +142,8 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
           <img
             src={profile.banner}
             alt={`${name} banner`}
+            loading="lazy"
+            decoding="async"
             className={cn('absolute inset-0 h-full w-full object-cover', profile.bannerAnimated && 'profile-banner-drift')}
             style={{ objectPosition: bannerFocus, transformOrigin: 'center top' }}
           />
@@ -160,7 +170,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
           className={cn('profile-avatar relative shrink-0 rounded-full overflow-hidden bg-secondary ring-4 ring-background flex items-center justify-center font-display font-bold text-3xl', compact ? 'h-20 w-20' : 'h-28 w-28')}
           style={{ boxShadow: `0 0 0 2px ${typeColor}, 0 0 30px ${theme.glow}` }}
         >
-          {profile.image ? <img src={profile.image} alt={name} className="h-full w-full object-cover" /> : <span style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
+          {profile.image ? <img src={profile.image} alt={name} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <span style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
         </div>
         <div className="overflow-visible pb-1">
           {!compact && access?.username && profile.username === access.username && (
@@ -192,7 +202,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
           <input
             id={compact ? 'preview-profile-song-file' : 'profile-song-file'}
             type="file"
-            accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+            accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.flac"
             disabled={songBusy}
             className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
             onChange={(event) => {
@@ -236,6 +246,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
               onClick={() => {
                 const node = songAudio.current;
                 if (!node || !songUrl) return;
+                if (node.getAttribute('src') !== songUrl) node.src = songUrl;
                 if (node.paused) {
                   node.muted = false;
                   node.play().then(() => setSongPlaying(true)).catch(() => { setSongPlaying(false); setSongError('This song file could not be played.'); });
@@ -252,7 +263,7 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
               <p className="text-[11px] text-muted-foreground">{songUrl ? 'Press play to hear it.' : 'Choose a file, then press play.'}</p>
             </div>
           </div>
-          <audio ref={songAudio} src={songUrl || undefined} preload="metadata" onEnded={() => setSongPlaying(false)} />
+          <audio ref={songAudio} preload="none" onEnded={() => setSongPlaying(false)} />
           {songError && <p className="mt-1 text-sm text-destructive">{songError}</p>}
         </div>
       )}
@@ -310,7 +321,7 @@ function ProfileSong({ url, autoplay, accent }: { url: string; autoplay: boolean
           if (node.paused) {
             node.muted = false;
             setMuted(false);
-            node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+            node.play().then(() => setPlaying(true)).catch(() => { setPlaying(false); toast.error('That song could not be played.'); });
           }
           else { node.pause(); setPlaying(false); }
         }}

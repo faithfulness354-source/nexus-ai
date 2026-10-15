@@ -41,7 +41,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (sessionStatus !== 'loading') refresh();
+    if (sessionStatus === 'loading') return;
+    void (async () => { await refresh(); })();
   }, [sessionStatus, refresh]);
 
   // Restore a saved profile preference only when this account may still view adult cards.

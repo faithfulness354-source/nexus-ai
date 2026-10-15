@@ -1,7 +1,8 @@
-const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
+const __dirname = import.meta.dirname;
 const ffmpeg = 'C:\\Users\\faith\\Downloads\\nexus_roleplay\\nextjs_space\\_splash-tools\\node_modules\\ffmpeg-static\\ffmpeg.exe';
 const dl = 'C:\\Users\\faith\\Downloads\\';
 const song = dl + 'Threshold_of_the_New_World.mp3';

@@ -57,11 +57,21 @@ export function ImportModal({ open, onClose, onImported }: ImportModalProps) {
   const [error, setError] = useState('');
   const [report, setReport] = useState<Report | null>(null);
 
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  if (previewFile !== file) {
+    setPreviewFile(file);
+    if (!file || !file.type.startsWith('image/')) setPreview(null);
+  }
+
   useEffect(() => {
-    if (!file || !file.type.startsWith('image/')) { setPreview(null); return; }
+    if (!file || !file.type.startsWith('image/')) return;
     const u = URL.createObjectURL(file);
-    setPreview(u);
-    return () => URL.revokeObjectURL(u);
+    let cancel = false;
+    queueMicrotask(() => { if (!cancel) setPreview(u); });
+    return () => {
+      cancel = true;
+      URL.revokeObjectURL(u);
+    };
   }, [file]);
 
   const busy = phase === 'sending' || phase === 'parsing';

@@ -46,7 +46,9 @@ export function ScriptsHub() {
       setLoading(false);
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void (async () => { await load(); })();
+  }, []);
 
   const regexError = editing?.kind === 'REGEX' && editing.findPattern ? (() => { const r = compileScript(editing.findPattern, editing.flags); return typeof r === 'string' ? r : null; })() : null;
   const preview = useMemo(() => {

@@ -12,15 +12,18 @@ export function TermsOfServiceGate({ children }: { children: React.ReactNode }) 
   const { status } = useSession();
   const pathname = usePathname();
   const [acceptedTerms, setAcceptedTerms] = useState<boolean | null>(null);
+  const [statusSeen, setStatusSeen] = useState(status);
+  if (statusSeen !== status) {
+    setStatusSeen(status);
+    if (status === 'loading') setAcceptedTerms(null);
+    else if (status !== 'authenticated') setAcceptedTerms(true);
+    else setAcceptedTerms(null);
+  }
 
   useEffect(() => {
-    if (status === 'loading') return;
-    if (status !== 'authenticated') {
-      setAcceptedTerms(true);
-      return;
-    }
+    if (status !== 'authenticated') return;
     let cancel = false;
-    (async () => {
+    void (async () => {
       try {
         const response = await fetch('/api/account/tos', { cache: 'no-store', credentials: 'include' });
         const body = await response.json().catch(() => null) as { accepted?: boolean } | null;

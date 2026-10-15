@@ -80,18 +80,25 @@ export function EmailRequestForm({ kind, callbackUrl }: { kind: 'reset' | 'magic
 }
 
 export function ResetPasswordForm({ token }: { token: string }) {
-  const [valid, setValid] = useState<boolean | null>(null);
+  const [valid, setValid] = useState<boolean | null>(token ? null : false);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [tokenSeen, setTokenSeen] = useState(token);
+  if (tokenSeen !== token) {
+    setTokenSeen(token);
+    setValid(token ? null : false);
+  }
 
   useEffect(() => {
-    if (!token) { setValid(false); return; }
+    if (!token) return;
+    let cancel = false;
     fetch(`/api/account/reset-password?token=${encodeURIComponent(token)}`)
       .then((r) => r.json())
-      .then((d) => setValid(!!d?.valid))
-      .catch(() => setValid(false));
+      .then((d) => { if (!cancel) setValid(!!d?.valid); })
+      .catch(() => { if (!cancel) setValid(false); });
+    return () => { cancel = true; };
   }, [token]);
 
   async function submit(e: React.FormEvent) {

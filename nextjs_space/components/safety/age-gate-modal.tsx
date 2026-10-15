@@ -23,14 +23,19 @@ export function AgeGateModal({ open, denied, onSubmit, onClose }: AgeGateModalPr
   const [year, setYear] = useState('');
   const [error, setError] = useState('');
   const [currentYear, setCurrentYear] = useState<number | null>(null);
-
-  useEffect(() => {
+  if (currentYear === null && typeof window !== 'undefined') {
     setCurrentYear(new Date().getFullYear());
-  }, []);
-
-  useEffect(() => {
-    if (open) { setMonth(''); setDay(''); setYear(''); setError(''); }
-  }, [open]);
+  }
+  const [openSeen, setOpenSeen] = useState(open);
+  if (openSeen !== open) {
+    setOpenSeen(open);
+    if (open) {
+      setMonth('');
+      setDay('');
+      setYear('');
+      setError('');
+    }
+  }
 
   useEffect(() => {
     if (!open) return;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, Trash2, Star, UserCircle2, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -22,7 +22,7 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
   const latest = useRef(value);
-  latest.current = value;
+  useEffect(() => { latest.current = value; }, [value]);
 
   async function handleFiles(files: FileList | null) {
     const list = Array.from(files ?? []);

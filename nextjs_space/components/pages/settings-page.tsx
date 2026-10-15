@@ -30,16 +30,18 @@ export function SettingsPage({ allowApiSettings = false, initialTab, checkout }:
   const { status } = useAccess();
   // Server already refused this prop for everyone except the creator. The status flag closes it again if that account is not the creator.
   const canSeeApi = allowApiSettings && (status == null || !!status.isCreatorAdmin);
-  const [tab, setTab] = useState<'subscription' | 'api'>('subscription');
+  const [tab, setTab] = useState<'subscription' | 'api'>(initialTab === 'api' ? 'api' : 'subscription');
+  const tabKey = `${canSeeApi}:${initialTab ?? ''}`;
+  const [tabSeen, setTabSeen] = useState(tabKey);
+  if (tabSeen !== tabKey) {
+    setTabSeen(tabKey);
+    if (!canSeeApi) setTab('subscription');
+    else if (initialTab === 'api') setTab('api');
+  }
   const [configs, setConfigs] = useState<Record<string, ProviderState>>({});
   const [modelLists, setModelLists] = useState<Record<string, string[]>>(PROVIDER_MODELS);
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!canSeeApi) setTab('subscription');
-    else if (initialTab === 'api') setTab('api');
-  }, [canSeeApi, initialTab]);
 
   useEffect(() => {
     if (!canSeeApi || tab !== 'api') return;

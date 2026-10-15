@@ -39,13 +39,18 @@ export function RichContent({ content, className }: { content: string; className
   const [html, setHtml] = useState<string | null>(null);
 
   useEffect(() => {
-    hookLinks();
-    try {
-      setHtml(renderRich(content));
-    } catch (err) {
-      console.error('Failed to render rich text:', err);
-      setHtml(null);
-    }
+    let cancel = false;
+    queueMicrotask(() => {
+      if (cancel) return;
+      hookLinks();
+      try {
+        setHtml(renderRich(content));
+      } catch (err) {
+        console.error('Failed to render rich text:', err);
+        setHtml(null);
+      }
+    });
+    return () => { cancel = true; };
   }, [content]);
 
   if (html === null) {

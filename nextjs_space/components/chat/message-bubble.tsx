@@ -77,7 +77,7 @@ export function MessageBubble({
   const raw = transform ? transform(base) : base;
   const display = isStreaming ? hidePartialSceneTag(raw) : raw;
   const segments = isUser ? [{ type: 'text' as const, text: display }] : parseSceneSegments(display);
-  let pendingSeen = false;
+  const firstPending = segments.findIndex((seg) => seg.type !== 'text' && seg.type !== 'image');
   const name = isUser ? userName || 'You' : characterName ?? 'Character';
 
   async function handleCopy() {
@@ -145,8 +145,7 @@ export function MessageBubble({
                 if (seg.type === 'text') return <RoleplayText key={i} content={seg.text} streaming={isStreaming && isLast} />;
                 if (seg.type === 'image') return <SceneImage key={i} url={seg.url} description={seg.description} />;
                 // Only the first pending tag is "active": renders happen one at a time, in order.
-                const active = !pendingSeen;
-                pendingSeen = true;
+                const active = i === firstPending;
                 return (
                   <PendingScene
                     key={i}

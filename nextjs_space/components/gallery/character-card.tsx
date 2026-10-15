@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { Pencil, MessageSquare, BadgeCheck } from 'lucide-react';
 import { htmlToPlainText } from '@/lib/rich-text';
@@ -56,9 +56,7 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
   const [imageError, setImageError] = useState(false);
   const raw = String(avatar || banner || '').trim();
   const savedStamp = updatedAt instanceof Date ? updatedAt.toISOString() : updatedAt ? String(updatedAt) : '';
-  const fallbackStamp = useRef({ raw: '', stamp: '' });
-  if (!savedStamp && fallbackStamp.current.raw !== raw) fallbackStamp.current = { raw, stamp: raw ? String(Date.now()) : '' };
-  const version = savedStamp || fallbackStamp.current.stamp;
+  const version = savedStamp || raw;
   const cover = !imageError ? mediaVersionUrl(raw, version) : '';
   // Card preview is a short plain-text excerpt of the rich bio (HTML/Markdown stripped).
   const track = cardAudioTrack({ audioUrl, audio_url, themeSong, song_id });
@@ -67,8 +65,7 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
   return (
     <div className={cn('group relative flex flex-col rounded-2xl bg-card overflow-hidden shadow-lg shadow-black/30 ring-1 ring-white/5 transition-shadow duration-300 touch-manipulation md:transition-all md:hover:-translate-y-1 hover:ring-primary/40 hover:shadow-primary/10', className)} style={frameStyle}>
       {glitch && <BoxGlitchLayers />}
-      {/* Whole card opens the chat */}
-      <Link href={`/characters/${id}/chat`} className="absolute inset-0 z-10 touch-manipulation" aria-label={`Chat with ${name}`} />
+      <Link href={`/characters/${id}`} className="absolute inset-0 z-10 touch-manipulation" aria-label={`View ${name}`} />
 
       {/* Banner */}
       <div className="relative aspect-[16/10] bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40 overflow-hidden">
@@ -121,7 +118,7 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
       {/* Body */}
       <div className="relative flex flex-1 flex-col px-3 pb-3 pt-3">
         <h3 className="font-display font-bold text-[15px] leading-tight truncate">{name || 'Unnamed'}</h3>
-        <Link href={`/characters/${id}`} className="relative z-20 mt-1 inline-flex text-[11px] font-semibold text-primary">View card</Link>
+        <Link href={`/characters/${id}/chat`} className="relative z-20 mt-1 inline-flex h-8 items-center text-[11px] font-semibold text-primary">Start chat</Link>
         {title?.trim() && <p className="mt-0.5 text-[11px] italic text-muted-foreground truncate">{title}</p>}
         <span className="mt-1 inline-flex w-fit max-w-full items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
           <BadgeCheck className="h-3 w-3 shrink-0" />

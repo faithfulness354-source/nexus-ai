@@ -34,11 +34,11 @@ export function GalleryPage() {
   const showMine = view === 'mine' && !!access?.authenticated;
   const signedIn = !!access?.authenticated;
 
-  useEffect(() => {
+  if (!tabReady && typeof window !== 'undefined') {
     const tab = new URLSearchParams(window.location.search).get('view') === 'mine' ? 'mine' : 'all';
-    setView(tab);
     setTabReady(true);
-  }, []);
+    if (tab !== view) setView(tab);
+  }
 
   useEffect(() => {
     function onDeleted(event: Event) {
@@ -114,7 +114,7 @@ export function GalleryPage() {
   useEffect(() => {
     if (!tabReady) return;
     if (view === 'mine' && !access) return;
-    void loadFeed();
+    void (async () => { await loadFeed(); })();
   }, [tabReady, view, access?.authenticated, access?.userId, loadFeed]);
 
   // Tag list comes from every visible character, independent of the active tag filter
@@ -129,7 +129,9 @@ export function GalleryPage() {
     }
   }, [nsfwEnabled]);
 
-  useEffect(() => { loadTags(); }, [loadTags]);
+  useEffect(() => {
+    void (async () => { await loadTags(); })();
+  }, [loadTags]);
 
   useEffect(() => {
     const client = supabaseBrowser();

@@ -48,7 +48,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   useEffect(() => {
     if (!open) return;
     let cancel = false;
-    setChatsLoading(true);
+    queueMicrotask(() => { if (!cancel) setChatsLoading(true); });
     fetch(nsfwView ? '/api/sessions' : '/api/sessions?nsfw=false')
       .then((r) => (r.ok ? r.json() : []))
       .then((data: any) => { if (!cancel) setSessions(Array.isArray(data) ? data.slice(0, 30) : []); })

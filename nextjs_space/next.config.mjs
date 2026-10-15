@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
-const path = require('path');
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
+const configDir = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
 const onVercel = process.env.VERCEL === '1';
 const mobileExport = Boolean(process.env.NEXT_OUTPUT_MODE) && !onVercel;
 
@@ -10,7 +13,7 @@ const nextConfig = {
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   // '/' makes Vercel trace the scene route from the filesystem root and fail /_not-found.
-  outputFileTracingRoot: mobileExport ? path.join(__dirname, '../') : __dirname,
+  outputFileTracingRoot: mobileExport ? path.join(configDir, '../') : configDir,
   // Dynamic image writes must not pull public media into the serverless trace.
   outputFileTracingExcludes: {
     '*': [
@@ -33,6 +36,10 @@ const nextConfig = {
     // Dev chunk URLs are not content-hashed, so a cached copy outlives an edit.
     if (process.env.NODE_ENV === 'development') {
       rules.push({ source: '/_next/static/:path*', headers: [{ key: 'Cache-Control', value: 'no-store, must-revalidate' }] });
+    } else {
+      const cached = [{ key: 'Cache-Control', value: 'public, max-age=86400, stale-while-revalidate=604800' }];
+      rules.push({ source: '/nexus_assets/:path*', headers: cached });
+      rules.push({ source: '/uploads/:path*', headers: cached });
     }
     return rules;
   },
@@ -41,8 +48,7 @@ const nextConfig = {
   allowedDevOrigins: ['127.0.0.1', '192.168.88.5'],
 };
 
-const fs = require('fs');
-const userConfigPath = path.join(__dirname, 'next.config.user.json');
+const userConfigPath = path.join(configDir, 'next.config.user.json');
 const userConfigAllowedKeys = { skipTrailingSlashRedirect: 'boolean', trailingSlash: 'boolean' };
 if (fs.existsSync(userConfigPath)) {
   const userConfig = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
@@ -54,5 +60,4 @@ if (fs.existsSync(userConfigPath)) {
   }
 }
 
-module.exports = nextConfig;
-
+export default nextConfig;

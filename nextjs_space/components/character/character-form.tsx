@@ -155,20 +155,16 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
 
   const [form, setForm] = useState(() => initialForm(initialData));
   const formRef = useRef(form);
-  formRef.current = form;
+  useEffect(() => { formRef.current = form; }, [form]);
   // Draft persistence (create mode only): restore once on mount, then auto-save on every change.
   const isCreate = mode === 'create';
   const loadedId = initialData?.id as string | undefined;
   // Hydrate once per card. A later parent render must not wipe an audio path the user just chose.
-  const hydratedId = useRef<string | undefined>(loadedId);
-
-  // Edit pages can pass the record after the first render. Copy every saved field into the inputs.
-  useEffect(() => {
-    if (isCreate || !initialData || !loadedId) return;
-    if (hydratedId.current === loadedId) return;
-    hydratedId.current = loadedId;
+  const [hydratedId, setHydratedId] = useState(loadedId);
+  if (!isCreate && initialData && loadedId && hydratedId !== loadedId) {
+    setHydratedId(loadedId);
     setForm(initialForm(initialData));
-  }, [isCreate, loadedId, initialData]);
+  }
 
   useEffect(() => {
     if (isCreate || initialData || !characterId) return;
@@ -184,7 +180,29 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
   const [draftReady, setDraftReady] = useState(false);
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
-  dirtyRef.current = dirty;
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  if (isCreate && !draftReady && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved && typeof saved === 'object') {
+        const restored = initialForm(undefined);
+        for (const k of Object.keys(restored) as FormKey[]) {
+          if (k === 'nsfw' || saved[k] === undefined) continue;
+          const sameType = Array.isArray(restored[k]) ? Array.isArray(saved[k]) : typeof saved[k] === typeof restored[k];
+          if (sameType) (restored as any)[k] = saved[k];
+        }
+        if (hasContent(restored)) {
+          setForm(restored);
+          setDirty(true);
+          toast.info('Restored your unsaved character draft.');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to restore character draft:', err);
+    }
+    setDraftReady(true);
+  }
 
   useEffect(() => {
     if (isCreate) return;
@@ -220,32 +238,6 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       window.removeEventListener('nexus:cloud-revision', onRevision);
     };
   }, [isCreate, characterId, loadedId]);
-
-  useEffect(() => {
-    if (!isCreate) return;
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY);
-      const saved = raw ? JSON.parse(raw) : null;
-      if (saved && typeof saved === 'object') {
-        const restored = initialForm(undefined);
-        for (const k of Object.keys(restored) as FormKey[]) {
-          // NSFW always starts OFF (age gate) and is never restored from a draft.
-          if (k === 'nsfw' || saved[k] === undefined) continue;
-          const sameType = Array.isArray(restored[k]) ? Array.isArray(saved[k]) : typeof saved[k] === typeof restored[k];
-          if (sameType) (restored as any)[k] = saved[k];
-        }
-        if (hasContent(restored)) {
-          formRef.current = restored;
-          setForm(restored);
-          setDirty(true);
-          toast.info('Restored your unsaved character draft.');
-        }
-      }
-    } catch (err) {
-      console.error('Failed to restore character draft:', err);
-    }
-    setDraftReady(true);
-  }, [isCreate]);
 
   useEffect(() => {
     if (!isCreate || !draftReady) return;

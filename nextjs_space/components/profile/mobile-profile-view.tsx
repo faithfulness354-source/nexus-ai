@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { BookOpen, Crown, Gem, Globe2, MessageSquare, Pause, Pencil, Pin, Play, Sparkles, X } from 'lucide-react';
 import { RichContent } from '@/components/editor/rich-content';
 import { ACCENT_THEMES, ROYAL_BLUE_ALLOY, bannerFocusPosition, isAccentTheme, type ProfileBadge } from '@/lib/profile';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { uploadProfileAudio } from '@/lib/upload-client';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
 import { CommentThread } from '@/components/comments/comment-thread';
@@ -52,7 +53,7 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
           {bannerVideo ? (
             <video autoPlay loop muted playsInline className="absolute inset-0 h-full w-full object-cover" style={{ objectPosition: bannerFocusPosition(profile.bannerPositionY) }} src={profile.bannerVideoUrl} />
           ) : profile.banner ? (
-            <img src={profile.banner} alt="" className={cn('absolute inset-0 h-full w-full object-cover', profile.bannerAnimated && 'profile-banner-drift')} style={{ objectPosition: bannerFocusPosition(profile.bannerPositionY) }} />
+            <img src={profile.banner} alt="" loading="lazy" decoding="async" className={cn('absolute inset-0 h-full w-full object-cover', profile.bannerAnimated && 'profile-banner-drift')} style={{ objectPosition: bannerFocusPosition(profile.bannerPositionY) }} />
           ) : null}
           <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent" />
         </div>
@@ -60,7 +61,7 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
         <div className="flex flex-col gap-3 px-4">
           <div className="-mt-10 flex items-end gap-3">
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-secondary ring-4 ring-background" style={{ boxShadow: `0 0 0 2px ${theme.accent}` }}>
-              {profile.image ? <img src={profile.image} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full items-center justify-center font-display text-2xl font-bold" style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
+              {profile.image ? <img src={profile.image} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <span className="flex h-full items-center justify-center font-display text-2xl font-bold" style={{ color: theme.accent }}>{name[0]?.toUpperCase()}</span>}
             </div>
             <div className="min-w-0 flex-1 pb-1">
               <h1
@@ -165,14 +166,14 @@ function MobileCard({ item, canEdit }: { item: ProfileCharacter; canEdit: boolea
   const image = item.avatar || item.banner;
   return (
     <article className="overflow-hidden rounded-2xl bg-card ring-1 ring-white/10">
-      <Link href={`/characters/${item.id}/chat`} className="block">
+      <Link href={`/characters/${item.id}`} className="block">
         <div className="aspect-[4/3] bg-secondary">
-          {image ? <img src={image} alt="" className="h-full w-full object-cover" /> : null}
+          {image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : null}
         </div>
         <p className="truncate px-2.5 pt-2 text-sm font-semibold">{item.name}</p>
         <p className="truncate px-2.5 pb-2 text-xs text-muted-foreground">{item.title || 'Open card'}</p>
       </Link>
-      <Link href={`/characters/${item.id}`} className="block px-2.5 pb-1 text-xs font-semibold text-primary">View card</Link>
+      <Link href={`/characters/${item.id}/chat`} className="block px-2.5 pb-1 text-xs font-semibold text-primary">Start chat</Link>
       {canEdit && <Link href={`/characters/${item.id}/edit`} className="block px-2.5 pb-2.5 text-xs font-semibold text-primary">Edit</Link>}
     </article>
   );
@@ -185,11 +186,15 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(url ?? '');
+  const nextUrl = url ?? '';
+  const [urlSeen, setUrlSeen] = useState(nextUrl);
+  if (nextUrl !== urlSeen) {
+    setUrlSeen(nextUrl);
+    setCurrent(nextUrl);
+  }
   const [songName, setSongName] = useState('');
   const [songError, setSongError] = useState('');
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => { setCurrent(url ?? ''); }, [url]);
 
   async function upload(next: File) {
     setSongName(next.name);
@@ -214,7 +219,7 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
       <audio
         ref={audio}
         src={current || undefined}
-        preload="metadata"
+        preload="none"
         onTimeUpdate={() => {
           const node = audio.current;
           if (!node) return;
@@ -235,7 +240,7 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
             if (!node) return;
             if (node.paused) {
               node.muted = false;
-              node.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+              node.play().then(() => setPlaying(true)).catch(() => { setPlaying(false); toast.error('That song could not be played.'); });
             }
             else { node.pause(); setPlaying(false); }
           }}
@@ -261,7 +266,7 @@ function MobileSongPlayer({ url, ownProfile, accent }: { url?: string; ownProfil
         <input
           ref={file}
           type="file"
-          accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+          accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.flac"
           disabled={busy}
           aria-label="Choose profile song file"
           className="mt-2 block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"

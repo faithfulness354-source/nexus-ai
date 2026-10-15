@@ -51,7 +51,9 @@ export function PersonasHub() {
       setLoading(false);
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void (async () => { await load(); })();
+  }, []);
 
   useEffect(() => {
     function onRevision() {

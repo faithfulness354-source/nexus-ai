@@ -37,6 +37,28 @@ import Link from 'next/link';
 const SYSTEM_PROMPT_ESTIMATE_CAP = 500;
 const BASELINE_HISTORY_TURNS = 5;
 
+function priorMeterSnapshots(
+  messages: { index: number }[],
+  meterStates: Record<number, MeterSnapshot> | undefined,
+): Array<MeterSnapshot | undefined> {
+  const previous: Array<MeterSnapshot | undefined> = [];
+  let last: MeterSnapshot | undefined;
+  for (const msg of messages) {
+    previous.push(last);
+    const snap = meterStates?.[msg.index];
+    if (snap) last = snap;
+  }
+  return previous;
+}
+
+function draftUserMessage(input: Omit<ChatMessage, 'id' | 'createdAt'>): ChatMessage {
+  return {
+    ...input,
+    id: `temp-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 interface CharacterData {
   id: string;
   name: string;
@@ -177,21 +199,35 @@ export function ChatView({ characterId }: ChatViewProps) {
   const [scripts, setScripts] = useState<ScriptData[]>([]);
   const [sessionPersonaId, setSessionPersonaId] = useState<string | null>(null);
   const [chooser, setChooser] = useState(!sessionIdParam);
+  const chooserKey = `${characterId ?? ''}:${sessionIdParam ?? ''}`;
+  const [chooserKeySeen, setChooserKeySeen] = useState(chooserKey);
+  if (chooserKeySeen !== chooserKey) {
+    setChooserKeySeen(chooserKey);
+    setChooser(!sessionIdParam);
+  }
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
   const [recentSessionId, setRecentSessionId] = useState<string | null>(null);
   const [startingChat, setStartingChat] = useState(false);
   const [editingPersona, setEditingPersona] = useState<PersonaData | null>(null);
   const activePersona = pickPersona(personas, characterId, sessionPersonaId);
   const userDisplayName = activePersona?.name || personaName;
-  const [visualContext, setVisualContext] = useState('');
-  useEffect(() => {
-    setVisualContext(activePersona ? compilePerceivedAppearance(activePersona) : '');
-  }, [activePersona]);
+  const compiledAppearance = activePersona ? compilePerceivedAppearance(activePersona) : '';
+  const [visualOverride, setVisualContext] = useState<string | null>(null);
+  const [appearanceSeen, setAppearanceSeen] = useState(compiledAppearance);
+  if (appearanceSeen !== compiledAppearance) {
+    setAppearanceSeen(compiledAppearance);
+    setVisualContext(null);
+  }
+  const visualContext = visualOverride ?? compiledAppearance;
+  const [personaCharacter, setPersonaCharacter] = useState(characterId);
+  if (personaCharacter !== characterId) {
+    setPersonaCharacter(characterId);
+    setPersonasReady(false);
+  }
   const displayTransform = useCallback((t: string) => applyScripts(t, scripts, 'DISPLAY'), [scripts]);
 
   useEffect(() => {
     let cancel = false;
-    setPersonasReady(false);
     Promise.all([
       fetch('/api/personas').then((r) => (r.ok ? r.json() : [])),
       fetch('/api/scripts').then((r) => (r.ok ? r.json() : [])),
@@ -319,20 +355,23 @@ export function ChatView({ characterId }: ChatViewProps) {
       .catch(() => toast.error('Failed to load character'));
   }, [characterId]);
 
-  useEffect(() => {
-    setChooser(!sessionIdParam);
-  }, [characterId, sessionIdParam]);
+  const [sessionSeen, setSessionSeen] = useState(sessionIdParam);
+  if (sessionSeen !== sessionIdParam) {
+    setSessionSeen(sessionIdParam);
+    setSessionId(sessionIdParam ?? null);
+  }
 
   // Load an existing session. A new chat waits for the persona gate.
   useEffect(() => {
     if (!characterId) return;
-
-    async function initSession() {
+    let cancel = false;
+    void (async () => {
       if (!sessionIdParam) {
         try {
           const res = await fetch(`/api/sessions?characterId=${characterId}`);
           const sessions = await res.json();
           const recent = Array.isArray(sessions) ? sessions.find((session) => (session?._count?.messages ?? 0) > 0) ?? null : null;
+          if (cancel) return;
           if (recent?.id) {
             setRecentSessionId(recent.id);
             router.replace(`/characters/${characterId}/chat?session=${recent.id}`);
@@ -340,21 +379,18 @@ export function ChatView({ characterId }: ChatViewProps) {
           }
           setRecentSessionId(null);
         } catch {
-          setRecentSessionId(null);
+          if (!cancel) setRecentSessionId(null);
         }
-        setSessionId(null);
+        if (cancel) return;
         setActiveMessages([]);
         setLoading(false);
         return;
       }
 
-      const sid = sessionIdParam;
-      setSessionId(sid);
-
-      // Load session data
       try {
-        const res = await fetch(`/api/sessions/${sid}`);
+        const res = await fetch(`/api/sessions/${sessionIdParam}`);
         const session = await res.json();
+        if (cancel) return;
         const incoming = Array.isArray(session?.messages) ? session.messages : [];
         setActiveMessages(dedupeIdentical(incoming));
         setSessionPersonaId(session?.personaId ?? null);
@@ -365,19 +401,17 @@ export function ChatView({ characterId }: ChatViewProps) {
         if (session?.generationSettings) {
           setGenSettings(session.generationSettings);
         }
-        // Load meter states
         const mStates: Record<number, MeterSnapshot> = {};
         for (const ms of (session?.meterStates ?? [])) {
           mStates[ms.messageIndex] = ms.metersJson as MeterSnapshot;
         }
         setMeterStates(mStates);
       } catch {
-        toast.error('Failed to load session');
+        if (!cancel) toast.error('Failed to load session');
       }
-      setLoading(false);
-    }
-
-    initSession();
+      if (!cancel) setLoading(false);
+    })();
+    return () => { cancel = true; };
   }, [characterId, sessionIdParam, router]);
 
   // Empty history means this chat has not started. Show the card's opening scene, with names filled in.
@@ -385,19 +419,20 @@ export function ChatView({ characterId }: ChatViewProps) {
     if (loading || !character || streaming) return;
     const content = composeOpening(character, userDisplayName || 'You');
     if (!content) return;
-    setActiveMessages((prev) => {
-      if (prev.length > 0) return prev;
-      return [{
-        id: `greeting-${character.id}`,
-        sessionId: sessionId ?? '',
-        role: 'ASSISTANT',
-        content,
-        model: null,
-        tokenCount: 0,
-        editHistory: [],
-        createdAt: new Date().toISOString(),
-        index: 0,
-      }];
+    const createdAt = new Date().toISOString();
+    const greeting: ChatMessage = {
+      id: `greeting-${character.id}`,
+      sessionId: sessionId ?? '',
+      role: 'ASSISTANT',
+      content,
+      model: null,
+      tokenCount: 0,
+      editHistory: [],
+      createdAt,
+      index: 0,
+    };
+    queueMicrotask(() => {
+      setActiveMessages((prev) => (prev.length > 0 ? prev : [greeting]));
     });
   }, [loading, character, sessionId, userDisplayName, streaming]);
 
@@ -434,17 +469,15 @@ export function ChatView({ characterId }: ChatViewProps) {
   async function handleSend(content: string): Promise<boolean> {
     if (!sessionId || streaming) return false;
 
-    const userMsg: ChatMessage = {
-      id: `temp-${Date.now()}`,
+    const userMsg = draftUserMessage({
       sessionId: sessionId,
       role: 'USER',
       content,
       model: currentModel,
       tokenCount: estimateTokens(content),
       editHistory: [],
-      createdAt: new Date().toISOString(),
       index: spliceDeletedMessages(messages ?? []).length,
-    };
+    });
     setActiveMessages(prev => [...(prev ?? []), userMsg]);
     setStreaming(true);
     setStreamContent('');
@@ -728,10 +761,9 @@ export function ChatView({ characterId }: ChatViewProps) {
   const availableModels = (PROVIDER_MODELS?.[currentProvider] ?? []).filter((m: string) => canPro || !isProModel(m));
   const canAdvanced = !!access?.can.advancedGeneration;
   const canScenes = !!access?.can.sceneImages;
-  useEffect(() => {
-    if (!access || access.can.proModels || !isProModel(currentModel)) return;
+  if (access && !access.can.proModels && isProModel(currentModel)) {
     setCurrentModel(DEFAULT_MODEL);
-  }, [access, currentModel]);
+  }
   const planCap = access?.isAdmin
     ? (CONTEXT_WINDOWS?.[currentModel] ?? 8192)
     : (access?.contextTokens ?? TIERS.FREE.contextTokens);
@@ -759,7 +791,7 @@ export function ChatView({ characterId }: ChatViewProps) {
     );
   }
 
-  let prevSnapshot: MeterSnapshot | undefined;
+  const previousMeters = priorMeterSnapshots(activeMessages, meterStates);
 
   const canHearAudio = !!access?.isAdmin || (!!access?.userId && character?.ownerId === access.userId);
   const characterTags = (Array.isArray(character?.tags) ? character.tags : String(character?.tags ?? '').split(','))
@@ -899,8 +931,7 @@ export function ChatView({ characterId }: ChatViewProps) {
         <div className="w-full max-w-3xl mx-auto py-4">
           {activeMessages.map((msg: ChatMessage, position: number) => {
             const snap = meterStates?.[msg.index];
-            const prev = prevSnapshot;
-            if (snap) prevSnapshot = snap;
+            const prev = previousMeters[position];
             return (
               <MessageBubble
                 key={`${msg.id}:${msg.index}:${position}`}
