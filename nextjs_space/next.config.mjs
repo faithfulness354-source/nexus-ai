@@ -22,9 +22,6 @@ const nextConfig = {
       './public/uploads/**/*',
     ],
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: { unoptimized: true },
   async headers() {
     const security = [
