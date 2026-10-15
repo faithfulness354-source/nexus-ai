@@ -4,8 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { getViewer, unauthorized } from '@/lib/access';
 
-const MAX_BYTES = 15 * 1024 * 1024;
-
 /** Saves a card background track into public/nexus_assets/audio and returns its public path. */
 export async function POST(request: NextRequest) {
   const viewer = await getViewer();
@@ -19,7 +17,6 @@ export async function POST(request: NextRequest) {
     const isAudio = file.type.startsWith('audio/') || !!extMatch;
     if (!isAudio) return NextResponse.json({ error: 'Only audio files can be used as card audio.' }, { status: 400 });
     if (file.size === 0) return NextResponse.json({ error: 'That file is empty.' }, { status: 400 });
-    if (file.size > MAX_BYTES) return NextResponse.json({ error: 'That audio file is larger than 15 MB.' }, { status: 400 });
 
     const ext = extMatch?.[1] ?? (file.type === 'audio/mpeg' || file.type === 'audio/mp3' ? 'mp3' : 'mp3');
     const stem = path.basename(original, path.extname(original)).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'track';

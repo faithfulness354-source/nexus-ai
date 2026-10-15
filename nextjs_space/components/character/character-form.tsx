@@ -16,7 +16,7 @@ import { mediaVersionUrl } from '@/lib/media-src';
 import { GalleryEditor } from './gallery-editor';
 import { RoleplayText } from '@/components/chat/roleplay-text';
 import { estimateTokens } from '@/lib/tokens';
-import { uploadImage } from '@/lib/upload-client';
+import { uploadImage, uploadProfileAudio } from '@/lib/upload-client';
 import type { GalleryImage } from '@/lib/types';
 import { useAccess } from '@/components/billing/access-provider';
 import { Lock } from 'lucide-react';
@@ -139,7 +139,6 @@ function saveDraft(form: CharacterFormState) {
 export function CharacterForm({ initialData, characterId, mode }: CharacterFormProps) {
   const router = useRouter();
   const avatarInput = useRef<HTMLInputElement>(null);
-  const audioInput = useRef<HTMLInputElement>(null);
   const tagField = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -357,23 +356,11 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
 
   async function handleAudioFile(file?: File) {
     if (!file) return;
-    if (file.type && !file.type.startsWith('audio/')) {
-      setAudioStatus('');
-      toast.error('Choose an audio file');
-      if (audioInput.current) audioInput.current.value = '';
-      return;
-    }
     setAudioUploading(true);
-    setAudioStatus('Uploading...');
+    setAudioStatus(`Attaching ${file.name || 'audio'}…`);
     try {
-      const body = new FormData();
-      body.append('file', file);
-      const res = await fetch('/api/upload/audio', { method: 'POST', body });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.url) throw new Error(data?.error ?? 'Upload failed');
+      const data = await uploadProfileAudio(file);
       updateField('audioUrl', data.url);
-      const savedName = String(data.url).split('/').pop() || file.name;
-      // Edit already has a card id. Write the path now so leaving the page cannot drop it.
       if (mode === 'edit' && initialData?.id) {
         const save = await fetch(`/api/characters/${initialData.id}`, {
           method: 'PUT',
@@ -383,14 +370,14 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
         const saved = await save.json().catch(() => ({}));
         if (!save.ok) throw new Error(saved?.error ?? 'Could not save the audio on this card');
       }
-      setAudioStatus(`Uploaded ${savedName}`);
+      setAudioStatus(`Attached: ${file.name || 'audio'}`);
+      toast.success('Card audio attached');
     } catch (err: any) {
       console.error('Audio upload failed:', err);
       setAudioStatus('');
-      toast.error(err?.message ?? 'Upload failed');
+      toast.error(err?.message ?? 'Could not attach that audio');
     } finally {
       setAudioUploading(false);
-      if (audioInput.current) audioInput.current.value = '';
     }
   }
 
@@ -618,22 +605,26 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
               </div>
             </div>
           </div>
-          <div className="mt-3">
+          <div className="mt-3 space-y-2">
             <Label htmlFor="audio-url" className="inline-flex items-center gap-1.5"><Music className="h-3.5 w-3.5" /> Background audio</Label>
-            <div className="mt-1 flex gap-2">
-              <Input
-                id="audio-url"
-                value={form.audioUrl}
-                onChange={(e) => { setAudioStatus(''); updateField('audioUrl', e.target.value); }}
-                placeholder="/nexus_assets/audio/filename.mp3"
-              />
-              <Button type="button" variant="secondary" onClick={() => audioInput.current?.click()} disabled={audioUploading}>
-                {audioUploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Music className="h-4 w-4 mr-1" />}
-                Choose audio
-              </Button>
-              <input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(e) => handleAudioFile(e.target.files?.[0])} />
-            </div>
-            {audioStatus && <p className="mt-1 text-[11px] text-muted-foreground">{audioStatus}</p>}
+            <Input
+              id="audio-url"
+              value={form.audioUrl}
+              onChange={(e) => { setAudioStatus(''); updateField('audioUrl', e.target.value); }}
+              placeholder="https://… or /nexus_assets/audio/filename.mp3"
+            />
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.flac"
+              disabled={audioUploading}
+              aria-label="Choose card audio file"
+              className="block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void handleAudioFile(file);
+              }}
+            />
+            <p className="text-[11px] text-muted-foreground">{audioUploading ? audioStatus || 'Attaching audio…' : audioStatus || (form.audioUrl ? 'Audio attached' : 'Choose an mp3, wav, ogg, m4a, or flac from this device.')}</p>
           </div>
         </section>
 

@@ -153,17 +153,67 @@ const AUDIO_TYPES: Record<string, string> = {
   m4a: 'audio/mp4',
   aac: 'audio/aac',
   webm: 'audio/webm',
+  flac: 'audio/flac',
 };
+
+function audioUploadError(detail: string): string {
+  if (/maximum allowed size|exceeded the maximum/i.test(detail)) return 'That audio file is larger than 50 MB. This project cannot store a bigger file.';
+  try {
+    const parsed = JSON.parse(detail);
+    if (typeof parsed?.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+  } catch {
+    /* response was plain text */
+  }
+  return 'Could not store that song';
+}
+
+/** Sends the file bytes themselves. A FormData body is what the phone storage call rejects. */
+async function putSignedAudio(uploadUrl: string, bytes: ArrayBuffer, contentType: string): Promise<void> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90_000);
+  try {
+    const put = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': contentType,
+        'cache-control': 'max-age=3600',
+        'x-upsert': 'true',
+      },
+      body: bytes,
+      signal: ctrl.signal,
+    });
+    if (put.ok) return;
+    const detail = (await put.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 300);
+    throw new Error(audioUploadError(detail));
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Upload timed out. Try again.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Uploads a profile song and returns the address that should be saved on the profile. */
 export async function uploadProfileAudio(file: File): Promise<{ url: string }> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   const declared = file.type.toLowerCase().split(';')[0].trim();
-  const contentType = declared.startsWith('audio/') ? (declared === 'audio/mp3' ? 'audio/mpeg' : declared) : AUDIO_TYPES[ext] ?? (ext ? 'audio/mpeg' : '');
-  if (!contentType) throw new Error('Use an mp3, wav, ogg, m4a, or aac file');
-  if (file.size > 15 * 1024 * 1024) throw new Error('That audio file is larger than 15 MB');
-  const named = file.name && (AUDIO_TYPES[ext] || declared.startsWith('audio/')) ? file.name : `track.${ext || 'mp3'}`;
-  const typed = new File([file], named, { type: contentType });
+  const knownExt = AUDIO_TYPES[ext] ? ext : '';
+  const contentType = knownExt
+    ? AUDIO_TYPES[knownExt]
+    : declared === 'audio/mp3' || declared === 'audio/mpeg'
+      ? 'audio/mpeg'
+      : declared === 'audio/mp4' || declared === 'audio/x-m4a' || declared === 'audio/mp4a-latm' || declared === 'audio/aac'
+        ? 'audio/mp4'
+        : declared === 'audio/flac' || declared === 'audio/x-flac'
+          ? 'audio/flac'
+          : declared.startsWith('audio/')
+            ? declared
+            : '';
+  if (!contentType) throw new Error('Use an mp3, wav, ogg, m4a, or flac file');
+  const safeExt = knownExt || (contentType === 'audio/mp4' ? 'm4a' : contentType === 'audio/wav' || contentType === 'audio/x-wav' ? 'wav' : contentType === 'audio/ogg' ? 'ogg' : contentType === 'audio/webm' ? 'webm' : contentType === 'audio/aac' ? 'aac' : contentType === 'audio/flac' || contentType === 'audio/x-flac' ? 'flac' : 'mp3');
+  const named = knownExt ? file.name : `track.${safeExt}`;
+  const bytes = await file.arrayBuffer();
+  if (bytes.byteLength === 0) throw new Error('That audio file is empty');
   const res = await fetch('/api/upload/audio', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -175,22 +225,12 @@ export async function uploadProfileAudio(file: File): Promise<{ url: string }> {
   const target = httpUrl(data?.uploadUrl);
   if (data?.provider === 'supabase') {
     if (!target) throw new Error('Could not store that song');
-    const body = new FormData();
-    body.append('cacheControl', '3600');
-    body.append('', typed, named);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 90_000);
     try {
-      const put = await fetch(target.toString(), { method: 'PUT', headers: { 'x-upsert': 'true' }, body, signal: ctrl.signal });
-      if (!put.ok) {
-        const detail = (await put.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 180);
-        throw new Error(detail || 'Could not store that song');
-      }
+      await putSignedAudio(target.toString(), bytes, contentType);
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Upload timed out. Try again.');
-      throw err;
-    } finally {
-      clearTimeout(timer);
+      const message = err instanceof Error ? err.message : '';
+      if (!/mime type/i.test(message) || contentType === 'audio/mpeg') throw err;
+      await putSignedAudio(target.toString(), bytes, 'audio/mpeg');
     }
   }
   return { url };

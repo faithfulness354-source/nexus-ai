@@ -1,5 +1,5 @@
 /** Keeps background audio pointed at a local nexus asset, an older /audio file, or a direct http(s) audio URL. */
-const AUDIO_EXT = 'mp3|wav|ogg|m4a|aac|webm';
+const AUDIO_EXT = 'mp3|wav|ogg|m4a|aac|webm|flac';
 
 export function normalizeAudioUrl(value: unknown): string {
   const raw = String(value ?? '').trim();
@@ -10,7 +10,9 @@ export function normalizeAudioUrl(value: unknown): string {
   if (file) return `/nexus_assets/audio/${file[1]}.${file[2].toLowerCase()}`;
   try {
     const url = new URL(raw);
-    if ((url.protocol === 'https:' || url.protocol === 'http:') && new RegExp(`\\.(${AUDIO_EXT})($|\\?)`, 'i').test(url.pathname + url.search)) {
+    const audioFile = new RegExp(`\\.(${AUDIO_EXT})($|\\?)`, 'i').test(url.pathname + url.search);
+    const storedAudio = /\/profile-audio\/|\/nexus_assets\/audio\//i.test(url.pathname);
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && (audioFile || storedAudio)) {
       return url.toString();
     }
   } catch {
