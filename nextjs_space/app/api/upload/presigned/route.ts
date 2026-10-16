@@ -25,12 +25,12 @@ function requestOrigin(request: NextRequest): string {
       /* use the host header */
     }
   }
-  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
-  const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'nexus-ai-navy-xi.vercel.app';
+  const proto = request.headers.get('x-forwarded-proto') ?? 'https';
   try {
     return new URL(`${proto}://${host}`).origin;
   } catch {
-    return 'http://localhost:3000';
+    return 'https://nexus-ai-navy-xi.vercel.app';
   }
 }
 

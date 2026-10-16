@@ -24,7 +24,7 @@ function httpUrl(value: unknown): URL | null {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
   if (!raw || raw.startsWith('file:') || /^[a-zA-Z]:[\\/]/.test(raw)) return null;
-  const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  const base = typeof window !== 'undefined' ? window.location.origin : 'https://nexus-ai-navy-xi.vercel.app';
   try {
     const url = new URL(raw, base);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;

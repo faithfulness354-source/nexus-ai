@@ -33,8 +33,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     });
 
-    // Copy messages up to branch point
-    for (const msg of (originalSession?.messages ?? [])) {
+    // Copy active messages up to the branch point. Soft-deleted turns stay behind.
+    const activeMessages = (await listActiveMessages(id)).filter((msg) => msg.index <= messageIndex);
+    for (const msg of activeMessages) {
       await prisma.message.create({
         data: {
           sessionId: newSession.id,

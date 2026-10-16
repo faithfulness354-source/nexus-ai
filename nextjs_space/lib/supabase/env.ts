@@ -6,14 +6,14 @@ export function supabaseAnonKey(): string {
   return (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
 }
 
-/** https project URLs, plus http only for a local Supabase. Anything else stays disconnected. */
+/** Live https project URL. Local Supabase hosts stay disconnected. */
 export function usableSupabaseUrl(): string {
   const raw = supabaseUrl();
   if (!raw) return '';
   try {
     const url = new URL(raw);
-    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    if (url.protocol === 'https:' || (url.protocol === 'http:' && local)) return url.origin;
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname.endsWith('.local');
+    if (url.protocol === 'https:' && !local) return url.origin;
   } catch {
     return '';
   }

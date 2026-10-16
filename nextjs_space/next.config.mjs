@@ -42,7 +42,7 @@ const nextConfig = {
   },
   // Next 16 blocks unlisted origins on /_next/* in dev, including the HMR websocket.
   // localhost is allowed by default; 127.0.0.1 is not.
-  allowedDevOrigins: ['127.0.0.1', '192.168.88.5'],
+  allowedDevOrigins: ['127.0.0.1'],
 };
 
 const userConfigPath = path.join(configDir, 'next.config.user.json');

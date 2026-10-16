@@ -49,7 +49,7 @@ export function AuthForm({ mode, callbackUrl }: { mode: 'login' | 'signup'; call
     } catch (err: any) {
       console.error(`${mode} failed:`, err);
       const message = err?.message ?? 'Something went wrong';
-      setError(message === 'Failed to fetch' ? 'This page cannot reach the Nexus server. On this computer, open http://localhost:3000/login.' : message);
+      setError(message === 'Failed to fetch' ? 'This page cannot reach the Nexus server. Open https://nexus-ai-navy-xi.vercel.app/login.' : message);
       setLoading(false);
     }
   }
