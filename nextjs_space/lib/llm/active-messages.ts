@@ -32,11 +32,12 @@ let columnReady: Promise<void> | null = null;
 /** Adds the soft-delete flag when this database was created before the column existed. */
 export function ensureDeletedColumn(): Promise<void> {
   if (!columnReady) {
-    columnReady = prisma.$executeRawUnsafe('ALTER TABLE "Message" ADD COLUMN "deleted" BOOLEAN NOT NULL DEFAULT 0')
+    columnReady = prisma.$executeRawUnsafe('ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "deleted" BOOLEAN NOT NULL DEFAULT 0')
       .then(() => undefined)
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        if (/duplicate column/i.test(message)) return;
+        const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code) : '';
+        if (code === '42701' || code === '42710' || /already exists|duplicate column/i.test(message)) return;
         columnReady = null;
         throw err;
       });
