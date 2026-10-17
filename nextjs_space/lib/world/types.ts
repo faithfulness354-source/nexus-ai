@@ -60,21 +60,19 @@ export function memoryFromArgs(args: unknown): string | null {
   return content;
 }
 
-/** Labeled canon block placed at the top of the chat system prompt. */
+/** Canon block injected into the system prompt after the character card. */
 export function formatWorldContext(state: WorldStateRow, memories: string[]): string {
-  const stats = state.stats;
-  const lines = [
-    '[WORLD STATE]',
-    'These stats, achievements, and memories are established canon for this session. Keep them consistent.',
-    `Trust: ${stats.trust}`,
-    `Inventory: ${stats.inventory.length ? stats.inventory.join(', ') : 'empty'}`,
-    `House: ${stats.house || 'unset'}`,
-    `Alignment: ${stats.alignment || 'unset'}`,
-    `Unlocked achievements: ${state.unlockedAchievements.length ? state.unlockedAchievements.join(', ') : 'none'}`,
-    '[LONG-TERM MEMORIES]',
-    memories.length ? memories.map((memory, index) => `${index + 1}. ${memory}`).join('\n') : 'none',
-  ];
-  return lines.join('\n');
+  const stats = {
+    trust: state.stats.trust,
+    inventory: state.stats.inventory,
+    house: state.stats.house,
+    alignment: state.stats.alignment,
+    unlocked_achievements: state.unlockedAchievements,
+  };
+  const memoryText = memories.length
+    ? memories.map((memory, index) => `${index + 1}. ${memory}`).join('\n')
+    : 'none';
+  return `[CURRENT WORLD STATE]: ${JSON.stringify(stats)}\n[RELEVANT MEMORIES]: ${memoryText}`;
 }
 
 function clampTrust(value: unknown): number {

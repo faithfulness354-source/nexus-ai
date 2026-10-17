@@ -4,7 +4,7 @@ import { applyWorldPatch, ensureWorldState, insertMemory, matchMemories } from '
 import { requestWorldToolCalls } from './tools';
 import { formatWorldContext, memoryFromArgs, worldPatchFromArgs } from './types';
 
-const TOP_K = 6;
+const TOP_K = 3;
 
 export interface WorldTurnTarget {
   provider: string;
@@ -33,7 +33,7 @@ async function assembleWorldPrompt(sessionId: string, userText: string, target: 
     const state = await ensureWorldState(sessionId);
     const embedding = await embedText(userText, target).catch(() => null);
     const memories = embedding ? await matchMemories(sessionId, embedding, TOP_K).catch(() => []) : [];
-    return capBlock(formatWorldContext(state, memories), 2800);
+    return formatWorldContext(state, memories);
   } catch (err) {
     console.warn('[world] context skipped:', err instanceof Error ? err.message : err);
     return '';
@@ -66,14 +66,14 @@ export async function commitWorldTurn(sessionId: string, userText: string, assis
       const embedding = await embedText(content, target);
       if (embedding) await insertMemory(sessionId, content, embedding);
     }
+    const beat = `User: ${clip(userText, 600)}\nAssistant: ${clip(assistantText, 1200)}`;
+    const beatEmbedding = await embedText(beat, target);
+    if (beatEmbedding) await insertMemory(sessionId, beat, beatEmbedding);
   } catch (err) {
     console.warn('[world] update skipped:', err instanceof Error ? err.message : err);
   }
 }
 
-function capBlock(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  const slice = text.slice(0, maxChars - 1);
-  const breakAt = slice.lastIndexOf('\n');
-  return (breakAt > maxChars * 0.6 ? slice.slice(0, breakAt) : slice).trimEnd() + '…';
+function clip(value: string, max: number): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, max);
 }

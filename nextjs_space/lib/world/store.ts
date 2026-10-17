@@ -33,7 +33,7 @@ export async function matchMemories(sessionId: string, embedding: number[], k: n
     Math.max(1, Math.min(k, 12)),
   );
   return rows
-    .filter((row) => typeof row.content === 'string' && row.content.trim() && Number(row.similarity) >= 0.2)
+    .filter((row) => typeof row.content === 'string' && row.content.trim())
     .map((row) => row.content.trim());
 }
 

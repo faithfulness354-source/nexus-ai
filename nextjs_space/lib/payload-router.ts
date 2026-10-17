@@ -29,8 +29,10 @@ export interface PayloadPolicy {
 
 export const OUTPUT_FLOOR_TOKENS = 450;
 export const OUTPUT_CEILING_TOKENS = 600;
-/** API cap. Higher than the prose band so hidden thinking tokens cannot eat the visible reply. */
-export const OUTPUT_TOKEN_CAP = 2048;
+/** Prompt budget for system text plus history. Distant turns are dropped to stay under this. */
+export const PROMPT_TOKEN_BUDGET = 3200;
+/** Generation cap sent as max_tokens. */
+export const OUTPUT_TOKEN_CAP = 4096;
 /** Active chat baseline: last 10 messages (5 user + 5 assistant). */
 export const BASELINE_HISTORY_TURNS = 5;
 /** Hard cap on chat turns sent to the model. Older turns stay in the database only. */
@@ -47,7 +49,7 @@ export function payloadPolicy(tier: TierId, isAdmin: boolean, modelWindow?: numb
   const plan = TIERS[tier];
   const planCap = isAdmin ? (modelWindow && modelWindow > 0 ? modelWindow : 1_000_000) : plan.contextTokens;
   const contextCap = modelWindow && modelWindow > 0 ? Math.min(planCap, modelWindow) : planCap;
-  const inputBudget = Math.max(600, Math.floor(contextCap * CONTEXT_SAFETY_RATIO) - OUTPUT_CEILING_TOKENS);
+  const inputBudget = Math.min(PROMPT_TOKEN_BUDGET, Math.max(600, contextCap));
   return {
     mode: isAdmin || tier === 'PREMIUM' || tier === 'ULTIMATE' ? 'HIGH' : 'STANDARD',
     contextCap, inputBudget,
@@ -174,9 +176,11 @@ TIER 3: IN-CHARACTER ROLEPLAY EXECUTION (Default Mode)
 1. When no OOC tag is present, execute standard roleplay following the character persona, traits, tone, and active history context.`;
 
 /**
- * System payload order: the authority directive, the world-state block, the user persona, then the character definition.
- * The directive is not minified.
+ * System payload order: authority directive, full character card, user persona, length rule, then world state.
+ * The directive, card, and length rule are not sliced.
  */
+export const LENGTH_RULE = 'Write rich, multi-paragraph roleplay responses.';
+
 export function buildTieredSystemPrompt(parts: {
   world?: string | null;
   persona?: string | null;
@@ -188,9 +192,10 @@ export function buildTieredSystemPrompt(parts: {
   const persona = (parts.persona ?? '').trim();
   const character = (parts.character ?? '').trim();
   const context = (parts.context ?? '').trim();
-  if (world) sections.push(world);
-  if (persona) sections.push(`[USER PERSONA]\n${persona}`);
   if (character) sections.push(`[CHARACTER DEFINITION]\n${character}`);
+  if (persona) sections.push(`[USER PERSONA]\n${persona}`);
+  sections.push(LENGTH_RULE);
+  if (world) sections.push(world);
   if (context) sections.push(context);
   return sections.join('\n\n');
 }
