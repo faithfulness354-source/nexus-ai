@@ -29,18 +29,19 @@ interface MessageRow {
 
 let columnReady: Promise<void> | null = null;
 
-/** Adds the soft-delete flag when this database was created before the column existed. */
+/** Adds the soft-delete flag on the public chat table when an older database is missing it. */
 export function ensureDeletedColumn(): Promise<void> {
   if (!columnReady) {
-    columnReady = prisma.$executeRawUnsafe('ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "deleted" BOOLEAN NOT NULL DEFAULT 0')
-      .then(() => undefined)
-      .catch((err: unknown) => {
+    columnReady = (async () => {
+      try {
+        await prisma.$executeRawUnsafe(
+          'ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false',
+        );
+      } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code) : '';
-        if (code === '42701' || code === '42710' || /already exists|duplicate column/i.test(message)) return;
-        columnReady = null;
-        throw err;
-      });
+        console.warn('[chat] chat_messages.deleted check skipped:', message);
+      }
+    })();
   }
   return columnReady;
 }
@@ -71,9 +72,9 @@ function asRole(value: string): StoredMessage['role'] | null {
 export async function listActiveMessages(sessionId: string): Promise<StoredMessage[]> {
   await ensureDeletedColumn();
   const rows = await prisma.$queryRaw<MessageRow[]>`
-    SELECT id, sessionId, role, content, model, tokenCount, editHistory, createdAt, "index"
-    FROM Message
-    WHERE sessionId = ${sessionId} AND deleted = 0
+    SELECT id, "sessionId", role, content, model, "tokenCount", "editHistory", "createdAt", "index"
+    FROM nexus."Message"
+    WHERE "sessionId" = ${sessionId} AND deleted = false
     ORDER BY "index" ASC
   `;
   const messages: StoredMessage[] = [];
@@ -101,12 +102,12 @@ export async function listActiveMessages(sessionId: string): Promise<StoredMessa
 export async function nextMessageIndex(sessionId: string): Promise<number> {
   await ensureDeletedColumn();
   const rows = await prisma.$queryRaw<Array<{ next: number | bigint | null }>>`
-    SELECT COALESCE(MAX("index"), -1) + 1 AS next FROM Message WHERE sessionId = ${sessionId}
+    SELECT COALESCE(MAX("index"), -1) + 1 AS next FROM nexus."Message" WHERE "sessionId" = ${sessionId}
   `;
   return Number(rows[0]?.next ?? 0);
 }
 
 export async function markMessageDeleted(sessionId: string, messageId: string): Promise<void> {
   await ensureDeletedColumn();
-  await prisma.$executeRaw`UPDATE Message SET deleted = 1 WHERE id = ${messageId} AND sessionId = ${sessionId}`;
+  await prisma.$executeRaw`UPDATE nexus."Message" SET deleted = true WHERE id = ${messageId} AND "sessionId" = ${sessionId}`;
 }
