@@ -174,18 +174,21 @@ TIER 3: IN-CHARACTER ROLEPLAY EXECUTION (Default Mode)
 1. When no OOC tag is present, execute standard roleplay following the character persona, traits, tone, and active history context.`;
 
 /**
- * System payload order: the authority directive, then the user persona, then the character definition.
+ * System payload order: the authority directive, the world-state block, the user persona, then the character definition.
  * The directive is not minified.
  */
 export function buildTieredSystemPrompt(parts: {
+  world?: string | null;
   persona?: string | null;
   character?: string | null;
   context?: string | null;
 }): string {
   const sections = [PRIMARY_SYSTEM_DIRECTIVE];
+  const world = (parts.world ?? '').trim();
   const persona = (parts.persona ?? '').trim();
   const character = (parts.character ?? '').trim();
   const context = (parts.context ?? '').trim();
+  if (world) sections.push(world);
   if (persona) sections.push(`[USER PERSONA]\n${persona}`);
   if (character) sections.push(`[CHARACTER DEFINITION]\n${character}`);
   if (context) sections.push(context);

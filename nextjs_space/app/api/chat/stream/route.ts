@@ -27,6 +27,7 @@ import {
   OUTPUT_FLOOR_TOKENS, OUTPUT_CEILING_TOKENS, buildTieredSystemPrompt, includeExampleDialogue, exampleDialogueBlock,
   summaryPrompt, extractiveSummary, truncateTokens, SUMMARY_BATCH, SUMMARY_TOKEN_LIMIT,
 } from '@/lib/payload-router';
+import { commitWorldTurn, loadWorldPrompt } from '@/lib/world/engine';
 
 function wordList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((word): word is string => typeof word === 'string');
@@ -229,7 +230,19 @@ export async function POST(request: NextRequest) {
     contextParts.push(progressionStatus(meters, latestMeters, storedMessages.length + 1));
     contextParts.push(`Reply length: at least four paragraphs, about ${OUTPUT_FLOOR_TOKENS}-${OUTPUT_CEILING_TOKENS} tokens, then the status line. A one to five line reply is too short. Finish the beat with action, spoken lines, and how {{char}} reacts.`);
     const fill = (parts: string[]) => minify(fillMacros(parts.filter(Boolean).join(' '), charName, userName));
+    let worldBlock = '';
+    try {
+      worldBlock = await loadWorldPrompt(sessionId, content, {
+        provider,
+        model: useModel,
+        apiKey: providerConfig.apiKey,
+        baseUrl: providerConfig.baseUrl,
+      });
+    } catch (worldErr) {
+      console.error('[world] context failed:', worldErr);
+    }
     const systemPrompt = buildTieredSystemPrompt({
+      world: worldBlock,
       persona: fill(personaParts),
       character: fill(characterParts),
       context: fill(contextParts),
@@ -317,6 +330,17 @@ export async function POST(request: NextRequest) {
                 },
               });
               void syncMessageToCloud(savedAssistant, viewer.user);
+
+              try {
+                await commitWorldTurn(sessionId, content, finalResponse, {
+                  provider,
+                  model: useModel,
+                  apiKey: providerConfig.apiKey,
+                  baseUrl: providerConfig.baseUrl,
+                });
+              } catch (worldErr) {
+                console.error('[world] update failed:', worldErr);
+              }
 
               // Rolling memory: fold messages that fell out of the raw window into the session summary.
               if (policy.memorySummary) {
