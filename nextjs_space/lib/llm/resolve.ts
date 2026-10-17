@@ -21,6 +21,17 @@ function geminiModel(requested?: string | null, configured?: string | null): str
  * Returns null if no usable key exists.
  */
 export async function resolveChatTarget(provider?: string | null, model?: string | null): Promise<ResolvedTarget | null> {
+  const novelKey = process.env.NOVELAI_API_KEY?.trim();
+  if (novelKey) {
+    const requested = typeof model === 'string' ? model.trim() : '';
+    const novelModel = /xialong|erato|glm-4/i.test(requested) ? requested : 'glm-4.6-xialong-v1';
+    return {
+      provider: 'NOVELAI',
+      model: novelModel,
+      config: { apiKey: novelKey, baseUrl: 'https://text.novelai.net/ai/generate', defaultModel: 'glm-4.6-xialong-v1' },
+    };
+  }
+
   let p = normalizeProvider(provider);
   let m = model ?? null;
 

@@ -5,6 +5,7 @@ import { streamOpenAICompatible } from './openai-compatible';
 import { streamAnthropic } from './anthropic';
 import { streamGemini } from './gemini';
 import { streamOpenRouter } from './openrouter';
+import { NOVELAI_DEFAULT_MODEL, streamNovelAI } from './novelai';
 
 export interface StreamOptions {
   messages: LLMMessage[];
@@ -21,6 +22,7 @@ function outboundModel(provider: string, model: string): string {
   if (name === 'CUSTOM') return resolveCustomModel(model);
   if (name === 'OPENROUTER') return resolveOpenRouterModel(model);
   if (name === 'GEMINI') return usableGeminiModel(model);
+  if (name === 'NOVELAI') return (typeof model === 'string' && model.trim()) || NOVELAI_DEFAULT_MODEL;
   const value = typeof model === 'string' ? model.trim() : '';
   return value || PROVIDER_MODELS.ANTHROPIC?.[0] || DEFAULT_MODEL;
 }
@@ -57,6 +59,9 @@ export function createLLMStream(opts: StreamOptions): ReadableStream {
       break;
     case 'CUSTOM':
       stream = streamOpenAICompatible(params);
+      break;
+    case 'NOVELAI':
+      stream = streamNovelAI(params);
       break;
     case 'GEMINI':
     default:

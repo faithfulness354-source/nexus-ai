@@ -171,11 +171,12 @@ export function usableModelForProvider(provider: string, model?: string | null):
   if (provider === 'GEMINI') return usableGeminiModel(model);
   if (provider === 'OPENROUTER') return usableOpenRouterModel(model);
   if (provider === 'CUSTOM') return usableCustomModel(model);
+  if (provider === 'NOVELAI') return bareModelId(model) || 'glm-4.6-xialong-v1';
   return bareModelId(model);
 }
 // Tried in order when the selected Gemini model is retired, rate-limited or overloaded.
 export const GEMINI_FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'];
-export const SUPPORTED_PROVIDERS = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'] as const;
+export const SUPPORTED_PROVIDERS = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM', 'NOVELAI'] as const;
 
 export function normalizeProvider(provider?: string | null): string {
   const p = (provider ?? '').toUpperCase();
@@ -199,6 +200,7 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   ANTHROPIC: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
   OPENROUTER: OPENROUTER_CHAT_MODELS,
   CUSTOM: GROQ_CHAT_MODELS,
+  NOVELAI: ['glm-4.6-xialong-v1', 'xialong-v1', 'llama-3-erato-v1'],
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -206,6 +208,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   GEMINI: 'Google Gemini',
   OPENROUTER: 'OpenRouter',
   CUSTOM: 'Custom Endpoint',
+  NOVELAI: 'NovelAI',
 };
 
 export const CONTEXT_WINDOWS: Record<string, number> = {

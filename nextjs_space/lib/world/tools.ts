@@ -39,7 +39,7 @@ export async function requestWorldToolCalls(opts: {
   state: WorldStateRow;
 }): Promise<WorldToolCall[]> {
   const apiKey = opts.apiKey.trim();
-  if (!apiKey) return [];
+  if (!apiKey || normalizeProvider(opts.provider) === 'NOVELAI') return [];
   const prompt = [
     `Current trust: ${opts.state.stats.trust}`,
     `Current inventory: ${opts.state.stats.inventory.join(', ') || 'empty'}`,
