@@ -287,6 +287,29 @@ function clampNum(n: number, lo: number, hi: number): number {
 }
 
 /**
+ * Full character card for the live prompt: personality, system prompt, scenario, summary, and rules.
+ * Continuity and length instructions are appended whole and are not sliced to a token cap.
+ */
+export function fullCharacterPrompt(c: CharacterPromptSource): string {
+  const name = (c.name || 'Character').trim() || 'Character';
+  const title = (c.title || '').trim();
+  const summary = htmlToPlainText(c.summary);
+  const personality = htmlToPlainText(c.personality);
+  const systemPrompt = htmlToPlainText(c.systemPrompt);
+  const scenario = htmlToPlainText(c.scenario);
+  const rules = (c.customRules || '').trim();
+  return [
+    `You are ${name}${title ? `, ${title}` : ''}. Roleplay with {{user}}.`,
+    summary && `Summary:\n${summary}`,
+    personality && `Personality:\n${personality}`,
+    systemPrompt && `Character directives:\n${systemPrompt}`,
+    scenario && `Scenario:\n${scenario}`,
+    rules && `Rules:\n${rules}`,
+    CONTINUITY_GUARDRAILS,
+  ].filter(Boolean).join('\n\n');
+}
+
+/**
  * Builds the compressed active system prompt (≤ SYSTEM_PROMPT_TOKEN_LIMIT incl. guardrails): core identity,
  * the [SYSTEM_PROGRESSION_ENGINE], heat tracking (0–5) and the status-screen format. Example dialogue,
  * formatting fluff and non-essential notes are dropped.
@@ -373,15 +396,8 @@ export function windowHistory<T>(messages: T[], turns: number): T[] {
  * Keeps the authority directive intact at the front. Only the persona, character, and context
  * sections are shortened when the plan budget is tight.
  */
-function fitSystemPrompt(systemPrompt: string, tokenBudget: number): { system: string; systemTokens: number } {
-  const directive = PRIMARY_SYSTEM_DIRECTIVE;
-  const within = (system: string) => ({ system, systemTokens: estimateTokens(system) });
-  if (estimateTokens(systemPrompt) <= tokenBudget) return within(systemPrompt);
-  if (!systemPrompt.startsWith(directive)) return within(truncateTokens(systemPrompt, tokenBudget));
-  const rest = systemPrompt.slice(directive.length).trim();
-  const room = tokenBudget - estimateTokens(directive);
-  const trimmedRest = room > 24 ? truncateTokens(rest, room) : '';
-  return within(trimmedRest ? `${directive}\n\n${trimmedRest}` : directive);
+function fitSystemPrompt(systemPrompt: string, _tokenBudget: number): { system: string; systemTokens: number } {
+  return { system: systemPrompt, systemTokens: estimateTokens(systemPrompt) };
 }
 
 /**
@@ -405,13 +421,12 @@ export function packWithinBudget(
     const roleName = m.role?.toLowerCase();
     const role = (roleName === 'assistant' || roleName === 'model' ? 'assistant' : 'user') as 'user' | 'assistant';
     const isNewest = i === history.length - 1;
-    let content = minify(messageContent(m.content));
+    let content = messageContent(m.content).trim();
     if (!content) continue;
     let t = estimateTokens(content);
-    if (t > remaining) {
-      if (!isNewest && remaining < 15) break;
-      // Newest message keeps its opening; older context keeps its most recent part.
-      content = truncateTokens(content, Math.max(5, remaining), !isNewest);
+    if (t > remaining && !isNewest) {
+      if (remaining < 15) break;
+      content = truncateTokens(content, Math.max(5, remaining), true);
       t = estimateTokens(content);
     }
     if (!content) continue;
@@ -426,15 +441,15 @@ export function packWithinBudget(
 }
 
 /**
- * Sliding window: the character sheet stays at index 0, and only the newest 10 chat messages follow it.
- * Older turns are not sent. The plan budget can drop messages inside that window; stored history is untouched.
+ * The character sheet stays at index 0. Active history follows it, newest last.
+ * The plan budget may drop older turns. The system prompt, including length instructions, is not sliced.
  */
 export function assembleTierPayload(
   systemPrompt: string,
   allMessages: Array<{ role: string; content: string }>,
   policy: Pick<PayloadPolicy, 'historyTurns' | 'inputBudget'>,
 ): { messages: LLMMessage[]; inputTokens: number; windowed: number; purged: number } {
-  const windowedMsgs = spliceDeletedMessages(allMessages).slice(-HISTORY_MESSAGE_LIMIT);
+  const windowedMsgs = spliceDeletedMessages(allMessages);
   const packed = packWithinBudget(systemPrompt, windowedMsgs, policy.inputBudget);
   if (packed.messages[0]?.role !== 'system') {
     packed.messages.unshift({ role: 'system', content: systemPrompt });

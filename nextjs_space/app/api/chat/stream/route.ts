@@ -23,8 +23,8 @@ import { characterGreeting } from '@/lib/greeting';
 import { logEvent } from '@/lib/logger';
 import { syncMessageToCloud } from '@/lib/supabase/sync';
 import {
-  payloadPolicy, minify, compressSystemPrompt, trackedMeters, progressionStatus, parseMeterValues, assembleTierPayload, HISTORY_MESSAGE_LIMIT,
-  OUTPUT_FLOOR_TOKENS, OUTPUT_CEILING_TOKENS, buildTieredSystemPrompt, includeExampleDialogue, exampleDialogueBlock,
+  payloadPolicy, minify, fullCharacterPrompt, trackedMeters, progressionStatus, parseMeterValues, assembleTierPayload,
+  OUTPUT_FLOOR_TOKENS, OUTPUT_CEILING_TOKENS, buildTieredSystemPrompt, exampleDialogueBlock,
   summaryPrompt, extractiveSummary, truncateTokens, SUMMARY_BATCH, SUMMARY_TOKEN_LIMIT,
 } from '@/lib/payload-router';
 import { commitWorldTurn, loadWorldPrompt } from '@/lib/world/engine';
@@ -159,20 +159,17 @@ export async function POST(request: NextRequest) {
     // Example dialogue is attached only while the thread is still under four messages.
     const meters = trackedMeters(character?.customRules);
     const latestMeters = (lastMeter?.metersJson ?? null) as Record<string, number> | null;
-    const conversationLength = storedMessages.length + 1;
     const characterParts: string[] = [
-      compressSystemPrompt({
+      fullCharacterPrompt({
         name: charName, title: character?.title, personality: character?.personality, systemPrompt: character?.systemPrompt,
         summary: character?.summary, scenario: character?.scenario, customRules: character?.customRules,
       }),
     ];
-    if (includeExampleDialogue(conversationLength)) {
-      const examples = exampleDialogueBlock(character?.exampleDialogue, [
-        character?.systemPrompt,
-        character?.personality,
-      ]);
-      if (examples) characterParts.push(examples);
-    }
+    const examples = exampleDialogueBlock(character?.exampleDialogue, [
+      character?.systemPrompt,
+      character?.personality,
+    ]);
+    if (examples) characterParts.push(examples);
     const contextParts: string[] = [];
     // Facts from turns that slid out of the 10-message window, so established canon is never lost.
     if (session.memorySummary?.trim()) contextParts.push(`Story so far (canon): ${minify(session.memorySummary)}`);
@@ -204,13 +201,13 @@ export async function POST(request: NextRequest) {
         personaImages.length ? 'Their latest message includes a portrait. That image is what {{user}} looks like right now.' : '',
         'Let those details change what you notice, how you address them, and how you react.',
         'Never speak, decide, or act for them.',
-        notes ? truncateTokens(notes, 280) : '',
+        notes || '',
       ].filter(Boolean).join(' '));
       if (personaRefresh) personaParts.push(`Persona update: {{user}} is now ${personaAnchor(persona)}. Continue this same conversation and do not restart the scene.`);
     }
     const greeting = character ? characterGreeting(character, userName) : '';
     if (openingTurn && greeting) {
-      contextParts.push(`Opening line already shown to {{user}}. Do not repeat it: ${truncateTokens(greeting, 120)}`);
+      contextParts.push(`Opening line already shown to {{user}}. Do not repeat it:\n${greeting}`);
     }
     const books = lorebooks.filter((b) =>
       b.scope === 'GLOBAL' ||
@@ -229,7 +226,7 @@ export async function POST(request: NextRequest) {
     // Live tracker goes last so it is the freshest instruction the model reads before writing.
     contextParts.push(progressionStatus(meters, latestMeters, storedMessages.length + 1));
     contextParts.push(`Reply length: at least four paragraphs, about ${OUTPUT_FLOOR_TOKENS}-${OUTPUT_CEILING_TOKENS} tokens, then the status line. A one to five line reply is too short. Finish the beat with action, spoken lines, and how {{char}} reacts.`);
-    const fill = (parts: string[]) => minify(fillMacros(parts.filter(Boolean).join(' '), charName, userName));
+    const fill = (parts: string[]) => fillMacros(parts.filter(Boolean).join('\n\n'), charName, userName);
     let worldBlock = '';
     try {
       worldBlock = await loadWorldPrompt(sessionId, content, {
@@ -250,7 +247,7 @@ export async function POST(request: NextRequest) {
 
     // Only the newest messages are prepared for the model. The full thread stays in the database and the UI.
     const liveStored = spliceDeletedMessages(storedMessages);
-    const recentStored = liveStored.slice(-(HISTORY_MESSAGE_LIMIT - 1));
+    const recentStored = liveStored;
     const greetingText = greeting.trim();
     const historyForModel = sanitizeChatHistory(
       recentStored
