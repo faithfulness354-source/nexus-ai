@@ -24,7 +24,7 @@ async function geminiCredentials(hint?: { provider?: string; apiKey?: string | n
   }
   const saved = await prisma.providerConfig.findUnique({ where: { provider: 'GEMINI' } }).catch(() => null);
   const apiKey = saved?.apiKey?.trim();
-  if (!apiKey || saved?.isActive === false) return null;
+  if (!saved || !apiKey || saved.isActive === false) return null;
   return { apiKey, baseUrl: saved.baseUrl };
 }
 

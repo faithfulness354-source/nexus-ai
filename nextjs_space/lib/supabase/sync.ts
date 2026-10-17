@@ -263,19 +263,10 @@ export async function pushLocalAccount(owner: Owner): Promise<void> {
         updated_at: now,
       })), { onConflict: 'local_id' });
     }
-    const messages = await prisma.$queryRaw<Array<{
-      id: string;
-      sessionId: string;
-      role: string;
-      content: string;
-      index: number;
-      deleted: number | boolean;
-    }>>`
-      SELECT m.id, m."sessionId" as "sessionId", m.role, m.content, m."index" as "index", m.deleted
-      FROM "Message" m
-      INNER JOIN "ChatSession" s ON s.id = m."sessionId"
-      WHERE s."userId" = ${owner.id}
-    `;
+    const messages = await prisma.message.findMany({
+      where: { session: { userId: owner.id } },
+      select: { id: true, sessionId: true, role: true, content: true, index: true, deleted: true },
+    });
     const chunk = 200;
     for (let i = 0; i < messages.length; i += chunk) {
       await admin.from('chat_messages').upsert(messages.slice(i, i + chunk).map((message) => ({
@@ -285,7 +276,7 @@ export async function pushLocalAccount(owner: Owner): Promise<void> {
         role: message.role,
         content: message.content ?? '',
         index: message.index,
-        deleted: message.deleted === true || message.deleted === 1,
+        deleted: message.deleted === true,
       })), { onConflict: 'local_id' });
     }
   } catch {

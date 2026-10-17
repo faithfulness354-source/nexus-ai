@@ -330,17 +330,12 @@ export async function POST(request: NextRequest) {
                 },
               });
               void syncMessageToCloud(savedAssistant, viewer.user);
-
-              try {
-                await commitWorldTurn(sessionId, content, finalResponse, {
-                  provider,
-                  model: useModel,
-                  apiKey: providerConfig.apiKey,
-                  baseUrl: providerConfig.baseUrl,
-                });
-              } catch (worldErr) {
-                console.error('[world] update failed:', worldErr);
-              }
+              void commitWorldTurn(sessionId, content, finalResponse, {
+                provider,
+                model: useModel,
+                apiKey: providerConfig.apiKey,
+                baseUrl: providerConfig.baseUrl,
+              });
 
               // Rolling memory: fold messages that fell out of the raw window into the session summary.
               if (policy.memorySummary) {

@@ -149,7 +149,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
       await prisma.message.create({ data: { id: localId, sessionId, role, content, index } });
     }
     if (deleted) {
-      await prisma.$executeRaw`UPDATE "Message" SET "deleted" = 1 WHERE id = ${localId}`;
+      await prisma.message.update({ where: { id: localId }, data: { deleted: true } });
     }
     return;
   }
