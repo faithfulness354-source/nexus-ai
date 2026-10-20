@@ -30,7 +30,7 @@ async function main() {
   }
 
   // Seed default provider configs
-  // Google Gemini is the default primary provider; OpenAI is not supported.
+  // ProviderConfig rows for console keys. NovelAI chat uses NOVELAI_API_KEY and does not need a row.
   const providers = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'] as const;
   for (const provider of providers) {
     await prisma.providerConfig.upsert({
@@ -38,8 +38,8 @@ async function main() {
       update: {},
       create: {
         provider,
-        isActive: provider === 'GEMINI',
-        defaultModel: provider === 'GEMINI' ? 'gemini-flash-latest' : null,
+        isActive: provider === 'OPENROUTER',
+        defaultModel: provider === 'OPENROUTER' ? 'anthropic/claude-sonnet-4' : provider === 'CUSTOM' ? 'openai/gpt-oss-20b' : null,
       },
     });
   }

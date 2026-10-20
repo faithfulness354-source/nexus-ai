@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     }
     if ((character.nsfw || characterImpliesNsfw(character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
 
-    // New sessions always start on Google Gemini (the primary provider)
+    // New sessions start on the active paid provider (NovelAI when configured).
     const target = await getDefaultSessionTarget();
 
     let personaId: string | null = null;

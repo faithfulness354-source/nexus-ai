@@ -8,14 +8,15 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PROVIDER_MODELS, PROVIDER_LABELS, SUPPORTED_PROVIDERS, DEFAULT_PROVIDER, usableGeminiModel } from '@/lib/types';
+import { PROVIDER_MODELS, PROVIDER_LABELS, SUPPORTED_PROVIDERS, DEFAULT_PROVIDER, usableModelForProvider } from '@/lib/types';
 import { Save, Zap, Check, CreditCard, KeyRound, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { SubscriptionPanel } from '@/components/billing/subscription-panel';
 import Link from 'next/link';
 import { useAccess } from '@/components/billing/access-provider';
 
-const PROVIDERS: string[] = [...SUPPORTED_PROVIDERS];
+/** Console API keys. NovelAI chat uses NOVELAI_API_KEY and is not stored in ProviderConfig. */
+const PROVIDERS: string[] = SUPPORTED_PROVIDERS.filter((provider) => provider !== 'NOVELAI');
 
 interface ProviderState {
   apiKey: string;
@@ -54,7 +55,7 @@ export function SettingsPage({ allowApiSettings = false, initialTab, checkout }:
           map[p] = {
             apiKey: '',
             baseUrl: existing?.baseUrl ?? '',
-            defaultModel: p === DEFAULT_PROVIDER ? usableGeminiModel(existing?.defaultModel) : (existing?.defaultModel || (PROVIDER_MODELS?.[p]?.[0] ?? '')),
+            defaultModel: usableModelForProvider(p, existing?.defaultModel) || (PROVIDER_MODELS?.[p]?.[0] ?? ''),
             isActive: existing?.isActive ?? false,
             loaded: true,
             maskedKey: existing?.apiKey ?? null,

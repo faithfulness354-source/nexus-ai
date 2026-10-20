@@ -132,8 +132,8 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
         characterId,
         userId: owner.id,
         title,
-        model: text(record.model, 'gemini-flash-latest'),
-        provider: text(record.provider, 'GEMINI'),
+        model: text(record.model, 'glm-4.6-xialong-v1'),
+        provider: text(record.provider, 'NOVELAI'),
       },
     });
     return;

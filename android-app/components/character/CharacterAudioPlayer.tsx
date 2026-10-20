@@ -123,7 +123,9 @@ export function CharacterAudioPlayer({
 
   return (
     <div
-      className={cn('pointer-events-auto flex items-center gap-1 rounded-full bg-black/75 p-1 text-white shadow-lg ring-1 ring-white/15', className)}
+      role="group"
+      aria-label={`${label} audio controls`}
+      className={cn('pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/80 p-1.5 text-white shadow-lg ring-1 ring-white/15', className)}
       onPointerDown={keep}
       onMouseDown={keep}
       onClick={hold}
@@ -136,9 +138,9 @@ export function CharacterAudioPlayer({
         onClick={(e) => { hold(e); void togglePlay(); }}
         aria-label={playing ? `Pause ${label} audio` : `Play ${label} audio`}
         title={needsGesture ? 'Tap to play' : playing ? 'Pause' : 'Play'}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
+        className="inline-flex h-10 w-10 touch-manipulation items-center justify-center rounded-full hover:bg-white/15 active:bg-white/25"
       >
-        {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+        {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
       </button>
       <button
         type="button"
@@ -147,9 +149,9 @@ export function CharacterAudioPlayer({
         onClick={(e) => { hold(e); void toggleMute(); }}
         aria-label={muted ? `Unmute ${label} audio` : `Mute ${label} audio`}
         aria-pressed={muted}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
+        className="inline-flex h-10 w-10 touch-manipulation items-center justify-center rounded-full hover:bg-white/15 active:bg-white/25"
       >
-        {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+        {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
       </button>
     </div>
   );

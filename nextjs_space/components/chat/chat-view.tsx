@@ -10,7 +10,8 @@ import { TypingIndicator } from './typing-indicator';
 import { DEFINITION_TOKEN_CAP, estimateTokens, countSystemTokens } from '@/lib/tokens';
 import { recountTurnTokens } from '@/lib/context-manager';
 import { spliceDeletedMessages } from '@/lib/llm/messages';
-import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, usableCustomModel, usableGeminiModel, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
+import { CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
+import { pickActiveChatModel, purgeStoredChatModelIfStale, readStoredChatModel, writeStoredChatModel } from '@/lib/chat-models';
 import { Plus, Pencil, SlidersHorizontal, MoreVertical, KeyRound, Brain, CreditCard, UserRound, Check } from 'lucide-react';
 import { applyScripts, fillMacros, pickPersona, type PersonaData, type ScriptData } from '@/lib/hubs';
 import { cardFirstMessage, composeOpening } from '@/lib/opening';
@@ -180,6 +181,8 @@ export function ChatView({ characterId }: ChatViewProps) {
   const [genSettings, setGenSettings] = useState<Partial<GenSettings>>({});
   const [currentModel, setCurrentModel] = useState<string>(DEFAULT_MODEL);
   const [currentProvider, setCurrentProvider] = useState<string>(DEFAULT_PROVIDER);
+  const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [sessionModelHint, setSessionModelHint] = useState<string | null>(null);
   // What the server actually sent on the last request (compressed system prompt size + plan cap).
   const [payloadInfo, setPayloadInfo] = useState<{ systemTokens: number; contextCap: number | null } | null>(null);
   const [tokenUsage, setTokenUsage] = useState({ sent_tokens: 0, recent_history_tokens: 0, definition_tokens: 0 });
@@ -366,8 +369,7 @@ export function ChatView({ characterId }: ChatViewProps) {
         setSessionPersonaId(session?.personaId ?? null);
         const prov = normalizeProvider(session?.provider);
         setCurrentProvider(prov);
-        const savedModel = usableCustomModel(session?.model);
-        setCurrentModel(prov === DEFAULT_PROVIDER ? usableGeminiModel(savedModel) : savedModel);
+        setSessionModelHint(typeof session?.model === 'string' ? session.model : null);
         if (session?.generationSettings) {
           setGenSettings(session.generationSettings);
         }
@@ -383,6 +385,52 @@ export function ChatView({ characterId }: ChatViewProps) {
     })();
     return () => { cancel = true; };
   }, [characterId, sessionIdParam, router, forceNewChat]);
+
+  // Paid-provider catalog for the chat model dropdown (never a static Gemini list).
+  useEffect(() => {
+    let cancel = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/models', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (cancel || !res.ok) return;
+        const models = Array.isArray(data?.models)
+          ? data.models.filter((model: unknown): model is string => typeof model === 'string' && !!model.trim())
+          : [];
+        if (!models.length) return;
+        if (typeof data?.provider === 'string' && data.provider.trim()) {
+          setCurrentProvider(normalizeProvider(data.provider));
+        }
+        setProviderModels(models);
+        purgeStoredChatModelIfStale(models);
+      } catch {
+        /* keep last known list */
+      }
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  // Drop Gemini / stale prefs and bind the chat chip to a live paid model id.
+  useEffect(() => {
+    if (!providerModels.length) return;
+    const next = pickActiveChatModel([sessionModelHint, readStoredChatModel(), currentModel], providerModels);
+    if (next !== currentModel) setCurrentModel(next);
+    writeStoredChatModel(next, currentProvider);
+    if (sessionId && sessionModelHint && sessionModelHint !== next) {
+      void fetch(`/api/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: next, provider: currentProvider }),
+      }).catch(() => {});
+      setSessionModelHint(next);
+    }
+  }, [providerModels, sessionModelHint, sessionId, currentProvider]);
+
+  useEffect(() => {
+    if (!access || access.can.proModels || !isProModel(currentModel) || !providerModels.length) return;
+    const next = pickActiveChatModel([readStoredChatModel()], providerModels.filter((model) => !isProModel(model)));
+    if (next && next !== currentModel) setCurrentModel(next);
+  }, [access, currentModel, providerModels]);
 
   // Before a session exists, preview the card's first message. A created session uses only the greeting stored for that session.
   useEffect(() => {
@@ -736,34 +784,39 @@ export function ChatView({ characterId }: ChatViewProps) {
       openPaywall('proModels');
       return;
     }
+    if (providerModels.length && !providerModels.includes(model)) {
+      toast.error('That model is not available on the active provider.');
+      return;
+    }
     const previous = currentModel;
     setCurrentModel(model);
+    setSessionModelHint(model);
+    writeStoredChatModel(model, currentProvider);
     if (!sessionId) return;
     try {
       const res = await fetch(`/api/sessions/${sessionId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, provider: currentProvider }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setCurrentModel(previous);
+        setSessionModelHint(previous);
         if (res.status === 402) openPaywall(err?.feature === 'proModels' ? 'proModels' : 'credits');
         else toast.error(err?.error ?? 'Could not change model');
       }
     } catch {
       setCurrentModel(previous);
+      setSessionModelHint(previous);
       toast.error('Could not change model');
     }
   }
 
   // Pro models are a Premium+ perk (the server enforces this too).
   const canPro = !!access?.can.proModels;
-  const availableModels = (PROVIDER_MODELS?.[currentProvider] ?? []).filter((m: string) => canPro || !isProModel(m));
+  const availableModels = (providerModels.length ? providerModels : [DEFAULT_MODEL]).filter((m: string) => canPro || !isProModel(m));
   const canAdvanced = !!access?.can.advancedGeneration;
-  if (access && !access.can.proModels && isProModel(currentModel)) {
-    setCurrentModel(DEFAULT_MODEL);
-  }
   const planCap = access?.isAdmin
     ? (CONTEXT_WINDOWS?.[currentModel] ?? 8192)
     : (access?.contextTokens ?? TIERS.FREE.contextTokens);
@@ -808,7 +861,7 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   const previousMeters = priorMeterSnapshots(activeMessages, meterStates);
 
-  const canHearAudio = !!access?.isAdmin || (!!access?.userId && character?.ownerId === access.userId);
+  const characterAudioUrl = character?.audioUrl?.trim() || '';
   const characterTags = (Array.isArray(character?.tags) ? character.tags : String(character?.tags ?? '').split(','))
     .map((tag) => tag.trim())
     .filter(Boolean)
@@ -848,9 +901,6 @@ export function ChatView({ characterId }: ChatViewProps) {
                 </p>
               </div>
             </button>
-            {canHearAudio && character?.audioUrl?.trim() && (
-              <CharacterAudioPlayer audioUrl={character.audioUrl} label={character.name} autoplay className="shrink-0" />
-            )}
           </div>
         }
         right={
@@ -994,7 +1044,16 @@ export function ChatView({ characterId }: ChatViewProps) {
         </div>
       </div>
 
-      <div className="w-full max-w-3xl mx-auto">
+      <div className="w-full max-w-3xl mx-auto sticky bottom-0 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]">
+        {characterAudioUrl && (
+          <div className="mx-3 mb-2 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-card/95 px-3 py-2 shadow-lg">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold truncate">{character?.name ?? 'Character'} soundtrack</p>
+              <p className="text-[11px] text-muted-foreground">Pause or mute without leaving chat</p>
+            </div>
+            <CharacterAudioPlayer audioUrl={characterAudioUrl} label={character?.name ?? 'Character'} autoplay className="shrink-0" />
+          </div>
+        )}
         {modelNotice && (
           <div className="mx-3 mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
             {modelNotice}{' '}

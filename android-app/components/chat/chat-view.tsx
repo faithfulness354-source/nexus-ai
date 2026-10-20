@@ -702,7 +702,7 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   let prevSnapshot: MeterSnapshot | undefined;
 
-  const canHearAudio = !!access?.isAdmin || (!!access?.userId && character?.ownerId === access.userId);
+  const characterAudioUrl = character?.audioUrl?.trim() || '';
   const characterTags = (Array.isArray(character?.tags) ? character.tags : String(character?.tags ?? '').split(','))
     .map((tag) => tag.trim())
     .filter(Boolean)
@@ -742,9 +742,6 @@ export function ChatView({ characterId }: ChatViewProps) {
                 </p>
               </div>
             </button>
-            {canHearAudio && character?.audioUrl?.trim() && (
-              <CharacterAudioPlayer audioUrl={character.audioUrl} label={character.name} autoplay className="shrink-0" />
-            )}
           </div>
         }
         right={
@@ -884,7 +881,16 @@ export function ChatView({ characterId }: ChatViewProps) {
         </div>
       </div>
 
-      <div className="w-full max-w-3xl mx-auto">
+      <div className="w-full max-w-3xl mx-auto sticky bottom-0 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]">
+        {characterAudioUrl && (
+          <div className="mx-3 mb-2 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-card/95 px-3 py-2 shadow-lg">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold truncate">{character?.name ?? 'Character'} soundtrack</p>
+              <p className="text-[11px] text-muted-foreground">Pause or mute without leaving chat</p>
+            </div>
+            <CharacterAudioPlayer audioUrl={characterAudioUrl} label={character?.name ?? 'Character'} autoplay className="shrink-0" />
+          </div>
+        )}
         {modelNotice && (
           <div className="mx-3 mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
             {modelNotice}{' '}

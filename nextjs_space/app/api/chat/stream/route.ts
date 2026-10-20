@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
     });
     void syncMessageToCloud(savedUserMessage, viewer.user);
 
-    // Resolve provider/model and automatically load the saved key (Google Gemini by default)
+    // Resolve provider/model. When NOVELAI_API_KEY is set, the selected model is forwarded to NovelAI.
     const target = await resolveChatTarget(session.provider, allowedModel);
     if (!target) {
       await refundCredit(viewer);

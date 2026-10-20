@@ -110,17 +110,19 @@ export interface LLMMessage {
   content: string;
 }
 
-// Google Gemini is the primary/default provider across the app. OpenAI is not supported.
-export const DEFAULT_PROVIDER = 'GEMINI';
-export const DEFAULT_MODEL = 'gemini-flash-latest';
+// NovelAI is the paid chat provider. Gemini remains available only when an admin activates it in Settings.
+export const DEFAULT_PROVIDER = 'NOVELAI';
+export const DEFAULT_MODEL = 'glm-4.6-xialong-v1';
+/** Gemini-only fallback for the Gemini transport — never used as the app-wide chat default. */
+export const GEMINI_DEFAULT_MODEL = 'gemini-flash-latest';
 /** Current Groq production and preview chat models. Speech and guard models are omitted. */
 export const GROQ_CHAT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'allam-2-7b'];
 /** Used when a custom or Groq request has no current model of its own. */
 export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-20b';
-/** Live OpenRouter chat ids. Confirmed against the public models list. */
-export const OPENROUTER_CHAT_MODELS = ['google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'anthropic/claude-sonnet-4', 'meta-llama/llama-3.3-70b-instruct'];
+/** Seed OpenRouter chat ids when the live catalog request fails. */
+export const OPENROUTER_CHAT_MODELS = ['anthropic/claude-sonnet-4', 'meta-llama/llama-3.3-70b-instruct', 'openai/gpt-4o-mini'];
 /** Used when an OpenRouter request has no current vendor/model id. */
-export const OPENROUTER_DEFAULT_MODEL = 'google/gemini-2.5-flash';
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
 const RETIRED_GROQ_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.3-70b-specdec',
@@ -150,6 +152,14 @@ function bareModelId(model?: string | null): string {
   return (model ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
 }
 
+/** NovelAI id for the selected chat model. Display names map to the generation id; nothing is substituted. */
+export function novelApiModel(model?: string | null): string {
+  const value = bareModelId(model);
+  const key = value.toLowerCase().replace(/[\s_]+/g, '-');
+  if (/llama-?3-?erato/.test(key)) return 'llama-3-erato-v1';
+  return value;
+}
+
 /** Drops a blank id or a Groq model that has already been shut off. */
 export function usableCustomModel(model?: string | null): string {
   const value = bareModelId(model);
@@ -171,7 +181,7 @@ export function usableModelForProvider(provider: string, model?: string | null):
   if (provider === 'GEMINI') return usableGeminiModel(model);
   if (provider === 'OPENROUTER') return usableOpenRouterModel(model);
   if (provider === 'CUSTOM') return usableCustomModel(model);
-  if (provider === 'NOVELAI') return bareModelId(model) || 'glm-4.6-xialong-v1';
+  if (provider === 'NOVELAI') return novelApiModel(model);
   return bareModelId(model);
 }
 // Tried in order when the selected Gemini model is retired, rate-limited or overloaded.
@@ -190,9 +200,16 @@ export function isGeminiModel(model?: string | null): boolean {
 // Versioned models Google has shut off for new API keys (they return 404). Saved values are mapped to DEFAULT_MODEL.
 export const RETIRED_GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
-/** Returns a working Gemini model id, replacing missing/retired/non-Gemini values with DEFAULT_MODEL. */
+/** Returns a working Gemini model id, replacing missing/retired/non-Gemini values with GEMINI_DEFAULT_MODEL. */
 export function usableGeminiModel(model?: string | null): string {
-  return isGeminiModel(model) && !RETIRED_GEMINI_MODELS.includes(model as string) ? (model as string) : DEFAULT_MODEL;
+  return isGeminiModel(model) && !RETIRED_GEMINI_MODELS.includes(model as string) ? (model as string) : GEMINI_DEFAULT_MODEL;
+}
+
+/** True when a model id is a Google Gemini / Gemma SKU (including OpenRouter google/gemini*). */
+export function isGeminiFamilyModel(model?: string | null): boolean {
+  const value = bareModelId(model).toLowerCase();
+  if (!value) return false;
+  return isGeminiModel(value) || value.startsWith('google/gemini') || value.startsWith('google/gemma') || value.includes('gemini');
 }
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
