@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Save, ArrowLeft, X, Plus, Download, Loader2, Eye, EyeOff, ChevronDown, ImageIcon, Eraser, Music, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { queueNovelAiSync } from '@/lib/exporters/sync-client';
+import { cardFirstMessage } from '@/lib/opening';
 import Link from 'next/link';
 import { mediaVersionUrl } from '@/lib/media-src';
 import { GalleryEditor } from './gallery-editor';
@@ -90,7 +92,7 @@ function initialForm(initialData?: any) {
     summary: initialData?.summary ?? initialData?.description ?? '',
     personality: initialData?.personality ?? '',
     scenario: initialData?.scenario ?? '',
-    initialMessage: initialData?.initialMessage ?? initialData?.firstMessage ?? initialData?.first_mes ?? '',
+    initialMessage: cardFirstMessage(initialData),
     exampleDialogue: initialData?.exampleDialogue ?? '',
     customRules: initialData?.customRules ?? '{"meters":[],"rules":[]}',
     systemPrompt: initialData?.systemPrompt ?? initialData?.system_prompt ?? '',
@@ -423,6 +425,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       setDirty(false);
       toast.success(mode === 'edit' ? 'Character updated!' : 'Character created!');
       window.dispatchEvent(new Event('nexus:cloud-revision'));
+      queueNovelAiSync('character', saved.id);
       router.refresh();
       router.push(`/characters/${saved.id}/chat`);
     } catch (err: any) {

@@ -13,6 +13,15 @@ function text(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+/** True when the local card was saved after this cloud row, so an older cloud copy must not replace it. */
+function localIsNewer(localUpdated: Date, record: Row): boolean {
+  const raw = record.updated_at;
+  const cloud = raw instanceof Date ? raw : new Date(typeof raw === 'string' || typeof raw === 'number' ? raw : '');
+  const cloudTime = cloud.getTime();
+  if (Number.isNaN(cloudTime)) return false;
+  return localUpdated.getTime() > cloudTime;
+}
+
 function visibility(value: unknown): 'PUBLIC' | 'UNLISTED' | 'PRIVATE' {
   return value === 'PUBLIC' || value === 'UNLISTED' ? value : 'PRIVATE';
 }
@@ -29,7 +38,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
   if (table === 'characters') {
     const existing = await prisma.character.findUnique({ where: { id: localId } });
     if (existing && existing.ownerId !== owner.id) return;
-    const keepGreeting = existing?.name.trim() === 'Sienna&Saffron';
+    if (existing && localIsNewer(existing.updatedAt, record)) return;
     const data = {
       name: text(record.name, 'Unnamed'),
       title: text(record.title),
@@ -43,7 +52,6 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
       visibility: visibility(record.visibility),
     };
     if (existing) {
-      const nextGreeting = keepGreeting ? existing.initialMessage : data.greeting;
       const same = existing.name === data.name
         && existing.title === data.title
         && existing.summary === data.summary
@@ -53,7 +61,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
         && (existing.avatar ?? null) === data.avatar
         && existing.nsfw === data.nsfw
         && existing.visibility === data.visibility
-        && existing.initialMessage === nextGreeting;
+        && existing.initialMessage === data.greeting;
       if (same) return;
       await prisma.character.update({
         where: { id: localId },
@@ -67,7 +75,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
           avatar: data.avatar,
           nsfw: data.nsfw,
           visibility: data.visibility,
-          ...(keepGreeting ? {} : { initialMessage: data.greeting }),
+          initialMessage: data.greeting,
         },
       });
       return;
@@ -100,6 +108,7 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
     if (!characterId || characterId.startsWith('draft:')) return;
     const character = await prisma.character.findUnique({ where: { id: characterId } });
     if (!character || character.ownerId !== owner.id) return;
+    if (localIsNewer(character.updatedAt, record)) return;
     const scenario = text(record.body);
     if (character.scenario === scenario) return;
     await prisma.character.update({ where: { id: characterId }, data: { scenario } });

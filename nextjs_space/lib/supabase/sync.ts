@@ -16,13 +16,39 @@ async function ownerId(owner: Owner): Promise<string | null> {
   }
 }
 
+type StoredStatic = {
+  local_id?: string;
+  summary?: string | null;
+  personality?: string | null;
+  scenario?: string | null;
+  greeting?: string | null;
+};
+
+function sameStatic(sent: Record<string, unknown>[], stored: StoredStatic[] | null) {
+  for (const row of sent) {
+    const found = (stored ?? []).find((item) => item.local_id === row.local_id);
+    if (!found) throw new Error('Supabase did not confirm the character row');
+    for (const key of ['summary', 'personality', 'scenario', 'greeting'] as const) {
+      const actual = typeof found[key] === 'string' ? found[key] : '';
+      const expected = typeof row[key] === 'string' ? row[key] : '';
+      if (actual !== expected) throw new Error(`Supabase stored a different ${key} than the character card`);
+    }
+  }
+}
+
 async function upsertCharacters(admin: NonNullable<ReturnType<typeof supabaseAdmin>>, rows: Record<string, unknown> | Record<string, unknown>[]) {
   const list = Array.isArray(rows) ? rows : [rows];
-  const first = await admin.from('characters').upsert(list, { onConflict: 'local_id' });
-  if (!first.error) return;
-  if (!/banner/i.test(first.error.message ?? '')) return;
+  const columns = 'local_id,summary,personality,scenario,greeting';
+  const first = await admin.from('characters').upsert(list, { onConflict: 'local_id' }).select(columns);
+  if (!first.error) {
+    sameStatic(list, first.data);
+    return;
+  }
+  if (!/banner/i.test(first.error.message ?? '')) throw new Error(first.error.message);
   const withoutBanner = list.map(({ banner: _banner, ...row }) => row);
-  await admin.from('characters').upsert(withoutBanner, { onConflict: 'local_id' });
+  const second = await admin.from('characters').upsert(withoutBanner, { onConflict: 'local_id' }).select(columns);
+  if (second.error) throw new Error(second.error.message);
+  sameStatic(withoutBanner, second.data);
 }
 
 export async function syncCharacterToCloud(character: {
@@ -39,36 +65,42 @@ export async function syncCharacterToCloud(character: {
   nsfw?: boolean | null;
   visibility?: string | null;
 }, owner: Owner): Promise<void> {
-  try {
-    const admin = supabaseAdmin();
-    const userId = await ownerId(owner);
-    if (!admin || !userId) return;
-    await upsertCharacters(admin, {
-      local_id: character.id,
-      user_id: userId,
-      name: character.name || 'Unnamed',
-      title: character.title ?? '',
-      summary: character.summary ?? '',
-      personality: character.personality ?? '',
-      scenario: character.scenario ?? '',
-      greeting: character.initialMessage ?? '',
-      tags: character.tags ?? '',
-      avatar: character.avatar ?? null,
-      banner: character.banner ?? null,
-      nsfw: character.nsfw === true,
-      visibility: character.visibility ?? 'PRIVATE',
-      updated_at: new Date().toISOString(),
-    });
-    await admin.from('scenarios').upsert({
-      local_id: `${character.id}:scenario`,
-      user_id: userId,
-      character_local_id: character.id,
-      title: character.name || 'Scenario',
-      body: character.scenario ?? '',
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'local_id' });
-  } catch (error) {
-    console.error('[supabase] character sync failed', error instanceof Error ? error.message : 'unknown');
+  const admin = supabaseAdmin();
+  if (!admin) return;
+  const userId = await ownerId(owner);
+  if (!userId) throw new Error('Supabase account is not available for this save');
+  const summary = typeof character.summary === 'string' ? character.summary : '';
+  const personality = typeof character.personality === 'string' ? character.personality : '';
+  const scenario = typeof character.scenario === 'string' ? character.scenario : '';
+  const greeting = typeof character.initialMessage === 'string' ? character.initialMessage : '';
+  await upsertCharacters(admin, {
+    local_id: character.id,
+    user_id: userId,
+    name: character.name || 'Unnamed',
+    title: character.title ?? '',
+    summary,
+    personality,
+    scenario,
+    greeting,
+    tags: character.tags ?? '',
+    avatar: character.avatar ?? null,
+    banner: character.banner ?? null,
+    nsfw: character.nsfw === true,
+    visibility: character.visibility ?? 'PRIVATE',
+    updated_at: new Date().toISOString(),
+  });
+  const scenarioWrite = await admin.from('scenarios').upsert({
+    local_id: `${character.id}:scenario`,
+    user_id: userId,
+    character_local_id: character.id,
+    title: character.name || 'Scenario',
+    body: scenario,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'local_id' }).select('body');
+  if (scenarioWrite.error) throw new Error(scenarioWrite.error.message);
+  const storedScenario = scenarioWrite.data?.[0]?.body;
+  if ((typeof storedScenario === 'string' ? storedScenario : '') !== scenario) {
+    throw new Error('Supabase stored a different scenario than the character card');
   }
 }
 

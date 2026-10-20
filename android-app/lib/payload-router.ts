@@ -5,6 +5,7 @@ import { htmlToPlainText } from '@/lib/rich-text';
 import { TIERS, type TierId } from '@/lib/tiers';
 import type { LLMMessage } from '@/lib/types';
 import { isDeletedMessage, messageContent, spliceDeletedMessages } from '@/lib/llm/messages';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 
 export type PayloadMode = 'STANDARD' | 'HIGH';
 
@@ -320,9 +321,10 @@ export function packWithinBudget(
     const m = history[i];
     if (isDeletedMessage(m)) continue;
     const roleName = m.role?.toLowerCase();
+    if (roleName === 'system') continue;
     const role = (roleName === 'assistant' || roleName === 'model' ? 'assistant' : 'user') as 'user' | 'assistant';
     const isNewest = i === history.length - 1;
-    let content = minify(messageContent(m.content));
+    let content = stripPromptLeak(minify(messageContent(m.content)));
     if (!content) continue;
     let t = estimateTokens(content);
     if (t > remaining) {

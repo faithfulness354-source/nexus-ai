@@ -5,6 +5,7 @@ import { getViewer, unauthorized, can, canViewNsfw, nsfwLocked, canEditCharacter
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
+import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { pullCloudLibrary } from '@/lib/supabase/apply';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
@@ -116,10 +117,10 @@ export async function POST(request: NextRequest) {
         title: String(body?.title ?? '').trim(),
         gallery: Array.isArray(body?.gallery) ? body.gallery : [],
         sceneImages: body?.sceneImages ?? true,
-        summary: body?.summary ?? '',
-        personality: body?.personality ?? '',
-        scenario: body?.scenario ?? '',
-        initialMessage: String(body?.firstMessage ?? body?.initialMessage ?? body?.first_mes ?? ''),
+        summary: savedStaticField(body, 'summary') ?? '',
+        personality: savedStaticField(body, 'personality') ?? '',
+        scenario: savedStaticField(body, 'scenario') ?? '',
+        initialMessage: savedFirstMessage(body) ?? '',
         exampleDialogue: body?.exampleDialogue ?? '',
         customRules: body?.customRules ?? '{"meters":[],"rules":[]}',
         // Custom system prompts are a Plus+ feature.
@@ -135,8 +136,16 @@ export async function POST(request: NextRequest) {
         moderated: false,
       },
     });
-    void syncCharacterToCloud(character, viewer.user);
-    return NextResponse.json({ ...character, firstMessage: character.initialMessage ?? '' }, { status: 201 });
+    try {
+      await syncCharacterToCloud(character, viewer.user);
+    } catch (error) {
+      console.error('Character cloud sync failed', error instanceof Error ? error.message : '');
+      return NextResponse.json(
+        { error: 'The card was saved, but Supabase did not store the bio, scenario, personality, and first message.' },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json({ ...character, firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }) }, { status: 201 });
   } catch (err: any) {
     console.error('POST /api/characters error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed to create character' }, { status: 500 });

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireSessionAccess } from '@/lib/access';
 import { listActiveMessages, markMessageDeleted } from '@/lib/llm/active-messages';
+import { resolveChatContext } from '@/lib/llm/resolve';
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -62,7 +63,12 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     }
 
     await markMessageDeleted(id, messageId);
-    return NextResponse.json({ success: true });
+    const usage = resolveChatContext(await listActiveMessages(id), 0);
+    return NextResponse.json({
+      success: true,
+      sent_tokens: usage.sent_tokens,
+      recent_history_tokens: usage.recent_history_tokens,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });
   }

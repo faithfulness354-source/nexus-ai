@@ -9,8 +9,8 @@ import { StatusTracker } from './status-tracker';
 import { RoleplayText } from './roleplay-text';
 import { CharacterAvatar } from '@/components/character/character-avatar';
 import { MeterDef, MeterSnapshot } from '@/lib/types';
-import { parseSceneSegments, hidePartialSceneTag, stripSceneTags } from '@/lib/scene-tags';
-import { SceneImage, PendingScene } from './scene-image';
+import { stripSceneTags } from '@/lib/scene-tags';
+import { visibleChatText } from '@/lib/prompt-leak';
 
 interface MessageBubbleProps {
   id: string;
@@ -28,8 +28,6 @@ interface MessageBubbleProps {
   meterValues?: MeterSnapshot;
   previousMeterValues?: MeterSnapshot;
   isStreaming?: boolean;
-  renderingScene?: boolean;
-  onRenderScene?: () => void;
   /** Display-only text transform (user "Display" scripts). Never affects stored/edited content. */
   transform?: (text: string) => string;
 }
@@ -65,19 +63,20 @@ function ActionButton({ label, onClick, danger, children }: { label: string; onC
 export function MessageBubble({
   role, content, model, onRegenerate, onEdit, onBranch, onDelete,
   characterName, characterAvatar, userName, meters, meterValues, previousMeterValues, isStreaming,
-  renderingScene, onRenderScene, transform,
+  transform,
 }: MessageBubbleProps) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(content ?? '');
   const [copied, setCopied] = useState(false);
 
   if (role === 'SYSTEM') return null;
+  const spoken = visibleChatText(content ?? '');
+  if (!spoken.trim()) return null;
   const isUser = role === 'USER';
-  const base = isUser ? content ?? '' : stripMeterTags(content ?? '', meters);
+  const base = isUser ? spoken : stripMeterTags(spoken, meters);
   const raw = transform ? transform(base) : base;
-  const display = isStreaming ? hidePartialSceneTag(raw) : raw;
-  const segments = isUser ? [{ type: 'text' as const, text: display }] : parseSceneSegments(display);
-  let pendingSeen = false;
+  const display = stripSceneTags(raw);
+  if (!display.trim()) return null;
   const name = isUser ? userName || 'You' : characterName ?? 'Character';
 
   async function handleCopy() {
@@ -139,25 +138,7 @@ export function MessageBubble({
               </div>
             </div>
           ) : (
-            <>
-              {segments.map((seg, i) => {
-                const isLast = i === segments.length - 1;
-                if (seg.type === 'text') return <RoleplayText key={i} content={seg.text} streaming={isStreaming && isLast} />;
-                if (seg.type === 'image') return <SceneImage key={i} url={seg.url} description={seg.description} />;
-                // Only the first pending tag is "active": renders happen one at a time, in order.
-                const active = !pendingSeen;
-                pendingSeen = true;
-                return (
-                  <PendingScene
-                    key={i}
-                    description={seg.description}
-                    rendering={active && renderingScene}
-                    onRender={active && !isStreaming && !renderingScene ? onRenderScene : undefined}
-                  />
-                );
-              })}
-              {segments.length === 0 && isStreaming && <RoleplayText content="" streaming />}
-            </>
+            <RoleplayText content={display} streaming={isStreaming} />
           )}
 
           {!isUser && !editing && (meters?.length ?? 0) > 0 && meterValues && (

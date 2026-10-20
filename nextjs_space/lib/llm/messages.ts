@@ -1,4 +1,5 @@
 import { GROQ_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, usableCustomModel, usableOpenRouterModel, type LLMMessage } from '../types';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 
 export type ProviderImage = { mimeType: string; data: string };
 
@@ -82,15 +83,33 @@ export function normalizeProviderMessages(messages: LLMMessage[]): LLMMessage[] 
     const content = messageContent(message.content).trim();
     if (!content) continue;
     const role: LLMMessage['role'] = message.role === 'assistant' ? 'assistant' : 'user';
+    const spoken = stripPromptLeak(content);
+    if (!spoken) continue;
     const previous = chat[chat.length - 1];
-    if (previous && previous.role === role) previous.content = `${previous.content}\n\n${content}`;
-    else chat.push({ role, content });
+    if (previous && previous.role === role) previous.content = `${previous.content}\n\n${spoken}`;
+    else chat.push({ role, content: spoken });
   }
   while (chat.length > 1 && chat[0].role === 'assistant') chat.shift();
   const out: LLMMessage[] = [];
   if (system) out.push({ role: 'system', content: system });
-  out.push(...chat);
+  for (const message of chat) {
+    const content = dropSystemEcho(system, message.content);
+    if (content) out.push({ role: message.role, content });
+  }
   return out;
+}
+
+/** Removes a copied system prompt from a dialogue turn. The system text stays on the system message only. */
+function dropSystemEcho(system: string, content: string): string {
+  const prompt = system.trim();
+  const spoken = stripPromptLeak(content);
+  if (!prompt || !spoken) return spoken;
+  const trimmed = spoken.trimStart();
+  if (trimmed.startsWith(prompt)) return trimmed.slice(prompt.length).trim();
+  const head = prompt.slice(0, 120);
+  const at = head.length >= 40 ? spoken.indexOf(head) : -1;
+  if (at < 0) return spoken;
+  return `${spoken.slice(0, at)}${spoken.slice(at + prompt.length)}`.trim();
 }
 
 /** True when a stored or in-memory turn was soft-deleted and must not be sent. */
@@ -128,7 +147,8 @@ export function sanitizeChatHistory(messages: unknown): LLMMessage[] {
           ? 'user'
           : '';
     if (!role) continue;
-    const content = messageContent(record.content).trim();
+    const raw = messageContent(record.content).trim();
+    const content = role === 'system' ? raw : stripPromptLeak(raw);
     if (!content) continue;
     clean.push({ role, content });
   }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Copy, Pencil, Trash2, Star, Link2, Loader2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
+import { queueNovelAiSync } from '@/lib/exporters/sync-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -66,6 +67,7 @@ export function PersonasHub() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error ?? 'Failed to save persona');
       toast.success('Persona saved');
+      queueNovelAiSync('persona', d.id);
       setEditing(null);
       await load();
     } catch (err: any) {

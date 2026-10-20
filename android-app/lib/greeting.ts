@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
-import { composeOpening, type OpeningCharacter } from '@/lib/opening';
+import { cardFirstMessage, composeOpening, type OpeningCharacter } from '@/lib/opening';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 
 export { composeOpening } from '@/lib/opening';
 
@@ -8,24 +9,40 @@ export function characterGreeting(character: OpeningCharacter, userName: string)
   return composeOpening(character, userName);
 }
 
-/** Writes the greeting once when a chat has no messages yet. */
+/** Writes the greeting once when a chat has no live messages yet. The text is read from the character row for this session, not from a previously loaded card. */
 export async function ensureGreeting(
   sessionId: string,
-  character: OpeningCharacter,
+  _character?: OpeningCharacter,
   personaId?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
-    const count = await tx.message.count({ where: { sessionId } });
+    const count = await tx.message.count({ where: { sessionId, deleted: false } });
     if (count > 0) return null;
+    const session = await tx.chatSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        personaId: true,
+        character: { select: { name: true, initialMessage: true } },
+      },
+    });
+    const card = session?.character;
+    if (!card) return null;
+    const personaKey = personaId ?? session.personaId;
     let userName = 'You';
-    if (personaId) {
-      const persona = await tx.persona.findFirst({ where: { id: personaId }, select: { name: true } });
+    if (personaKey) {
+      const persona = await tx.persona.findFirst({ where: { id: personaKey }, select: { name: true } });
       if (persona?.name?.trim()) userName = persona.name.trim();
     }
-    const content = characterGreeting(character, userName);
+    const firstMessage = cardFirstMessage({ initialMessage: card.initialMessage });
+    const content = stripPromptLeak(characterGreeting({
+      name: card.name,
+      initialMessage: firstMessage,
+      firstMessage,
+    }, userName));
     if (!content) return null;
+    const highest = await tx.message.aggregate({ where: { sessionId }, _max: { index: true } });
     return tx.message.create({
-      data: { sessionId, role: 'ASSISTANT', content, index: 0 },
+      data: { sessionId, role: 'ASSISTANT', content, index: (highest._max.index ?? -1) + 1 },
     });
   });
 }

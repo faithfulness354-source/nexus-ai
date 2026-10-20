@@ -1,12 +1,32 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
-import { DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, isGeminiModel, usableGeminiModel } from '@/lib/types';
+import { DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, isGeminiModel, novelApiModel, usableGeminiModel } from '@/lib/types';
 import { resolveCustomModel, resolveOpenRouterModel } from '@/lib/llm/messages';
+import { recountTurnTokens, type TurnTokens } from '@/lib/context-manager';
 
 export interface ResolvedTarget {
   provider: string;
   model: string;
   config: { apiKey: string | null; baseUrl: string | null; defaultModel: string | null };
+}
+
+/**
+ * Stop strings for a user turn only. A bare line break is never a stop,
+ * so a new paragraph does not end the reply.
+ */
+export function novelUserStopSequences(userName?: string | null): string[] {
+  const name = (userName ?? '').replace(/[\r\n]+/g, ' ').trim();
+  const labels = ['[User]'];
+  if (name) labels.push(name);
+  if (!labels.some((label) => label.toLowerCase() === 'user')) labels.push('User');
+  const sequences: string[] = [];
+  for (const label of labels) {
+    if (!label || label === '\n' || label === '\n\n') continue;
+    const sequence = label.startsWith('[') ? `\n${label}` : `\n${label}:`;
+    if (sequence === '\n' || sequence === '\n\n') continue;
+    sequences.push(sequence);
+  }
+  return [...new Set(sequences)];
 }
 
 function geminiModel(requested?: string | null, configured?: string | null): string {
@@ -23,12 +43,11 @@ function geminiModel(requested?: string | null, configured?: string | null): str
 export async function resolveChatTarget(provider?: string | null, model?: string | null): Promise<ResolvedTarget | null> {
   const novelKey = process.env.NOVELAI_API_KEY?.trim();
   if (novelKey) {
-    const requested = typeof model === 'string' ? model.trim() : '';
-    const novelModel = /xialong|erato|glm-4/i.test(requested) ? requested : 'glm-4.6-xialong-v1';
+    const novelModel = novelApiModel(model);
     return {
       provider: 'NOVELAI',
       model: novelModel,
-      config: { apiKey: novelKey, baseUrl: 'https://text.novelai.net/ai/generate', defaultModel: 'glm-4.6-xialong-v1' },
+      config: { apiKey: novelKey, baseUrl: 'https://text.novelai.net/ai/generate', defaultModel: novelModel },
     };
   }
 
@@ -81,6 +100,17 @@ export async function resolveChatTarget(provider?: string | null, model?: string
       defaultModel: config?.defaultModel ?? null,
     },
   };
+}
+
+/**
+ * Context manager for a turn. Deleted rows are removed before `sent_tokens` and
+ * `recent_history_tokens` are calculated, so they never stay in the NovelAI payload.
+ */
+export function resolveChatContext(
+  history: Array<{ role?: string; content?: unknown; deleted?: unknown }>,
+  definitionTokens: number,
+): TurnTokens & { messages: Array<{ role: string; content: string }> } {
+  return recountTurnTokens(history, definitionTokens);
 }
 
 /** Provider + model new sessions should start with (always Google Gemini). */

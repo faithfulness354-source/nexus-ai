@@ -36,8 +36,8 @@ export async function listActiveMessages(sessionId: string): Promise<StoredMessa
     const messages: StoredMessage[] = [];
     for (const row of rows) {
       const role = asRole(String(row.role ?? ''));
-      const content = messageContent(row.content).trim();
-      if (!role || !content) continue;
+      const content = messageContent(row.content);
+      if (!role || !content.trim()) continue;
       messages.push({
         id: row.id,
         sessionId: row.sessionId,

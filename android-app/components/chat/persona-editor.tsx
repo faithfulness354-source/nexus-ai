@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { queueNovelAiSync } from '@/lib/exporters/sync-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,6 +49,7 @@ export function PersonaEditor({
       const saved = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(saved?.error ?? 'Could not save persona');
       toast.success('Persona updated');
+      queueNovelAiSync('persona', saved.id ?? draft.id);
       onSaved(saved);
     } catch (err: any) {
       toast.error(err?.message ?? 'Could not save persona');

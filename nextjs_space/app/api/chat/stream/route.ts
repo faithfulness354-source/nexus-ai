@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { createLLMStream } from '@/lib/llm/router';
-import { resolveChatTarget } from '@/lib/llm/resolve';
+import { resolveChatContext, resolveChatTarget } from '@/lib/llm/resolve';
 import { estimateTokens } from '@/lib/tokens';
 import { CONTEXT_WINDOWS, DEFAULT_MODEL } from '@/lib/types';
 import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked } from '@/lib/access';
@@ -11,8 +11,8 @@ import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { TIERS, isProModel, clampSampling, SAMPLING_LIMITS } from '@/lib/tiers';
 import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
-import { sceneTagsForLLM } from '@/lib/scene-tags';
-import { applyScripts, trimIncompleteTail, fillMacros, formatPersona, personaAnchor, pickPersona, selectLore } from '@/lib/hubs';
+import { stripSceneTags } from '@/lib/scene-tags';
+import { applyScripts, trimIncompleteTail, fillMacros, formatPersona, personaAnchor, pickPersona, selectLore, formatLoreContext, type LorePlacement } from '@/lib/hubs';
 import { personaDto } from '@/lib/persona-server';
 import { unpackList } from '@/lib/hub-server';
 import { compilePerceivedAppearance } from '@/lib/persona-appearance';
@@ -20,11 +20,12 @@ import { loadImage } from '@/lib/avatar-snapshot';
 import { messageContent, sanitizeChatHistory, spliceDeletedMessages, usableImages, type ProviderImage } from '@/lib/llm/messages';
 import { listActiveMessages, nextMessageIndex } from '@/lib/llm/active-messages';
 import { characterGreeting } from '@/lib/greeting';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 import { logEvent } from '@/lib/logger';
 import { syncMessageToCloud } from '@/lib/supabase/sync';
 import {
   payloadPolicy, minify, fullCharacterPrompt, trackedMeters, progressionStatus, parseMeterValues, assembleTierPayload,
-  OUTPUT_FLOOR_TOKENS, OUTPUT_CEILING_TOKENS, buildTieredSystemPrompt, exampleDialogueBlock,
+  OUTPUT_FLOOR_TOKENS, OUTPUT_CEILING_TOKENS, buildTieredSystemPrompt,
   summaryPrompt, extractiveSummary, truncateTokens, SUMMARY_BATCH, SUMMARY_TOKEN_LIMIT,
 } from '@/lib/payload-router';
 import { commitWorldTurn, loadWorldPrompt } from '@/lib/world/engine';
@@ -155,8 +156,7 @@ export async function POST(request: NextRequest) {
     const useModel = target.model;
     const providerConfig = target.config;
 
-    // Authority directive, user persona, and character definition stay on every turn.
-    // Example dialogue is attached only while the thread is still under four messages.
+    // Character, persona, lore, and world state share an 800-token cap. Example dialogue is omitted.
     const meters = trackedMeters(character?.customRules);
     const latestMeters = (lastMeter?.metersJson ?? null) as Record<string, number> | null;
     const characterParts: string[] = [
@@ -165,20 +165,9 @@ export async function POST(request: NextRequest) {
         summary: character?.summary, scenario: character?.scenario, customRules: character?.customRules,
       }),
     ];
-    const examples = exampleDialogueBlock(character?.exampleDialogue, [
-      character?.systemPrompt,
-      character?.personality,
-    ]);
-    if (examples) characterParts.push(examples);
     const contextParts: string[] = [];
     // Facts from turns that slid out of the 10-message window, so established canon is never lost.
     if (session.memorySummary?.trim()) contextParts.push(`Story so far (canon): ${minify(session.memorySummary)}`);
-    if (policy.imageTriggers && character?.sceneImages && can(viewer, 'sceneImages')) {
-      contextParts.push([
-        'Scene illustrations: when a reply reaches a visually striking moment, you may add ONE image block on its own line at the end of the reply, after the action text, in exactly this format: [GENERATE_IMAGE: short action and place]. Use it at most once per reply.',
-        'Write one short clause for what is happening and where. Do not describe face, hair, eyes, skin, body, clothing, camera, lighting, or art style. The card portrait already locks the look.',
-      ].join(' '));
-    }
     const priorCount = storedMessages.length;
     const openingTurn = priorCount <= 1;
     const lastMessageAt = storedMessages.at(-1)?.createdAt;
@@ -213,15 +202,25 @@ export async function POST(request: NextRequest) {
       b.scope === 'GLOBAL' ||
       (b.scope === 'CHARACTER' && unpackList(b.characterIds).includes(session.characterId)) ||
       (b.scope === 'PERSONA' && !!persona && unpackList(b.personaIds).includes(persona.id)));
+    let loreText = '';
     if (books.length) {
       const recent = [...storedMessages.slice(-50).map((m) => m.content), content];
-      const lore = selectLore(books.flatMap((b) => b.entries.map((entry) => ({ ...entry, keys: unpackList(entry.keys) }))), recent);
-      // Lore is capped at 15% of the plan context so it never crowds out the conversation window.
-      if (lore.length) contextParts.push(truncateTokens(`World lore (relevant entries): ${lore.map((e) => `${e.title ? `${e.title}: ` : ''}${e.content.trim()}`).join(' | ')}`, Math.floor(policy.contextCap * 0.15)));
+      const lore = selectLore(books.flatMap((b) => b.entries.map((entry) => ({
+        title: entry.title,
+        keys: unpackList(entry.keys),
+        content: entry.content,
+        order: entry.order,
+        priority: entry.priority,
+        depth: entry.depth,
+        enabled: entry.enabled,
+        constant: entry.constant,
+        placement: (entry.placement === 'personality' || entry.placement === 'scenario' || entry.placement === 'example_dialogs' ? entry.placement : 'default') as LorePlacement,
+      }))), recent);
+      loreText = formatLoreContext(lore);
     }
     if (can(viewer, 'customPrompts')) {
       const prompts = scripts.filter((s) => s.kind === 'PROMPT' && s.promptText.trim()).sort((a, b) => a.order - b.order);
-      if (prompts.length) contextParts.push(truncateTokens(prompts.map((s) => s.promptText.trim()).join(' '), Math.floor(policy.contextCap * 0.1)));
+      if (prompts.length) personaParts.push(prompts.map((s) => s.promptText.trim()).join('\n'));
     }
     // Live tracker goes last so it is the freshest instruction the model reads before writing.
     contextParts.push(progressionStatus(meters, latestMeters, storedMessages.length + 1));
@@ -238,12 +237,15 @@ export async function POST(request: NextRequest) {
     } catch (worldErr) {
       console.error('[world] context failed:', worldErr);
     }
-    const systemPrompt = buildTieredSystemPrompt({
+    const builtPrompt = buildTieredSystemPrompt({
       world: worldBlock,
       persona: fill(personaParts),
       character: fill(characterParts),
+      lore: fill([loreText]),
       context: fill(contextParts),
     });
+    const systemPrompt = builtPrompt.prompt;
+    const definitionTokens = builtPrompt.definitionTokens;
 
     // Only the newest messages are prepared for the model. The full thread stays in the database and the UI.
     const liveStored = spliceDeletedMessages(storedMessages);
@@ -252,15 +254,19 @@ export async function POST(request: NextRequest) {
     const historyForModel = sanitizeChatHistory(
       recentStored
         .filter((m) => !(greetingText && m.role === 'ASSISTANT' && messageContent(m.content).trim() === greetingText))
-        .map((m) => ({ role: m.role, content: sceneTagsForLLM(messageContent(m.content)) })),
+        .map((m) => ({ role: m.role, content: stripSceneTags(messageContent(m.content)) })),
     );
     const allMessages = sanitizeChatHistory([
       ...liveStored.map((m) => ({ role: m.role, content: m.content, deleted: m.deleted })),
       { role: 'user', content },
     ]);
     const payload = assembleTierPayload(systemPrompt, [...historyForModel, { role: 'user', content: messageContent(content) }], policy);
-    const contextMessages = payload.messages;
-    const inputTokens = payload.inputTokens;
+    const contextMessages = payload.messages.filter((message) => message.role === 'system' || message.content.trim());
+    const turnUsage = resolveChatContext(
+      contextMessages.filter((message) => message.role !== 'system'),
+      definitionTokens,
+    );
+    const inputTokens = turnUsage.sent_tokens;
 
     // Persist the resolved provider/model so the session stays in sync
     if (useModel !== session.model || provider !== session.provider) {
@@ -296,6 +302,7 @@ export async function POST(request: NextRequest) {
       settings: llmSettings as any,
       forbiddenWords: wordList(genSettings?.forbiddenWords),
       images: personaImages,
+      userName,
       });
     } catch (e) {
       releaseSlot();
@@ -315,7 +322,12 @@ export async function POST(request: NextRequest) {
             releaseSlot();
             // Save assistant message to DB (post-response scripts run first)
             try {
-              const finalResponse = trimIncompleteTail(applyScripts(fullResponse, scripts, 'POST'));
+              const spoken = stripPromptLeak(fullResponse);
+              const finalResponse = trimIncompleteTail(applyScripts(spoken, scripts, 'POST'));
+              if (!finalResponse.trim()) {
+                controller.close();
+                return;
+              }
               const savedAssistant = await prisma.message.create({
                 data: {
                   sessionId,
@@ -347,7 +359,7 @@ export async function POST(request: NextRequest) {
                   data: {
                     sessionId,
                     messageIndex: nextIndex + 1,
-                    metersJson: parseMeterValues(fullResponse, meters, latestMeters),
+                    metersJson: parseMeterValues(finalResponse, meters, latestMeters),
                   },
                 });
               } catch { /* skip meter parsing errors */ }
@@ -397,7 +409,9 @@ export async function POST(request: NextRequest) {
         'X-Model-Downgraded': modelDowngraded ? '1' : '0',
         'X-Payload-Mode': policy.mode,
         'X-Payload-Input-Tokens': String(inputTokens),
-        'X-Payload-System-Tokens': String(estimateTokens(systemPrompt)),
+        'X-Payload-System-Tokens': String(turnUsage.definition_tokens),
+        'X-Sent-Tokens': String(turnUsage.sent_tokens),
+        'X-Recent-History-Tokens': String(turnUsage.recent_history_tokens),
         'X-Payload-History-Messages': String(contextMessages.filter((m) => m.role !== 'system').length),
         'X-Payload-Max-Output': String(policy.maxOutputTokens),
         'X-Payload-Context-Cap': String(policy.contextCap),

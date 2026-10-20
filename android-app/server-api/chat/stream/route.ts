@@ -9,7 +9,7 @@ import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthor
 import { canViewCharacter } from '@/lib/card-visibility';
 import { TIERS, isProModel, clampSampling, SAMPLING_LIMITS } from '@/lib/tiers';
 import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
-import { sceneTagsForLLM } from '@/lib/scene-tags';
+import { stripSceneTags } from '@/lib/scene-tags';
 import { applyScripts, trimIncompleteTail, fillMacros, formatPersona, personaAnchor, pickPersona, selectLore } from '@/lib/hubs';
 import { personaDto } from '@/lib/persona-server';
 import { compilePerceivedAppearance } from '@/lib/persona-appearance';
@@ -161,12 +161,6 @@ export async function POST(request: NextRequest) {
     ];
     // Facts from turns that slid out of the 10-message window, so established canon is never lost.
     if (session.memorySummary?.trim()) systemParts.push(`Story so far (canon): ${minify(session.memorySummary)}`);
-    if (policy.imageTriggers && character?.sceneImages && can(viewer, 'sceneImages')) {
-      systemParts.push([
-        'Scene illustrations: when a reply reaches a visually striking moment, you may add ONE image block on its own line at the end of the reply, after the action text, in exactly this format: [GENERATE_IMAGE: short action and place]. Use it at most once per reply.',
-        'Write one short clause for what is happening and where. Do not describe face, hair, eyes, skin, body, clothing, camera, lighting, or art style. The card portrait already locks the look.',
-      ].join(' '));
-    }
     const priorCount = storedMessages.length;
     const openingTurn = priorCount <= 1;
     const lastMessageAt = storedMessages.at(-1)?.createdAt;
@@ -222,7 +216,7 @@ export async function POST(request: NextRequest) {
     const historyForModel = sanitizeChatHistory(
       recentStored
         .filter((m) => !(greetingText && m.role === 'ASSISTANT' && messageContent(m.content).trim() === greetingText))
-        .map((m) => ({ role: m.role, content: sceneTagsForLLM(messageContent(m.content)) })),
+        .map((m) => ({ role: m.role, content: stripSceneTags(messageContent(m.content)) })),
     );
     const allMessages = sanitizeChatHistory([
       ...liveStored.map((m) => ({ role: m.role, content: m.content, deleted: m.deleted })),

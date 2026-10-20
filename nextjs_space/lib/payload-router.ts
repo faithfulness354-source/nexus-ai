@@ -1,10 +1,11 @@
 // Tier-based payload routing: plan context caps, sliding history window, compressed system prompt,
 // continuity guardrails and a multi-paragraph output band.
-import { estimateTokens } from '@/lib/tokens';
+import { DEFINITION_TOKEN_CAP, estimateTokens } from '@/lib/tokens';
 import { htmlToPlainText } from '@/lib/rich-text';
 import { TIERS, type TierId } from '@/lib/tiers';
 import type { LLMMessage } from '@/lib/types';
 import { isDeletedMessage, messageContent, spliceDeletedMessages } from '@/lib/llm/messages';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 
 export type PayloadMode = 'STANDARD' | 'HIGH';
 
@@ -180,24 +181,104 @@ TIER 3: IN-CHARACTER ROLEPLAY EXECUTION (Default Mode)
  * The directive, card, and length rule are not sliced.
  */
 export const LENGTH_RULE = 'Write rich, multi-paragraph roleplay responses.';
+export const PROSE_DIRECTIVE = 'Write detailed, multi-paragraph responses focusing on actions, environment, and dialogue.';
+
+const EXAMPLE_BLOCK = /<START>[\s\S]*?(?=<START>|$)/gi;
+
+/** Drops sample chats so they are not sent as character or persona definitions. */
+export function stripExampleDialogue(text: string | null | undefined): string {
+  return (text ?? '')
+    .replace(EXAMPLE_BLOCK, '')
+    .replace(/(^|\n)\s*example (dialogues?|messages?|chats?|conversations?)\s*:?[\s\S]*?(?=\n\s*\n|\n\s*\[[A-Z][A-Z0-9_ ]{2,}\]|$)/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function definitionChunks(text: string): string[] {
+  return text.split(/\n+|(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+}
+
+/** Drops persona lines that repeat themselves or already appear in the character card. */
+export function dedupePersonaDescription(persona: string, character: string): string {
+  const known = definitionChunks(character)
+    .map((part) => part.replace(/\s+/g, ' ').toLowerCase())
+    .filter((part) => part.length > 40);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of definitionChunks(persona)) {
+    const key = part.replace(/\s+/g, ' ').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    if (known.some((existing) => existing.includes(key) || key.includes(existing))) continue;
+    seen.add(key);
+    kept.push(part);
+  }
+  return kept.join('\n');
+}
+
+function packDefinition(label: string, body: string, budget: number): { text: string; used: number } {
+  const trimmed = body.trim();
+  if (!trimmed || budget < 8) return { text: '', used: 0 };
+  const header = label ? `${label}\n` : '';
+  const labeled = `${header}${trimmed}`;
+  if (estimateTokens(labeled) <= budget) return { text: labeled, used: estimateTokens(labeled) };
+  const room = budget - estimateTokens(header) - 1;
+  if (room < 8) return { text: '', used: 0 };
+  const text = `${header}${truncateTokens(trimmed, room)}`;
+  return { text, used: estimateTokens(text) };
+}
+
+/**
+ * Character card, persona rules, world state, and lore share one 800-token budget.
+ * Example dialogue and repeated persona lines are removed before anything is packed.
+ */
+export function capStaticDefinitions(parts: {
+  character?: string | null;
+  persona?: string | null;
+  lore?: string | null;
+  world?: string | null;
+}): { text: string; tokens: number } {
+  const character = stripExampleDialogue(parts.character);
+  const persona = dedupePersonaDescription(stripExampleDialogue(parts.persona), character);
+  const world = (parts.world ?? '').trim();
+  const lore = stripExampleDialogue(parts.lore);
+  let budget = DEFINITION_TOKEN_CAP;
+  const sections: string[] = [];
+  for (const [label, body] of [
+    ['[CHARACTER DEFINITION]', character],
+    ['[USER PERSONA]', persona],
+    ['', world],
+    ['[LORE]', lore],
+  ] as const) {
+    const packed = packDefinition(label, body, budget);
+    if (!packed.text) continue;
+    sections.push(packed.text);
+    budget -= packed.used;
+  }
+  let text = sections.join('\n\n');
+  if (estimateTokens(text) > DEFINITION_TOKEN_CAP) text = truncateTokens(text, DEFINITION_TOKEN_CAP);
+  return { text, tokens: estimateTokens(text) };
+}
 
 export function buildTieredSystemPrompt(parts: {
   world?: string | null;
   persona?: string | null;
   character?: string | null;
+  lore?: string | null;
   context?: string | null;
-}): string {
+}): { prompt: string; definitionTokens: number } {
+  const definitions = capStaticDefinitions({
+    character: parts.character,
+    persona: parts.persona,
+    lore: parts.lore,
+    world: parts.world,
+  });
   const sections = [PRIMARY_SYSTEM_DIRECTIVE];
-  const world = (parts.world ?? '').trim();
-  const persona = (parts.persona ?? '').trim();
-  const character = (parts.character ?? '').trim();
-  const context = (parts.context ?? '').trim();
-  if (character) sections.push(`[CHARACTER DEFINITION]\n${character}`);
-  if (persona) sections.push(`[USER PERSONA]\n${persona}`);
+  if (definitions.text) sections.push(definitions.text);
   sections.push(LENGTH_RULE);
-  if (world) sections.push(world);
+  sections.push(PROSE_DIRECTIVE);
+  const context = (parts.context ?? '').trim();
   if (context) sections.push(context);
-  return sections.join('\n\n');
+  return { prompt: sections.join('\n\n'), definitionTokens: definitions.tokens };
 }
 
 /** Example dialogue is only useful before the scene has its own turns. */
@@ -424,9 +505,10 @@ export function packWithinBudget(
     const m = history[i];
     if (isDeletedMessage(m)) continue;
     const roleName = m.role?.toLowerCase();
+    if (roleName === 'system') continue;
     const role = (roleName === 'assistant' || roleName === 'model' ? 'assistant' : 'user') as 'user' | 'assistant';
     const isNewest = i === history.length - 1;
-    let content = messageContent(m.content).trim();
+    let content = stripPromptLeak(messageContent(m.content).trim());
     if (!content) continue;
     let t = estimateTokens(content);
     if (t > remaining && !isNewest) {

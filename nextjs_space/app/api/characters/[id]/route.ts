@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { revalidatePath } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, forbidden, canEditCharacter, can, canViewNsfw, nsfwLocked } from '@/lib/access';
@@ -7,6 +8,7 @@ import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
+import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -28,7 +30,7 @@ function presentCharacter(character: any, includeAudio: boolean) {
     nsfw: !!character.nsfw || characterImpliesNsfw(character),
     tags: parseStoredTags(character.tags),
     audioUrl: includeAudio ? character.audioUrl ?? '' : '',
-    firstMessage: character.initialMessage ?? character.firstMessage ?? '',
+    firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }),
   };
 }
 
@@ -64,7 +66,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     }
     if ((character.nsfw || characterImpliesNsfw(character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
     const includeAudio = !!viewer && canEditCharacter(viewer, character);
-    return NextResponse.json(presentCharacter(character, includeAudio));
+    return NextResponse.json(presentCharacter(character, includeAudio), {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (err: any) {
     console.error('GET /api/characters/[id] error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });
@@ -91,12 +95,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         title: body?.title === undefined ? undefined : String(body.title).trim(),
         gallery: Array.isArray(body?.gallery) ? body.gallery : undefined,
         sceneImages: typeof body?.sceneImages === 'boolean' ? body.sceneImages : undefined,
-        summary: body?.summary,
-        personality: body?.personality,
-        scenario: body?.scenario,
-        initialMessage: body?.firstMessage === undefined && body?.initialMessage === undefined
-          ? undefined
-          : String(body?.firstMessage ?? body?.initialMessage ?? ''),
+        summary: savedStaticField(body, 'summary'),
+        personality: savedStaticField(body, 'personality'),
+        scenario: savedStaticField(body, 'scenario'),
+        initialMessage: savedFirstMessage(body),
         exampleDialogue: body?.exampleDialogue,
         customRules: body?.customRules,
         systemPrompt: can(viewer, 'customPrompts') ? body?.systemPrompt : undefined,
@@ -111,8 +113,21 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         moderated: viewer.isCreatorAdmin && typeof body?.moderated === 'boolean' ? body.moderated : undefined,
       },
     });
-    void syncCharacterToCloud(character, viewer.user);
-    return NextResponse.json(character);
+    revalidatePath(`/characters/${id}`);
+    revalidatePath(`/characters/${id}/chat`);
+    revalidatePath(`/characters/${id}/edit`);
+    try {
+      await syncCharacterToCloud(character, viewer.user);
+    } catch (error) {
+      console.error('Character cloud sync failed', error instanceof Error ? error.message : '');
+      return NextResponse.json(
+        { error: 'The card was saved, but Supabase did not store the bio, scenario, personality, and first message.' },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json({ ...character, firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }) }, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (err: any) {
     console.error('PUT /api/characters/[id] error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });

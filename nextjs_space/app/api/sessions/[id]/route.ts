@@ -37,8 +37,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     });
     if (!session) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     let messages: unknown[] = await listActiveMessages(id);
-    if (messages.length === 0 && session.character?.initialMessage?.trim()) {
-      const greeting = await ensureGreeting(session.id, session.character, session.personaId);
+    if (messages.length === 0) {
+      const greeting = await ensureGreeting(session.id, undefined, session.personaId);
       if (greeting) messages = [greeting];
     }
     return NextResponse.json({

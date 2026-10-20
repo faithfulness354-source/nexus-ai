@@ -3,6 +3,9 @@
 
 import { htmlToPlainText } from './rich-text';
 
+/** Character card, lore, persona rules, and world state together stay under this on every turn. */
+export const DEFINITION_TOKEN_CAP = 800;
+
 export function estimateTokens(raw: string): number {
   if (!raw) return 0;
   // Count what the model actually receives: HTML formatting is stripped before sending.

@@ -7,12 +7,14 @@ import { MessageInput } from './message-input';
 import { ContextBar } from './context-bar';
 import { GenerationPanel } from './generation-panel';
 import { TypingIndicator } from './typing-indicator';
-import { estimateTokens, countSystemTokens, countHistoryTokens } from '@/lib/tokens';
+import { DEFINITION_TOKEN_CAP, estimateTokens, countSystemTokens } from '@/lib/tokens';
+import { recountTurnTokens } from '@/lib/context-manager';
 import { spliceDeletedMessages } from '@/lib/llm/messages';
 import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, usableCustomModel, usableGeminiModel, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
 import { Plus, Pencil, SlidersHorizontal, MoreVertical, KeyRound, Brain, CreditCard, UserRound, Check } from 'lucide-react';
 import { applyScripts, fillMacros, pickPersona, type PersonaData, type ScriptData } from '@/lib/hubs';
-import { composeOpening } from '@/lib/opening';
+import { cardFirstMessage, composeOpening } from '@/lib/opening';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 import { readLastPersonaId, suggestPersonaId, writeLastPersonaId } from '@/lib/persona-choice';
 import { PersonaGate } from '@/components/chat/persona-gate';
 import { PersonaEditor } from '@/components/chat/persona-editor';
@@ -31,10 +33,7 @@ import { CharacterAvatar } from '@/components/character/character-avatar';
 import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlayer';
 import { usePersonaName } from '@/lib/persona';
 import { toast } from 'sonner';
-import { hasPendingScene } from '@/lib/scene-tags';
 import Link from 'next/link';
-// Mirrors lib/payload-router: compressed system prompt ≤ ~500 tokens, last 5 turns (10 messages) re-sent.
-const SYSTEM_PROMPT_ESTIMATE_CAP = 500;
 const BASELINE_HISTORY_TURNS = 5;
 
 function priorMeterSnapshots(
@@ -183,6 +182,7 @@ export function ChatView({ characterId }: ChatViewProps) {
   const [currentProvider, setCurrentProvider] = useState<string>(DEFAULT_PROVIDER);
   // What the server actually sent on the last request (compressed system prompt size + plan cap).
   const [payloadInfo, setPayloadInfo] = useState<{ systemTokens: number; contextCap: number | null } | null>(null);
+  const [tokenUsage, setTokenUsage] = useState({ sent_tokens: 0, recent_history_tokens: 0, definition_tokens: 0 });
   const [streaming, setStreaming] = useState(false);
   const [modelNotice, setModelNotice] = useState<string | null>(null);
   const [streamContent, setStreamContent] = useState('');
@@ -287,43 +287,6 @@ export function ChatView({ characterId }: ChatViewProps) {
     }
   }
   const { status: access, refresh: refreshAccess, openPaywall } = useAccess();
-  const [renderingId, setRenderingId] = useState<string | null>(null);
-  const renderingRef = useRef(false);
-
-  // Renders every pending [GENERATE_IMAGE] tag of a message, one at a time.
-  async function renderScenes(messageId: string) {
-    if (renderingRef.current) return;
-    renderingRef.current = true;
-    setRenderingId(messageId);
-    try {
-      for (let i = 0; i < 3; i++) {
-        const res = await fetch('/api/images/scene', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageId }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.status === 402) {
-          openPaywall('sceneImages');
-          break;
-        }
-        if (res.status === 429 && data?.code === 'OUT_OF_IMAGE_CREDITS') {
-          toast.error(data.error);
-          break;
-        }
-        if (!res.ok) throw new Error(data?.error ?? 'Scene render failed');
-        if (data.rendered) void refreshAccess();
-        setActiveMessages(prev => (prev ?? []).map((m: ChatMessage) => m.id === messageId ? { ...m, content: data.content } : m));
-        if (!data.rendered || !hasPendingScene(data.content ?? '')) break;
-      }
-    } catch (err: any) {
-      console.error('Scene render failed:', err);
-      toast.error(err?.message ?? 'Scene render failed');
-    } finally {
-      renderingRef.current = false;
-      setRenderingId(null);
-    }
-  }
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -332,7 +295,7 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   // Load character
   useEffect(() => {
-    fetch(`/api/characters/${characterId}`)
+    fetch(`/api/characters/${characterId}`, { cache: 'no-store' })
       .then(async r => {
         if (r.status === 403) {
           // NSFW character and the viewer isn't a subscriber: prompt an upgrade and leave.
@@ -344,7 +307,7 @@ export function ChatView({ characterId }: ChatViewProps) {
       })
       .then((data: any) => {
         if (data) {
-          const firstMessage = String(data.firstMessage || data.initialMessage || '').trim();
+          const firstMessage = cardFirstMessage(data);
           setCharacter({ ...data, initialMessage: firstMessage, firstMessage });
           try {
             const rules = JSON.parse(data?.customRules ?? '{}');
@@ -355,7 +318,9 @@ export function ChatView({ characterId }: ChatViewProps) {
       .catch(() => toast.error('Failed to load character'));
   }, [characterId]);
 
+  const [forceNewChat, setForceNewChat] = useState(false);
   const [sessionSeen, setSessionSeen] = useState(sessionIdParam);
+  if (sessionIdParam && forceNewChat) setForceNewChat(false);
   if (sessionSeen !== sessionIdParam) {
     setSessionSeen(sessionIdParam);
     setSessionId(sessionIdParam ?? null);
@@ -367,8 +332,13 @@ export function ChatView({ characterId }: ChatViewProps) {
     let cancel = false;
     void (async () => {
       if (!sessionIdParam) {
+        if (forceNewChat) {
+          setActiveMessages([]);
+          setLoading(false);
+          return;
+        }
         try {
-          const res = await fetch(`/api/sessions?characterId=${characterId}`);
+          const res = await fetch(`/api/sessions?characterId=${characterId}`, { cache: 'no-store' });
           const sessions = await res.json();
           const recent = Array.isArray(sessions) ? sessions.find((session) => (session?._count?.messages ?? 0) > 0) ?? null : null;
           if (cancel) return;
@@ -388,7 +358,7 @@ export function ChatView({ characterId }: ChatViewProps) {
       }
 
       try {
-        const res = await fetch(`/api/sessions/${sessionIdParam}`);
+        const res = await fetch(`/api/sessions/${sessionIdParam}`, { cache: 'no-store' });
         const session = await res.json();
         if (cancel) return;
         const incoming = Array.isArray(session?.messages) ? session.messages : [];
@@ -412,12 +382,12 @@ export function ChatView({ characterId }: ChatViewProps) {
       if (!cancel) setLoading(false);
     })();
     return () => { cancel = true; };
-  }, [characterId, sessionIdParam, router]);
+  }, [characterId, sessionIdParam, router, forceNewChat]);
 
-  // Empty history means this chat has not started. Show the card's opening scene, with names filled in.
+  // Before a session exists, preview the card's first message. A created session uses only the greeting stored for that session.
   useEffect(() => {
-    if (loading || !character || streaming) return;
-    const content = composeOpening(character, userDisplayName || 'You');
+    if (loading || !character || streaming || sessionId || sessionIdParam) return;
+    const content = stripPromptLeak(composeOpening(character, userDisplayName || 'You'));
     if (!content) return;
     const createdAt = new Date().toISOString();
     const greeting: ChatMessage = {
@@ -434,7 +404,7 @@ export function ChatView({ characterId }: ChatViewProps) {
     queueMicrotask(() => {
       setActiveMessages((prev) => (prev.length > 0 ? prev : [greeting]));
     });
-  }, [loading, character, sessionId, userDisplayName, streaming]);
+  }, [loading, character, sessionId, sessionIdParam, userDisplayName, streaming]);
 
   useEffect(() => { scrollToBottom(); }, [messages, streamContent, scrollToBottom]);
 
@@ -566,7 +536,16 @@ export function ChatView({ characterId }: ChatViewProps) {
       }
       const sentSystem = Number(res.headers.get('X-Payload-System-Tokens'));
       const sentCap = Number(res.headers.get('X-Payload-Context-Cap'));
-      if (sentSystem > 0) setPayloadInfo({ systemTokens: sentSystem, contextCap: sentCap > 0 ? sentCap : null });
+      const sentTokens = Number(res.headers.get('X-Sent-Tokens'));
+      const recentHistoryTokens = Number(res.headers.get('X-Recent-History-Tokens'));
+      if (sentSystem > 0) setPayloadInfo({ systemTokens: Math.min(DEFINITION_TOKEN_CAP, sentSystem), contextCap: sentCap > 0 ? sentCap : null });
+      if (sentTokens > 0 || recentHistoryTokens > 0) {
+        setTokenUsage({
+          sent_tokens: sentTokens,
+          recent_history_tokens: recentHistoryTokens,
+          definition_tokens: Math.min(DEFINITION_TOKEN_CAP, sentSystem || 0),
+        });
+      }
 
       const reader = res?.body?.getReader();
       if (!reader) {
@@ -598,11 +577,6 @@ export function ChatView({ characterId }: ChatViewProps) {
           model: usedModel || currentModel,
           streamed: fullText,
         }));
-        const merged = Array.isArray(allMsgs) ? allMsgs as ChatMessage[] : [];
-        const lastAi = [...merged].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
-        const canRender = !!access?.can.sceneImages && access.imageCreditsRemaining !== 0;
-        if (lastAi && canRender && hasPendingScene(lastAi.content ?? '')) void renderScenes(lastAi.id);
-
         // Reload meter states
         const sessRes = await fetch(`/api/sessions/${sessionId}`);
         const sessData = await sessRes.json();
@@ -647,11 +621,25 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   async function handleDelete(messageId: string) {
     if (!sessionId) return;
+    const previous = messages ?? [];
+    const purged = spliceDeletedMessages(previous.map((message) => (
+      message.id === messageId ? { ...message, deleted: true, content: '' } : message
+    )));
+    setMessages(purged);
     try {
-      await fetch(`/api/sessions/${sessionId}/messages?messageId=${messageId}`, { method: 'DELETE' });
-      setActiveMessages(prev => (prev ?? []).filter((m: ChatMessage) => m.id !== messageId));
+      const res = await fetch(`/api/sessions/${sessionId}/messages?messageId=${messageId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to delete message');
+      if (typeof data.recent_history_tokens === 'number') {
+        setTokenUsage((current) => ({
+          definition_tokens: current.definition_tokens,
+          recent_history_tokens: data.recent_history_tokens,
+          sent_tokens: current.definition_tokens + data.recent_history_tokens,
+        }));
+      }
       toast.success('Message deleted');
     } catch {
+      setMessages(previous);
       toast.error('Failed to delete message');
     }
   }
@@ -686,8 +674,20 @@ export function ChatView({ characterId }: ChatViewProps) {
     }
   }
 
-  function handleNewSession() {
+  async function handleNewSession() {
+    setForceNewChat(true);
+    setActiveMessages([]);
     setChooser(true);
+    router.replace(`/characters/${characterId}/chat`);
+    try {
+      const res = await fetch(`/api/characters/${characterId}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) return;
+      const firstMessage = cardFirstMessage(data);
+      setCharacter({ ...data, initialMessage: firstMessage, firstMessage });
+    } catch {
+      toast.error('Failed to load the current greeting');
+    }
   }
 
   async function beginChat(personaId: string | null) {
@@ -701,6 +701,7 @@ export function ChatView({ characterId }: ChatViewProps) {
       const session = await res.json().catch(() => ({}));
       if (!res.ok || !session?.id) throw new Error(session?.error ?? 'Failed to start chat');
       if (personaId) writeLastPersonaId(personaId);
+      setActiveMessages(Array.isArray(session.messages) ? session.messages : []);
       setSessionPersonaId(personaId);
       setChooser(false);
       router.replace(`/characters/${characterId}/chat?session=${session.id}`);
@@ -760,7 +761,6 @@ export function ChatView({ characterId }: ChatViewProps) {
   const canPro = !!access?.can.proModels;
   const availableModels = (PROVIDER_MODELS?.[currentProvider] ?? []).filter((m: string) => canPro || !isProModel(m));
   const canAdvanced = !!access?.can.advancedGeneration;
-  const canScenes = !!access?.can.sceneImages;
   if (access && !access.can.proModels && isProModel(currentModel)) {
     setCurrentModel(DEFAULT_MODEL);
   }
@@ -773,10 +773,25 @@ export function ChatView({ characterId }: ChatViewProps) {
   // stays on screen but is not re-sent, so it doesn't count against the context window.
   const contextWindow = payloadInfo?.contextCap
     ?? Math.min(CONTEXT_WINDOWS?.[currentModel] ?? planCap, planCap);
-  const systemTokens = payloadInfo?.systemTokens
-    ?? (character ? Math.min(countSystemTokens({ ...character, exampleDialogue: '' }), SYSTEM_PROMPT_ESTIMATE_CAP) : 0);
-  const activeMessages = spliceDeletedMessages(messages ?? []);
-  const historyTokens = countHistoryTokens(activeMessages.slice(-BASELINE_HISTORY_TURNS * 2));
+  const definitionEstimate = Math.min(
+    DEFINITION_TOKEN_CAP,
+    payloadInfo?.systemTokens ?? (character ? countSystemTokens({ ...character, exampleDialogue: '' }) : 0),
+  );
+  const activeMessages = spliceDeletedMessages(messages ?? []).filter((message) => (message.content ?? '').trim());
+  const liveUsage = recountTurnTokens(activeMessages.slice(-BASELINE_HISTORY_TURNS * 2), definitionEstimate);
+  if (
+    tokenUsage.sent_tokens !== liveUsage.sent_tokens
+    || tokenUsage.recent_history_tokens !== liveUsage.recent_history_tokens
+    || tokenUsage.definition_tokens !== liveUsage.definition_tokens
+  ) {
+    setTokenUsage({
+      sent_tokens: liveUsage.sent_tokens,
+      recent_history_tokens: liveUsage.recent_history_tokens,
+      definition_tokens: liveUsage.definition_tokens,
+    });
+  }
+  const systemTokens = liveUsage.definition_tokens;
+  const historyTokens = liveUsage.recent_history_tokens;
 
   if (loading) {
     return (
@@ -924,7 +939,12 @@ export function ChatView({ characterId }: ChatViewProps) {
         }
       />
 
-      <ContextBar systemTokens={systemTokens} historyTokens={historyTokens} maxTokens={contextWindow} />
+      <ContextBar
+        key={`${tokenUsage.sent_tokens}:${tokenUsage.recent_history_tokens}:${activeMessages.length}`}
+        systemTokens={systemTokens}
+        historyTokens={historyTokens}
+        maxTokens={contextWindow}
+      />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -950,15 +970,6 @@ export function ChatView({ characterId }: ChatViewProps) {
                 onEdit={(newContent: string) => handleEdit(msg.id, newContent)}
                 onBranch={() => handleBranch(msg.index)}
                 onDelete={() => handleDelete(msg.id)}
-                renderingScene={renderingId === msg.id}
-                onRenderScene={msg.role === 'ASSISTANT' && !renderingId ? () => {
-                  if (!canScenes) { openPaywall('sceneImages'); return; }
-                  if (access?.imageCreditsRemaining === 0) {
-                    toast.error('You have used today’s image credits. They reset at midnight UTC.');
-                    return;
-                  }
-                  void renderScenes(msg.id);
-                } : undefined}
               />
             );
           })}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Plus, BookOpen, Trash2, Loader2, Save, ChevronDown, ChevronLeft, Lock, FlaskConical } from 'lucide-react';
 import { toast } from 'sonner';
+import { queueNovelAiSync } from '@/lib/exporters/sync-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -74,6 +75,7 @@ export function LorebooksHub() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error ?? 'Failed to save');
       toast.success('Lorebook saved');
+      queueNovelAiSync('lorebook', d.id);
       setDraft({ ...d, entries: d.entries.map((e: any) => ({ ...e, _key: e.id })) });
       void load();
     } catch (err: any) {

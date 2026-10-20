@@ -12,7 +12,8 @@ import { spliceDeletedMessages } from '@/lib/llm/messages';
 import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, usableCustomModel, usableGeminiModel, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
 import { Plus, Pencil, SlidersHorizontal, MoreVertical, KeyRound, Brain, CreditCard, UserRound, Check } from 'lucide-react';
 import { applyScripts, fillMacros, pickPersona, type PersonaData, type ScriptData } from '@/lib/hubs';
-import { composeOpening } from '@/lib/opening';
+import { cardFirstMessage, composeOpening } from '@/lib/opening';
+import { stripPromptLeak } from '@/lib/prompt-leak';
 import { readLastPersonaId, suggestPersonaId, writeLastPersonaId } from '@/lib/persona-choice';
 import { PersonaGate } from '@/components/chat/persona-gate';
 import { PersonaEditor } from '@/components/chat/persona-editor';
@@ -31,7 +32,6 @@ import { CharacterAvatar } from '@/components/character/character-avatar';
 import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlayer';
 import { usePersonaName } from '@/lib/persona';
 import { toast } from 'sonner';
-import { hasPendingScene } from '@/lib/scene-tags';
 import Link from 'next/link';
 // Mirrors lib/payload-router: compressed system prompt ≤ ~500 tokens, last 5 turns (10 messages) re-sent.
 const SYSTEM_PROMPT_ESTIMATE_CAP = 500;
@@ -234,43 +234,6 @@ export function ChatView({ characterId }: ChatViewProps) {
     }
   }
   const { status: access, refresh: refreshAccess, openPaywall } = useAccess();
-  const [renderingId, setRenderingId] = useState<string | null>(null);
-  const renderingRef = useRef(false);
-
-  // Renders every pending [GENERATE_IMAGE] tag of a message, one at a time.
-  async function renderScenes(messageId: string) {
-    if (renderingRef.current) return;
-    renderingRef.current = true;
-    setRenderingId(messageId);
-    try {
-      for (let i = 0; i < 3; i++) {
-        const res = await fetch('/api/images/scene', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageId }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.status === 402) {
-          openPaywall('sceneImages');
-          break;
-        }
-        if (res.status === 429 && data?.code === 'OUT_OF_IMAGE_CREDITS') {
-          toast.error(data.error);
-          break;
-        }
-        if (!res.ok) throw new Error(data?.error ?? 'Scene render failed');
-        if (data.rendered) void refreshAccess();
-        setActiveMessages(prev => (prev ?? []).map((m: ChatMessage) => m.id === messageId ? { ...m, content: data.content } : m));
-        if (!data.rendered || !hasPendingScene(data.content ?? '')) break;
-      }
-    } catch (err: any) {
-      console.error('Scene render failed:', err);
-      toast.error(err?.message ?? 'Scene render failed');
-    } finally {
-      renderingRef.current = false;
-      setRenderingId(null);
-    }
-  }
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -279,7 +242,7 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   // Load character
   useEffect(() => {
-    fetch(`/api/characters/${characterId}`)
+    fetch(`/api/characters/${characterId}`, { cache: 'no-store' })
       .then(async r => {
         if (r.status === 403) {
           // NSFW character and the viewer isn't a subscriber: prompt an upgrade and leave.
@@ -291,7 +254,7 @@ export function ChatView({ characterId }: ChatViewProps) {
       })
       .then((data: any) => {
         if (data) {
-          const firstMessage = String(data.firstMessage || data.initialMessage || '').trim();
+          const firstMessage = cardFirstMessage(data);
           setCharacter({ ...data, initialMessage: firstMessage, firstMessage });
           try {
             const rules = JSON.parse(data?.customRules ?? '{}');
@@ -336,7 +299,7 @@ export function ChatView({ characterId }: ChatViewProps) {
 
       // Load session data
       try {
-        const res = await fetch(`/api/sessions/${sid}`);
+        const res = await fetch(`/api/sessions/${sid}`, { cache: 'no-store' });
         const session = await res.json();
         const incoming = Array.isArray(session?.messages) ? session.messages : [];
         setActiveMessages(dedupeIdentical(incoming));
@@ -363,10 +326,10 @@ export function ChatView({ characterId }: ChatViewProps) {
     initSession();
   }, [characterId, sessionIdParam, router]);
 
-  // Empty history means this chat has not started. Show the card's opening scene, with names filled in.
+  // Before a session exists, preview the card's first message. A created session uses only the greeting stored for that session.
   useEffect(() => {
-    if (loading || !character || streaming) return;
-    const content = composeOpening(character, userDisplayName || 'You');
+    if (loading || !character || streaming || sessionId || sessionIdParam) return;
+    const content = stripPromptLeak(composeOpening(character, userDisplayName || 'You'));
     if (!content) return;
     setActiveMessages((prev) => {
       if (prev.length > 0) return prev;
@@ -382,7 +345,7 @@ export function ChatView({ characterId }: ChatViewProps) {
         index: 0,
       }];
     });
-  }, [loading, character, sessionId, userDisplayName, streaming]);
+  }, [loading, character, sessionId, sessionIdParam, userDisplayName, streaming]);
 
   useEffect(() => { scrollToBottom(); }, [messages, streamContent, scrollToBottom]);
 
@@ -548,11 +511,6 @@ export function ChatView({ characterId }: ChatViewProps) {
           model: usedModel || currentModel,
           streamed: fullText,
         }));
-        const merged = Array.isArray(allMsgs) ? allMsgs as ChatMessage[] : [];
-        const lastAi = [...merged].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
-        const canRender = !!access?.can.sceneImages && access.imageCreditsRemaining !== 0;
-        if (lastAi && canRender && hasPendingScene(lastAi.content ?? '')) void renderScenes(lastAi.id);
-
         // Reload meter states
         const sessRes = await fetch(`/api/sessions/${sessionId}`);
         const sessData = await sessRes.json();
@@ -651,6 +609,7 @@ export function ChatView({ characterId }: ChatViewProps) {
       const session = await res.json().catch(() => ({}));
       if (!res.ok || !session?.id) throw new Error(session?.error ?? 'Failed to start chat');
       if (personaId) writeLastPersonaId(personaId);
+      setActiveMessages(Array.isArray(session.messages) ? session.messages : []);
       setSessionPersonaId(personaId);
       setChooser(false);
       router.replace(`/characters/${characterId}/chat?session=${session.id}`);
@@ -710,7 +669,6 @@ export function ChatView({ characterId }: ChatViewProps) {
   const canPro = !!access?.can.proModels;
   const availableModels = (PROVIDER_MODELS?.[currentProvider] ?? []).filter((m: string) => canPro || !isProModel(m));
   const canAdvanced = !!access?.can.advancedGeneration;
-  const canScenes = !!access?.can.sceneImages;
   useEffect(() => {
     if (!access || access.can.proModels || !isProModel(currentModel)) return;
     setCurrentModel(DEFAULT_MODEL);
@@ -902,15 +860,6 @@ export function ChatView({ characterId }: ChatViewProps) {
                 onEdit={(newContent: string) => handleEdit(msg.id, newContent)}
                 onBranch={() => handleBranch(msg.index)}
                 onDelete={() => handleDelete(msg.id)}
-                renderingScene={renderingId === msg.id}
-                onRenderScene={msg.role === 'ASSISTANT' && !renderingId ? () => {
-                  if (!canScenes) { openPaywall('sceneImages'); return; }
-                  if (access?.imageCreditsRemaining === 0) {
-                    toast.error('You have used today’s image credits. They reset at midnight UTC.');
-                    return;
-                  }
-                  void renderScenes(msg.id);
-                } : undefined}
               />
             );
           })}

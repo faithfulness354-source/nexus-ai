@@ -36,8 +36,8 @@ export async function listActiveMessages(sessionId: string): Promise<StoredMessa
     const messages: StoredMessage[] = [];
     for (const row of rows) {
       const role = asRole(String(row.role ?? ''));
-      const content = messageContent(row.content).trim();
-      if (!role || !content) continue;
+      const content = messageContent(row.content);
+      if (!role || !content.trim()) continue;
       messages.push({
         id: row.id,
         sessionId: row.sessionId,
@@ -76,7 +76,7 @@ export async function markMessageDeleted(sessionId: string, messageId: string): 
   try {
     await prisma.message.updateMany({
       where: { id: messageId, sessionId },
-      data: { deleted: true },
+      data: { deleted: true, content: '' },
     });
   } catch (err) {
     warnSkipped('soft delete', err);
