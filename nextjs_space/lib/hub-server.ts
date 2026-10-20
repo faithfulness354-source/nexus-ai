@@ -34,19 +34,29 @@ export function lorebookInput(body: any) {
   };
 }
 
+const PLACEMENTS = ['personality', 'scenario', 'example_dialogs', 'default'] as const;
+
+export function lorePlacement(value: unknown): (typeof PLACEMENTS)[number] {
+  return typeof value === 'string' && (PLACEMENTS as readonly string[]).includes(value)
+    ? value as (typeof PLACEMENTS)[number]
+    : 'default';
+}
+
 export function entriesInput(raw: unknown) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, 500).map((e: any, i: number) => ({
     title: str(e?.title, 120),
-    keys: (Array.isArray(e?.keys) ? e.keys : [])
+    keys: (Array.isArray(e?.keys) ? e.keys : Array.isArray(e?.keywords) ? e.keywords : [])
       .filter((k: unknown) => typeof k === 'string')
       .map((k: string) => k.trim().slice(0, 80))
       .filter(Boolean)
       .slice(0, 30),
     content: str(e?.content, 8000),
-    order: int(e?.order, 100 + i, 0, 10000),
+    order: int(e?.order ?? e?.insertion_order, 100 + i, 0, 10000),
     priority: int(e?.priority, 50, 0, 100),
-    depth: int(e?.depth, 4, 1, 50),
+    depth: int(e?.depth ?? e?.scan_depth, 4, 1, 50),
+    placement: lorePlacement(e?.placement),
+    constant: e?.constant === true,
     enabled: e?.enabled !== false,
   }));
 }

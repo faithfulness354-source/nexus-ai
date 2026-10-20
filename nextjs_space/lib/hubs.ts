@@ -75,6 +75,8 @@ export function pickPersona<T extends { id: string; isDefault: boolean; boundCha
 }
 
 // ---------- Lorebooks ----------
+export type LorePlacement = 'personality' | 'scenario' | 'example_dialogs' | 'default';
+
 export interface LoreEntryData {
   id?: string;
   title: string;
@@ -84,6 +86,8 @@ export interface LoreEntryData {
   priority: number;
   depth: number;
   enabled: boolean;
+  placement?: LorePlacement;
+  constant?: boolean;
 }
 
 export const LORE_TOKEN_BUDGET = 1500;
@@ -98,27 +102,68 @@ export function keyMatches(key: string, text: string): boolean {
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(k)}($|[^\\p{L}\\p{N}])`, 'iu').test(text);
 }
 
+/** Case-insensitive substring, or a `/pattern/flags` keyword. */
+export function keywordHits(key: string, text: string): boolean {
+  const k = key.trim();
+  if (!k || !text) return false;
+  const wrapped = k.match(/^\/([\s\S]+)\/([gimsuy]*)$/);
+  if (wrapped && wrapped[1].length <= 80) {
+    try {
+      const flags = wrapped[2].includes('i') ? wrapped[2] : `${wrapped[2]}i`;
+      return new RegExp(wrapped[1], flags).test(text);
+    } catch {
+      return false;
+    }
+  }
+  return text.toLowerCase().includes(k.toLowerCase());
+}
+
 /**
- * Returns lore entries triggered by keywords in the most recent messages (newest last).
- * Each entry scans its own `depth` of recent messages. Highest priority entries are kept
- * within the token budget, then the survivors are sorted by insertion order.
+ * Entries that are constant, or whose keywords hit the last `depth` messages.
+ * Higher priority is kept first when the token budget runs out. Equal priority
+ * follows insertion order.
  */
 export function selectLore(entries: LoreEntryData[], recent: string[], budget = LORE_TOKEN_BUDGET): LoreEntryData[] {
-  const hits = entries.filter((e) => {
-    if (!e.enabled || !e.content.trim()) return false;
-    const window = recent.slice(-Math.max(1, e.depth)).join('\n');
-    return e.keys.some((k) => keyMatches(k, window));
+  const hits = entries.filter((entry) => {
+    if (!entry.enabled || !entry.content.trim()) return false;
+    if (entry.constant) return true;
+    const window = recent.slice(-Math.max(1, entry.depth || 4)).join('\n');
+    return entry.keys.some((key) => keywordHits(key, window));
   });
-  hits.sort((a, b) => b.priority - a.priority);
+  hits.sort((a, b) => b.priority - a.priority || a.order - b.order);
   const kept: LoreEntryData[] = [];
   let used = 0;
-  for (const e of hits) {
-    const t = estimateTokens(e.content);
-    if (used + t > budget) continue;
-    used += t;
-    kept.push(e);
+  for (const entry of hits) {
+    const tokens = estimateTokens(entry.content);
+    if (used + tokens > budget) continue;
+    used += tokens;
+    kept.push(entry);
   }
-  return kept.sort((a, b) => a.order - b.order);
+  return kept;
+}
+
+const PLACEMENT_HEADER: Record<LorePlacement, string> = {
+  personality: '[LORE:PERSONALITY]',
+  scenario: '[LORE:SCENARIO]',
+  example_dialogs: '[LORE:EXAMPLE]',
+  default: '[LORE]',
+};
+
+/** Groups activated entries by where they should sit in the prompt. */
+export function formatLoreContext(entries: LoreEntryData[]): string {
+  const groups = new Map<LorePlacement, string[]>();
+  for (const entry of entries) {
+    const placement = entry.placement && PLACEMENT_HEADER[entry.placement] ? entry.placement : 'default';
+    const line = entry.title.trim() ? `${entry.title.trim()}: ${entry.content.trim()}` : entry.content.trim();
+    const list = groups.get(placement) ?? [];
+    list.push(line);
+    groups.set(placement, list);
+  }
+  const order: LorePlacement[] = ['personality', 'scenario', 'example_dialogs', 'default'];
+  return order
+    .filter((placement) => groups.get(placement)?.length)
+    .map((placement) => `${PLACEMENT_HEADER[placement]}\n${groups.get(placement)!.join('\n\n')}`)
+    .join('\n\n');
 }
 
 // ---------- Scripts ----------

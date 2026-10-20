@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Plus, BookOpen, Trash2, Loader2, Save, ChevronDown, ChevronLeft, Lock, FlaskConical } from 'lucide-react';
+import { Plus, BookOpen, Trash2, Loader2, Save, ChevronLeft, Lock, FlaskConical } from 'lucide-react';
 import { toast } from 'sonner';
+import { queueNovelAiSync } from '@/lib/exporters/sync-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,9 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AutoTextarea } from '@/components/editor/auto-textarea';
 import { CharacterPicker } from './character-picker';
 import { useAccess } from '@/components/billing/access-provider';
-import { selectLore, LORE_TOKEN_BUDGET, type LoreEntryData } from '@/lib/hubs';
+import { selectLore, formatLoreContext, LORE_TOKEN_BUDGET, type LoreEntryData, type LorePlacement } from '@/lib/hubs';
+import { LoreImportButton } from './lore-import';
 import { estimateTokens } from '@/lib/tokens';
 import { cn } from '@/lib/utils';
+
+function keywordList(raw: string): string[] {
+  const parts = raw.split(',').map((item) => item.trim());
+  if (raw.trimEnd().endsWith(',')) return parts.filter((item, index) => item.length > 0 || index === parts.length - 1);
+  return parts.filter(Boolean);
+}
 
 interface Book {
   id?: string;
@@ -28,7 +36,15 @@ interface Book {
 }
 
 const key = () => Math.random().toString(36).slice(2);
-const newEntry = (order: number): Book['entries'][number] => ({ _key: key(), title: '', keys: [], content: '', order, priority: 50, depth: 4, enabled: true });
+const PLACEMENTS: { value: LorePlacement; label: string }[] = [
+  { value: 'default', label: 'Default' },
+  { value: 'personality', label: 'Personality' },
+  { value: 'scenario', label: 'Scenario' },
+  { value: 'example_dialogs', label: 'Example dialogs' },
+];
+const newEntry = (order: number): Book['entries'][number] => ({
+  _key: key(), title: '', keys: [], content: '', order, priority: 50, depth: 4, enabled: true, placement: 'default', constant: false,
+});
 const SCOPE_LABEL = { GLOBAL: 'Global (all chats)', CHARACTER: 'Specific characters', PERSONA: 'Specific personas' };
 
 export function LorebooksHub() {
@@ -59,7 +75,7 @@ export function LorebooksHub() {
   }, []);
 
   const triggered = useMemo(() => {
-    if (!draft || !testText.trim()) return [];
+    if (!draft) return [];
     return selectLore(draft.entries, [testText]);
   }, [draft, testText]);
 
@@ -76,6 +92,7 @@ export function LorebooksHub() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.error ?? 'Failed to save');
       toast.success('Lorebook saved');
+      queueNovelAiSync('lorebook', d.id);
       setDraft({ ...d, entries: d.entries.map((e: any) => ({ ...e, _key: e.id })) });
       void load();
     } catch (err: any) {
@@ -114,7 +131,7 @@ export function LorebooksHub() {
         <div className="flex flex-wrap items-end justify-between gap-3 mb-5">
           <div>
             <h2 className="font-display text-xl font-bold">Lorebooks</h2>
-            <p className="text-sm text-muted-foreground">Entries are added to the prompt only when their keywords appear in recent messages.</p>
+            <p className="text-sm text-muted-foreground">Entries join the prompt when a keyword appears in recent messages, or when the entry is always active.</p>
           </div>
           <Button disabled={!entitled} onClick={() => { setDraft({ name: '', description: '', scope: 'GLOBAL', characterIds: [], personaIds: [], enabled: true, entries: [newEntry(100)] }); setOpen(null); }}>
             {entitled ? <Plus className="h-4 w-4 mr-1" /> : <Lock className="h-4 w-4 mr-1" />} New lorebook
@@ -194,70 +211,133 @@ export function LorebooksHub() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold">Entries ({draft.entries.length})</h3>
-            <Button size="sm" variant="secondary" onClick={() => {
-              const e = newEntry(Math.max(99, ...draft.entries.map((x) => x.order)) + 1);
-              setDraft({ ...draft, entries: [...draft.entries, e] });
-              setOpen(e._key);
-            }}><Plus className="h-4 w-4 mr-1" /> Add entry</Button>
-          </div>
-
-          {draft.entries.map((e) => {
-            const isOpen = open === e._key;
+          {(() => {
+            const selected = draft.entries.find((entry) => entry._key === open) ?? draft.entries[0] ?? null;
+            const activeKeys = new Set(triggered.map((entry) => entry.id ?? entry.title + entry.keys.join('|')));
             return (
-              <div key={e._key} className={cn('rounded-xl bg-card ring-1', e.enabled ? 'ring-white/5' : 'ring-white/5 opacity-60')}>
-                <button type="button" onClick={() => setOpen(isOpen ? null : e._key)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{e.title || e.keys[0] || 'Untitled entry'}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{e.keys.length ? e.keys.join(', ') : 'No keywords — never triggers'} · P{e.priority} · depth {e.depth}</p>
+              <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+                <div className="rounded-2xl bg-card ring-1 ring-white/5 min-h-0">
+                  <div className="flex items-center justify-between gap-2 px-3 py-3 border-b border-white/5">
+                    <h3 className="font-semibold text-sm">Entries ({draft.entries.length})</h3>
+                    <div className="flex gap-1">
+                      <LoreImportButton lorebookId={draft.id} disabled={!entitled} onImported={(entries) => {
+                        setDraft((current) => current && ({
+                          ...current,
+                          entries: [...current.entries, ...entries.map((entry) => ({
+                            id: entry.id,
+                            title: entry.title ?? '',
+                            keys: Array.isArray(entry.keys) ? entry.keys : [],
+                            content: entry.content ?? '',
+                            order: entry.order ?? 100,
+                            priority: entry.priority ?? 50,
+                            depth: entry.depth ?? 4,
+                            enabled: entry.enabled !== false,
+                            placement: entry.placement,
+                            constant: entry.constant === true,
+                            _key: entry.id,
+                          }))],
+                        }));
+                        void load();
+                      }} />
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        const entry = newEntry(Math.max(99, ...draft.entries.map((item) => item.order)) + 1);
+                        setDraft({ ...draft, entries: [...draft.entries, entry] });
+                        setOpen(entry._key);
+                      }}><Plus className="h-4 w-4" /></Button>
+                    </div>
                   </div>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform', isOpen && 'rotate-180')} />
-                </button>
-                {isOpen && (
-                  <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
+                  <div className="max-h-[640px] overflow-y-auto p-2 space-y-1">
+                    {draft.entries.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted-foreground">No entries yet.</p>}
+                    {draft.entries.map((entry) => {
+                      const hit = testText.trim() && activeKeys.has(entry.id ?? entry.title + entry.keys.join('|'));
+                      const current = selected?._key === entry._key;
+                      return (
+                        <div key={entry._key} className={cn('flex items-center gap-2 rounded-lg px-2 py-2', current ? 'bg-primary/15' : 'hover:bg-white/5', hit && 'ring-1 ring-primary/50')}>
+                          <button type="button" onClick={() => setOpen(entry._key)} className="min-w-0 flex-1 text-left">
+                            <p className="text-sm font-medium truncate">{entry.title || entry.keys[0] || 'Untitled entry'}</p>
+                            <p className="text-[11px] text-muted-foreground truncate">{entry.constant ? 'Always on' : entry.keys.join(', ') || 'No keywords'} · P{entry.priority}</p>
+                          </button>
+                          <Switch checked={entry.enabled} onCheckedChange={(enabled) => setEntry(entry._key, { enabled })} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {selected ? (
+                  <div className="rounded-2xl bg-card p-4 ring-1 ring-white/5 space-y-3">
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <div><Label>Title</Label><Input value={e.title} maxLength={120} onChange={(ev) => setEntry(e._key, { title: ev.target.value })} placeholder="Kingdom of Eldoria" /></div>
+                      <div><Label>Title</Label><Input value={selected.title} maxLength={120} onChange={(event) => setEntry(selected._key, { title: event.target.value })} placeholder="Kingdom of Eldoria" /></div>
                       <div>
                         <Label>Activation keywords</Label>
-                        <Input defaultValue={e.keys.join(', ')} onBlur={(ev) => setEntry(e._key, { keys: ev.target.value.split(',').map((k) => k.trim()).filter(Boolean) })} placeholder="Eldoria, the capital, King Aldric" />
+                        <Input
+                          value={selected.keys.join(', ')}
+                          onChange={(event) => setEntry(selected._key, { keys: keywordList(event.target.value) })}
+                          placeholder="Eldoria, the capital, /king\s+aldric/i"
+                        />
                       </div>
                     </div>
                     <div>
                       <Label>Content</Label>
-                      <AutoTextarea minHeight={90} value={e.content} onChange={(ev) => setEntry(e._key, { content: ev.target.value })} placeholder="What the AI should know when this comes up." />
-                      <p className="mt-1 text-[11px] text-muted-foreground">≈ {estimateTokens(e.content)} tokens</p>
+                      <AutoTextarea minHeight={140} value={selected.content} onChange={(event) => setEntry(selected._key, { content: event.target.value })} placeholder="What the AI should know when this entry activates." />
+                      <p className="mt-1 text-[11px] text-muted-foreground">≈ {estimateTokens(selected.content)} tokens</p>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div><Label title="Lower numbers are inserted first">Insertion order</Label><Input type="number" value={e.order} onChange={(ev) => setEntry(e._key, { order: Number(ev.target.value) })} /></div>
-                      <div><Label title="Higher priority entries survive when the budget is full">Priority (0–100)</Label><Input type="number" min={0} max={100} value={e.priority} onChange={(ev) => setEntry(e._key, { priority: Number(ev.target.value) })} /></div>
-                      <div><Label title="How many recent messages are scanned">Scan depth</Label><Input type="number" min={1} max={50} value={e.depth} onChange={(ev) => setEntry(e._key, { depth: Number(ev.target.value) })} /></div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label>Insertion order</Label>
+                        <Input type="number" value={selected.order} onChange={(event) => setEntry(selected._key, { order: Number(event.target.value) })} />
+                      </div>
+                      <div>
+                        <Label>Scan depth</Label>
+                        <Input type="number" min={1} max={50} value={selected.depth} onChange={(event) => setEntry(selected._key, { depth: Number(event.target.value) })} />
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 text-sm"><Switch checked={e.enabled} onCheckedChange={(enabled) => setEntry(e._key, { enabled })} /> Enabled</label>
-                      <Button size="sm" variant="ghost" className="hover:text-destructive" onClick={() => setDraft({ ...draft, entries: draft.entries.filter((x) => x._key !== e._key) })}><Trash2 className="h-4 w-4 mr-1" /> Remove</Button>
+                    <div>
+                      <div className="flex items-center justify-between"><Label>Priority</Label><span className="text-xs text-muted-foreground">{selected.priority}</span></div>
+                      <input type="range" min={0} max={100} value={selected.priority} onChange={(event) => setEntry(selected._key, { priority: Number(event.target.value) })} className="w-full accent-primary" />
+                    </div>
+                    <div>
+                      <Label>Placement</Label>
+                      <Select value={selected.placement ?? 'default'} onValueChange={(placement: LorePlacement) => setEntry(selected._key, { placement })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{PLACEMENTS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="flex items-center gap-2 text-sm"><Switch checked={selected.constant === true} onCheckedChange={(constant) => setEntry(selected._key, { constant })} /> Always active</label>
+                      <Button size="sm" variant="ghost" className="hover:text-destructive" onClick={() => {
+                        const next = draft.entries.filter((entry) => entry._key !== selected._key);
+                        setDraft({ ...draft, entries: next });
+                        setOpen(next[0]?._key ?? null);
+                      }}><Trash2 className="h-4 w-4 mr-1" /> Remove</Button>
                     </div>
                   </div>
+                ) : (
+                  <div className="rounded-2xl bg-card p-8 text-center text-sm text-muted-foreground ring-1 ring-white/5">Add an entry or import a world info file.</div>
                 )}
               </div>
             );
-          })}
+          })()}
         </div>
 
         <aside className="space-y-4">
           <div className="rounded-2xl bg-card p-4 ring-1 ring-white/5 lg:sticky lg:top-20">
             <p className="flex items-center gap-2 font-semibold text-sm"><FlaskConical className="h-4 w-4 text-primary" /> Activation tester</p>
-            <p className="text-xs text-muted-foreground mt-1 mb-2">Type a sample message to see which entries would be injected (budget {LORE_TOKEN_BUDGET} tokens).</p>
-            <AutoTextarea minHeight={80} value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="We ride for Eldoria at dawn…" />
+            <p className="text-xs text-muted-foreground mt-1 mb-2">Type a sample turn. Constant entries and keyword hits are listed within the {LORE_TOKEN_BUDGET}-token budget.</p>
+            <AutoTextarea minHeight={80} value={testText} onChange={(event) => setTestText(event.target.value)} placeholder="We ride for Eldoria at dawn…" />
+            <p className="mt-2 text-[11px] text-muted-foreground">{triggered.reduce((sum, entry) => sum + estimateTokens(entry.content), 0)} / {LORE_TOKEN_BUDGET} tokens</p>
             <div className="mt-3 space-y-1.5">
               {testText.trim() && triggered.length === 0 && <p className="text-xs text-muted-foreground">No entries triggered.</p>}
-              {triggered.map((e, i) => (
-                <div key={i} className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs">
-                  <span className="font-semibold text-primary">{e.title || e.keys[0]}</span>
-                  <span className="text-muted-foreground"> · order {e.order} · P{e.priority}</span>
+              {triggered.map((entry, index) => (
+                <div key={entry.id ?? index} className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs">
+                  <span className="font-semibold text-primary">{entry.title || entry.keys[0] || 'Untitled'}</span>
+                  <span className="text-muted-foreground"> · {entry.constant ? 'constant' : 'keyword'} · P{entry.priority} · ≈ {estimateTokens(entry.content)}</span>
                 </div>
               ))}
             </div>
+            {triggered.length > 0 && (
+              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-2 text-[11px] text-foreground/80">{formatLoreContext(triggered)}</pre>
+            )}
           </div>
         </aside>
       </div>

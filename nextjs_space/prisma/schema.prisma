@@ -275,6 +275,10 @@ model LoreEntry {
   priority   Int      @default(50)
   /// How many recent messages are scanned for this entry's keywords.
   depth      Int      @default(4)
+  /// personality | scenario | example_dialogs | default
+  placement  String   @default("default")
+  /// When true, the entry is injected even if no keyword matches.
+  constant   Boolean  @default(false)
   enabled    Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
