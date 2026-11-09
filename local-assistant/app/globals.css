@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-mist-100 antialiased;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 154, 122, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(90, 120, 180, 0.12), transparent 50%),
+    linear-gradient(180deg, #0b0d10 0%, #10141a 100%);
+  background-attachment: fixed;
+}
+
+.markdown-body {
+  @apply text-sm leading-relaxed text-mist-100;
+}
+
+.markdown-body p {
+  @apply mb-3;
+}
+
+.markdown-body pre {
+  @apply mb-3 overflow-x-auto rounded-lg bg-ink-900 p-3 font-mono text-xs;
+}
+
+.markdown-body code {
+  @apply rounded bg-ink-800 px-1 py-0.5 font-mono text-[0.85em];
+}
+
+.markdown-body pre code {
+  @apply bg-transparent p-0;
+}
+
+.markdown-body ul {
+  @apply mb-3 list-disc space-y-1 pl-5;
+}
+
+.markdown-body ol {
+  @apply mb-3 list-decimal space-y-1 pl-5;
+}
+
+.markdown-body a {
+  @apply text-accent underline-offset-2 hover:underline;
+}
