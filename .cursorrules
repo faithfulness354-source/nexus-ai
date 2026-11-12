@@ -1,0 +1,58 @@
+# KidVerse AI — Permanent Project Memory
+
+## Wrapper Brand
+- **Product name:** KidVerse AI
+- **Purpose:** COPPA-compliant, parent-managed multi-realm launcher for kid-safe AI adventures
+- **Stack:** React Native with Expo (TypeScript), Expo Router (v58+ file-based routing), Supabase (PostgreSQL + Deno Edge Functions)
+- **Greenfield only:** Do NOT connect, reference, or reuse any existing adult roleplay databases, prompts, or codebases (including NexusAI / Janitor-style projects in this monorepo). KidVerse AI is 100% standalone.
+
+## Three Age-Calibrated Sub-Apps ("Realms")
+
+### 1. `ages_5_7` — StorySprout
+- Voice-first picture adventure
+- Auto Text-to-Speech (`expo-speech`) read-aloud every turn
+- Giant microphone button for voice input
+- Oversized icon-driven choice cards
+- 1–2 sentence kindergarten / 1st-grade narration
+- Zero fail states
+
+### 2. `ages_8_9` — RealmHopper
+- Interactive quest & puzzle adventure
+- 3 action-choice buttons + free voice/text input
+- Collectible backpack inventory
+- Riddles
+- 2–4 sentence 3rd–4th grade chapter narration
+- Modular Build-a-Hero preset selector (Archetype + Sidekick + Quest Goal)
+
+### 3. `ages_10_12` — FableForge
+- Middle-grade adventure RPG & world-builder
+- Multi-step quests, character stats/gear, quest log
+- Modular hero/world builder (Archetype + Sidekick + Quest Goal)
+- Strict G-rated guardrails
+
+## COPPA & Zero-PII Policy
+- Never collect emails, real names, birthdates, locations, or photos from child profiles
+- Store only parent-approved fields: `nickname` (from safe presets), `avatar_id`, `age_tier`, `daily_message_limit`, and game state
+- All parent tools sit behind a PIN-protected Parent Gate
+- No third-party tracking SDKs on child surfaces
+
+## Multi-Layer Safety Pipeline
+Every AI turn MUST execute server-side in this order:
+1. **Pre-LLM Input / PII Filter** — scrub profanity, violence, mature themes, and PII; deflect gently in-character if flagged
+2. **Non-Overridable Age-Calibrated G-Rated System Prompt** — hardcoded per `age_tier`, with anti-prompt-injection instructions (client cannot override)
+3. **Structured JSON Output** — narration, companion_dialogue, choices, state_update
+4. **Post-LLM Safety Validation** — validate and sanitize before returning JSON to the client
+
+## App Structure (canonical)
+- `/app/_layout.tsx` — root layout + dynamic Realm theme provider
+- `/app/index.tsx` — KidVerse AI Wrapper Launcher (kid profile cards + Parent Gate)
+- `/app/realm/[tier].tsx` — Dynamic Realm Hub
+- `/app/play/[sessionId].tsx` — Adaptive Adventure Engine
+- `/app/parent.tsx` — PIN-protected Parent Dashboard
+- `/supabase/migrations/` — COPPA schema + RLS
+- `/supabase/functions/realm-turn/` — safety + turn Edge Function
+
+## Design & UX Guardrails
+- Bright, playful, age-appropriate visual themes that shift per Realm
+- No dark-mode-first adult UI patterns, no purple-glow “AI chatbot” aesthetics borrowed from adult products
+- Accessibility: large tap targets for StorySprout; readable type scales per Realm
