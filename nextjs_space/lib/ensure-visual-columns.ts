@@ -6,28 +6,28 @@ import { prisma } from '@/lib/db';
  * Prisma then fails every Character/Persona findMany with "column does not exist",
  * which makes the gallery and personas hubs look empty.
  *
+ * App tables live in the `nexus` schema (see nsfw-account, comments, lore migrations).
  * This only ADDS missing columns. It never drops, truncates, or deletes rows.
  */
 let ensured: Promise<void> | null = null;
 
-async function addColumn(table: '"Character"' | '"Persona"', column: string, sqlType: string) {
+async function addNexusColumn(table: 'Character' | 'Persona', column: string, sqlType: string) {
   // IF NOT EXISTS keeps this idempotent across deploys and concurrent requests.
   await prisma.$executeRawUnsafe(
-    `ALTER TABLE public.${table} ADD COLUMN IF NOT EXISTS "${column}" ${sqlType}`,
+    `ALTER TABLE nexus."${table}" ADD COLUMN IF NOT EXISTS "${column}" ${sqlType}`,
   );
 }
 
 async function ensureOnce(): Promise<void> {
-  // Prisma model tables use quoted PascalCase identifiers in this project.
-  await addColumn('"Character"', 'visualDescription', 'TEXT');
-  await addColumn('"Character"', 'visualAnchor', 'TEXT');
-  await addColumn('"Character"', 'visualAnalyzedFor', "TEXT NOT NULL DEFAULT ''");
+  await addNexusColumn('Character', 'visualDescription', 'TEXT');
+  await addNexusColumn('Character', 'visualAnchor', 'TEXT');
+  await addNexusColumn('Character', 'visualAnalyzedFor', "TEXT NOT NULL DEFAULT ''");
 
-  await addColumn('"Persona"', 'visualDescription', 'TEXT');
-  await addColumn('"Persona"', 'visualAnchor', 'TEXT');
-  await addColumn('"Persona"', 'visualAnalyzedFor', "TEXT NOT NULL DEFAULT ''");
+  await addNexusColumn('Persona', 'visualDescription', 'TEXT');
+  await addNexusColumn('Persona', 'visualAnchor', 'TEXT');
+  await addNexusColumn('Persona', 'visualAnalyzedFor', "TEXT NOT NULL DEFAULT ''");
 
-  // Supabase sync mirrors (snake_case) — also additive only.
+  // Supabase sync mirrors (public snake_case) — also additive only.
   await prisma.$executeRawUnsafe(`
     DO $$
     BEGIN
