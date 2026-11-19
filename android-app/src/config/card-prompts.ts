@@ -14,6 +14,10 @@ export const nsfwPrompt = `sensual attire, explicit, lingerie, boudoir wear, bar
 /** Mandatory positive rendering tags. Appended to every batch image prompt. */
 export const RENDER_POSITIVE = '2.5D semi-realistic, soft realistic lighting, subsurface scattering, highly detailed face features, delicate skin texture, polished digital illustration, masterpiece, best quality, smooth gradients';
 
+/** Character-card sheet aesthetic for the SFW-50 batch (stylized→semi-realistic 2.5D/3D). */
+export const SFW_CARD_SHEET_POSITIVE =
+  'stylized-to-semi-realistic 2.5D/3D character card sheet, dimensional rim and key light, rich material response, layered environment depth, polished digital illustration, character-card layout framing, soft subsurface skin, intricate costume detail, masterpiece, best quality';
+
 /** Rejects flat cartoon renders. Appended to the shared negative prompt. */
 export const RENDER_NEGATIVE = 'flat 2D, minimal cartoon, low detail, line art, simple shading, exaggerated anime features, blocky geometry, bad anatomy, low res';
 

@@ -5,6 +5,11 @@
  * From nextjs_space:
  *   npx tsx --require dotenv/config src/scripts/batch-generate-cards.ts
  * Add --check to validate names, places, and prompts without calling ComfyUI.
+ *
+ * For the dedicated 50-card SFW genre mix (slice_of_life, academy_life,
+ * fantasy_academy_life, swords_and_sorcery, isekai, cyberpunk) with fal.ai +
+ * safe Supabase upserts, use:
+ *   npx tsx --require dotenv/config src/scripts/batch-generate-sfw-cards.ts
  */
 import 'dotenv/config';
 import fs from 'fs';
