@@ -5,7 +5,7 @@ import { createLLMStream } from '@/lib/llm/router';
 import { resolveChatContext, resolveChatTarget } from '@/lib/llm/resolve';
 import { estimateTokens } from '@/lib/tokens';
 import { CONTEXT_WINDOWS, DEFAULT_MODEL } from '@/lib/types';
-import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked } from '@/lib/access';
+import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked, dailyLimitReached, textCreditLimit } from '@/lib/access';
 import { canViewCharacter } from '@/lib/card-visibility';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
@@ -95,14 +95,15 @@ export async function POST(request: NextRequest) {
     }
     if (session.character && (session.character.nsfw || characterImpliesNsfw(session.character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
 
-    // Daily credits: 1 credit = 1 text message. Admins and unlimited tiers always pass.
+    // Daily credits: 1 credit = 1 text message. Atomic RPC deduct before any LLM call; refund on failure.
+    // Ultimate uses a silent soft fair-use cap (10k/day). Admins always pass.
     if (!(await consumeCredit(viewer))) {
-      const limit = TIERS[viewer.tier].dailyCredits;
-      return new Response(JSON.stringify({
-        error: `You've used all ${limit} daily credits on the ${TIERS[viewer.tier].name} plan.`,
-        code: 'OUT_OF_CREDITS',
-        tier: viewer.tier,
-      }), { status: 402, headers: { 'Content-Type': 'application/json' } });
+      const limit = textCreditLimit(viewer);
+      const plan = TIERS[viewer.tier];
+      const message = plan.fairUseSilent
+        ? `You've reached today's fair-use message limit on ${plan.name}. It resets at midnight UTC.`
+        : `You've used all ${limit} daily credits on the ${plan.name} plan. They reset at midnight UTC.`;
+      return dailyLimitReached('credits', message, viewer.tier);
     }
     charged = true;
 
@@ -387,6 +388,11 @@ export async function POST(request: NextRequest) {
               const spoken = stripPromptLeak(fullResponse);
               const finalResponse = trimIncompleteTail(applyScripts(spoken, scripts, 'POST'));
               if (!finalResponse.trim()) {
+                // Upstream returned nothing usable — roll the credit back.
+                if (charged) {
+                  charged = false;
+                  await refundCredit(viewer).catch(() => {});
+                }
                 controller.close();
                 return;
               }
@@ -454,6 +460,11 @@ export async function POST(request: NextRequest) {
             userId: viewer.user.id,
             stack: err instanceof Error ? err.stack : '',
           });
+          // Roll back the credit when the upstream LLM failed before a usable reply.
+          if (charged && !fullResponse.trim()) {
+            charged = false;
+            await refundCredit(viewer).catch(() => {});
+          }
           releaseSlot();
           controller.error(err);
         }

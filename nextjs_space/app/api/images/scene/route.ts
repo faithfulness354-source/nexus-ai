@@ -10,15 +10,12 @@ export async function POST(request: NextRequest) {
     const { prisma } = await import('@/lib/db');
     const { renderSceneImage } = await import('@/lib/scene-image');
     const { GENERATE_TAG_RE } = await import('@/lib/scene-tags');
-    const { getViewer, unauthorized, forbidden, canAccessSession, can, consumeImageCredit, refundImageCredit } = await import('@/lib/access');
+    const { getViewer, unauthorized, forbidden, canAccessSession, can, consumeImageCredit, refundImageCredit, upgradeRequired, dailyLimitReached } = await import('@/lib/access');
     const { TIERS } = await import('@/lib/tiers');
     const viewer = await getViewer();
     if (!viewer) return unauthorized();
     if (!can(viewer, 'sceneImages')) {
-      return NextResponse.json(
-        { error: 'Dynamic scene images are part of the Ultimate plan.', code: 'UPGRADE_REQUIRED', feature: 'sceneImages' },
-        { status: 402 },
-      );
+      return upgradeRequired('sceneImages', 'Dynamic scene images are part of the Ultimate plan.');
     }
     const { messageId } = (await request.json()) ?? {};
     if (!messageId) return NextResponse.json({ error: 'messageId required' }, { status: 400 });
@@ -34,9 +31,10 @@ export async function POST(request: NextRequest) {
     if (!match) return NextResponse.json({ content: message.content, rendered: false });
 
     if (!(await consumeImageCredit(viewer))) {
-      return NextResponse.json(
-        { error: `You've used all ${TIERS[viewer.tier].dailyImageCredits} image credits for today. They reset at midnight UTC.`, code: 'OUT_OF_IMAGE_CREDITS' },
-        { status: 429 },
+      return dailyLimitReached(
+        'imageCredits',
+        `You've used all ${TIERS[viewer.tier].dailyImageCredits} image credits for today. They reset at midnight UTC.`,
+        viewer.tier,
       );
     }
 

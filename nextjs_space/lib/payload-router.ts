@@ -30,11 +30,14 @@ export interface PayloadPolicy {
 
 export const OUTPUT_FLOOR_TOKENS = 450;
 export const OUTPUT_CEILING_TOKENS = 600;
-/** Prompt budget for system text plus history. Distant turns are dropped to stay under this. */
-export const PROMPT_TOKEN_BUDGET = 3200;
-/** Generation cap sent as max_tokens. */
-export const OUTPUT_TOKEN_CAP = 4096;
-/** Active chat baseline: last 10 messages (5 user + 5 assistant). */
+/**
+ * Absolute hard cap for completion max_tokens (prevents runaway output cost).
+ * Provider adapters may clamp further (e.g. OpenAI-compatible bodies use 600).
+ */
+export const OUTPUT_TOKEN_CAP = 600;
+/** @deprecated Kept for older imports; input budget now scales with the plan context cap. */
+export const PROMPT_TOKEN_BUDGET = 3_200;
+/** Active chat baseline: last 10 messages (5 user + 5 assistant) before packing expands with tier budget. */
 export const BASELINE_HISTORY_TURNS = 5;
 /** Hard cap on chat turns sent to the model. Older turns stay in the database only. */
 export const HISTORY_MESSAGE_LIMIT = 10;
@@ -42,20 +45,27 @@ export const HISTORY_MESSAGE_LIMIT = 10;
 export const CONTEXT_SAFETY_RATIO = 0.95;
 
 /**
- * Every tier gets the same output band and sliding window; tiers differ by their hard context cap
- * (Free 4k, Plus 16k, Premium 32k, Ultimate 64k). Creator admins bypass plan caps and get the full
- * model window. `modelWindow` lowers the cap when the selected model has a smaller context window.
+ * Tier context caps (Free 4096 / Plus 16384 / Premium 32768 / Ultimate 65536).
+ * Sliding history packing uses nearly the full plan window minus the completion reserve.
+ * Creator admins bypass plan caps and get the full model window.
+ * `modelWindow` lowers the cap when the selected model has a smaller context window.
  */
 export function payloadPolicy(tier: TierId, isAdmin: boolean, modelWindow?: number | null): PayloadPolicy {
   const plan = TIERS[tier];
   const planCap = isAdmin ? (modelWindow && modelWindow > 0 ? modelWindow : 1_000_000) : plan.contextTokens;
   const contextCap = modelWindow && modelWindow > 0 ? Math.min(planCap, modelWindow) : planCap;
-  const inputBudget = Math.min(PROMPT_TOKEN_BUDGET, Math.max(600, contextCap));
+  const maxOutputTokens = Math.min(OUTPUT_TOKEN_CAP, OUTPUT_CEILING_TOKENS);
+  // Pre-flight: system + persona + lore + history must fit under the tier window after reserving completion.
+  const inputBudget = Math.max(600, Math.floor(contextCap * CONTEXT_SAFETY_RATIO) - maxOutputTokens);
+  const historyTurns = Math.max(
+    BASELINE_HISTORY_TURNS,
+    Math.min(HISTORY_MESSAGE_LIMIT * 4, Math.floor(inputBudget / 350)),
+  );
   return {
     mode: isAdmin || tier === 'PREMIUM' || tier === 'ULTIMATE' ? 'HIGH' : 'STANDARD',
     contextCap, inputBudget,
-    maxOutputTokens: OUTPUT_TOKEN_CAP, minOutputTokens: OUTPUT_FLOOR_TOKENS,
-    historyTurns: BASELINE_HISTORY_TURNS,
+    maxOutputTokens, minOutputTokens: OUTPUT_FLOOR_TOKENS,
+    historyTurns,
     lore: isAdmin || plan.customPrompts,
     imageTriggers: isAdmin || plan.sceneImages,
     statusTracking: true, fullPersona: true, memorySummary: true,

@@ -562,10 +562,12 @@ export function ChatView({ characterId }: ChatViewProps) {
         savedUserId = res.headers.get('X-User-Message-Id') || userMsg.id;
         keepUserMessage();
         const notice = typeof err?.error === 'string' ? err.error : 'The reply failed. Your message is still in this chat.';
-        if (res.status === 402 && err?.code === 'OUT_OF_CREDITS') {
+        if ((res.status === 429 || res.status === 402) && err?.code === 'OUT_OF_CREDITS') {
           openPaywall('credits');
         } else if (res.status === 402 && err?.feature === 'proModels') {
           openPaywall('proModels');
+        } else if (res.status === 402 && err?.feature === 'advancedGeneration') {
+          openPaywall('advancedGeneration');
         } else if (res.status === 403 && err?.code === 'NSFW_LOCKED') {
           openPaywall('nsfw');
         } else if (res.status === 401) {
@@ -813,7 +815,8 @@ export function ChatView({ characterId }: ChatViewProps) {
         const err = await res.json().catch(() => ({}));
         setCurrentModel(previous);
         setSessionModelHint(previous);
-        if (res.status === 402) openPaywall(err?.feature === 'proModels' ? 'proModels' : 'credits');
+        if (res.status === 429 && err?.code === 'OUT_OF_CREDITS') openPaywall('credits');
+        else if (res.status === 402) openPaywall(err?.feature === 'proModels' ? 'proModels' : err?.feature === 'advancedGeneration' ? 'advancedGeneration' : 'credits');
         else toast.error(err?.error ?? 'Could not change model');
       }
     } catch {

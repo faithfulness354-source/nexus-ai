@@ -6,11 +6,16 @@ export interface TierDef {
   id: TierId;
   name: string;
   price: number; // USD per month
-  /** Daily message credits; null = unlimited. 1 credit = 1 text message. */
-  dailyCredits: number | null;
+  /**
+   * Daily message credits (1 credit = 1 text message).
+   * Ultimate uses a silent soft fair-use cap (see fairUseSilent) rather than marketing a hard quota.
+   */
+  dailyCredits: number;
+  /** When true, UI treats text credits as unlimited; server still enforces dailyCredits. */
+  fairUseSilent?: boolean;
   /** Daily image/scene generation credits (0 = none). */
   dailyImageCredits: number;
-  /** Max context tokens sent to the model (memory allocation). */
+  /** Max context tokens sent to the model (system + history + reserved completion). */
   contextTokens: number;
   speed: 'standard' | 'fast' | 'priority' | 'priority-queue';
   customPrompts: boolean; // custom system prompts + lorebooks
@@ -24,24 +29,24 @@ export interface TierDef {
 
 export const TIERS: Record<TierId, TierDef> = {
   FREE: {
-    id: 'FREE', name: 'Free', price: 0, dailyCredits: 50, dailyImageCredits: 0, contextTokens: 4_000, speed: 'standard',
+    id: 'FREE', name: 'Free', price: 0, dailyCredits: 50, dailyImageCredits: 0, contextTokens: 4_096, speed: 'standard',
     customPrompts: false, advancedGeneration: false, proModels: false, nsfw: false, sceneImages: false, vipThemes: false,
-    features: ['50 daily credits (1 credit = 1 message)', 'Standard response speed', '4k context window'],
+    features: ['50 daily credits (1 credit = 1 message)', 'Standard response speed', '4,096-token context window'],
   },
   PLUS: {
-    id: 'PLUS', name: 'Plus', price: 9.99, dailyCredits: 500, dailyImageCredits: 0, contextTokens: 16_000, speed: 'fast',
+    id: 'PLUS', name: 'Plus', price: 9.99, dailyCredits: 500, dailyImageCredits: 0, contextTokens: 16_384, speed: 'fast',
     customPrompts: true, advancedGeneration: false, proModels: false, nsfw: false, sceneImages: false, vipThemes: false,
-    features: ['500 daily credits', 'Fast response speed', 'Lorebooks & custom system prompts', '16k context window'],
+    features: ['500 daily credits', 'Fast response speed', 'Lorebooks & custom system prompts', '16,384-token context window'],
   },
   PREMIUM: {
-    id: 'PREMIUM', name: 'Premium', price: 19.99, dailyCredits: 2_000, dailyImageCredits: 0, contextTokens: 32_000, speed: 'priority',
+    id: 'PREMIUM', name: 'Premium', price: 19.99, dailyCredits: 2_000, dailyImageCredits: 0, contextTokens: 32_768, speed: 'priority',
     customPrompts: true, advancedGeneration: true, proModels: true, nsfw: true, sceneImages: false, vipThemes: false,
-    features: ['2,000 daily credits', 'High-speed priority routing', 'Advanced sampling sliders (Temperature / Top-P)', '32k context window', '18+ NSFW content access'],
+    features: ['2,000 daily credits', 'High-speed priority routing', 'Advanced sampling sliders (Temperature / Top-P)', '32,768-token context window', '18+ NSFW content access'],
   },
   ULTIMATE: {
-    id: 'ULTIMATE', name: 'Ultimate', price: 49.99, dailyCredits: null, dailyImageCredits: 100, contextTokens: 64_000, speed: 'priority-queue',
+    id: 'ULTIMATE', name: 'Ultimate', price: 49.99, dailyCredits: 10_000, fairUseSilent: true, dailyImageCredits: 100, contextTokens: 65_536, speed: 'priority-queue',
     customPrompts: true, advancedGeneration: true, proModels: true, nsfw: true, sceneImages: true, vipThemes: true,
-    features: ['Unlimited text generations', '100 daily image / scene credits', 'Maximum 64k context window', 'Priority queue routing', 'Dynamic inline scene rendering', 'VIP profile themes & badge', 'Everything in Premium, incl. 18+ access'],
+    features: ['Unlimited text generations', '100 daily image / scene credits', 'Maximum 65,536-token context window', 'Priority queue routing', 'Dynamic inline scene rendering', 'VIP profile themes & badge', 'Everything in Premium, incl. 18+ access'],
   },
 };
 
@@ -79,9 +84,9 @@ export interface AccessStatus {
   isCreatorAdmin: boolean; // whitelisted CREATOR_ADMIN only; gates API settings
   avatarUrl: string | null; // User.image (profile avatar), shown in the header
   tier: TierId;
-  dailyCredits: number | null; // null = unlimited
+  dailyCredits: number | null; // null = unlimited / silent fair-use
   creditsUsed: number;
-  creditsRemaining: number | null; // null = unlimited
+  creditsRemaining: number | null; // null = unlimited / silent fair-use
   dailyImageCredits: number | null; // null = unlimited (admins)
   imageCreditsUsed: number;
   imageCreditsRemaining: number | null;
@@ -91,5 +96,9 @@ export interface AccessStatus {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   paymentsConfigured: boolean;
+  /** Public live PayPal app id used to load the checkout SDK. */
+  paypalClientId: string;
+  /** Saved profile preference. Adult cards stay hidden until this is on and the plan allows them. */
+  nsfwEnabled: boolean;
   can: Record<TierFeature, boolean>;
 }
