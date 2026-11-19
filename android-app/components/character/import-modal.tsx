@@ -57,11 +57,21 @@ export function ImportModal({ open, onClose, onImported }: ImportModalProps) {
   const [error, setError] = useState('');
   const [report, setReport] = useState<Report | null>(null);
 
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  if (previewFile !== file) {
+    setPreviewFile(file);
+    if (!file || !file.type.startsWith('image/')) setPreview(null);
+  }
+
   useEffect(() => {
-    if (!file || !file.type.startsWith('image/')) { setPreview(null); return; }
+    if (!file || !file.type.startsWith('image/')) return;
     const u = URL.createObjectURL(file);
-    setPreview(u);
-    return () => URL.revokeObjectURL(u);
+    let cancel = false;
+    queueMicrotask(() => { if (!cancel) setPreview(u); });
+    return () => {
+      cancel = true;
+      URL.revokeObjectURL(u);
+    };
   }, [file]);
 
   const busy = phase === 'sending' || phase === 'parsing';
@@ -112,6 +122,9 @@ export function ImportModal({ open, onClose, onImported }: ImportModalProps) {
       setPhase('parsing');
       if (status === 403 && data?.code === 'NSFW_LOCKED') {
         throw new Error('This card is tagged NSFW. Importing NSFW characters needs age verification and a paid plan.');
+      }
+      if (status === 400 && data?.code === 'SFW_VIOLATION') {
+        throw new Error(data?.message || data?.error || 'This falls under NSFW content and cannot be applied to SFW fields. Re-import with the card marked NSFW, or edit the card text/image.');
       }
       if (status === 401) throw new Error('Please sign in to import characters.');
       if (status < 200 || status >= 300) throw new Error(data?.error ?? 'Import failed');

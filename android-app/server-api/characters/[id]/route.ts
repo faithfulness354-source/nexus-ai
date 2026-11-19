@@ -1,9 +1,18 @@
 export const dynamic = "force-dynamic";
+import { revalidatePath } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, forbidden, canEditCharacter, can, canViewNsfw, nsfwLocked } from '@/lib/access';
+import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
+import { adultCardsEnabled } from '@/lib/nsfw-account';
+import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
+import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
+import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
+import { refreshCharacterVisual } from '@/lib/vision/vlm';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -22,9 +31,10 @@ function parseStoredTags(value: unknown): string[] {
 function presentCharacter(character: any, includeAudio: boolean) {
   return {
     ...character,
+    nsfw: !!character.nsfw || characterImpliesNsfw(character),
     tags: parseStoredTags(character.tags),
     audioUrl: includeAudio ? character.audioUrl ?? '' : '',
-    firstMessage: character.initialMessage ?? character.firstMessage ?? '',
+    firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }),
   };
 }
 
@@ -51,6 +61,7 @@ async function requireEditor(id: string) {
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await ensureVisualColumns();
     const { id } = await params;
     const character = await prisma.character.findUnique({ where: { id } });
     if (!character) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -58,9 +69,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     if (!canViewCharacter(viewer ? { isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id } : null, character)) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    if (character.nsfw && !canViewNsfw(viewer)) return nsfwLocked();
+    if ((character.nsfw || characterImpliesNsfw(character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
     const includeAudio = !!viewer && canEditCharacter(viewer, character);
-    return NextResponse.json(presentCharacter(character, includeAudio));
+    return NextResponse.json(presentCharacter(character, includeAudio), {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (err: any) {
     console.error('GET /api/characters/[id] error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });
@@ -73,7 +86,50 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const viewer = await requireEditor(id);
     if (viewer instanceof Response) return viewer;
     const body = await request.json();
-    if (body?.nsfw === true && !canViewNsfw(viewer)) return nsfwLocked();
+    const fullCard = body?.name !== undefined || body?.summary !== undefined || body?.personality !== undefined || body?.scenario !== undefined;
+    const touchesRating = fullCard || typeof body?.nsfw === 'boolean' || body?.gallery !== undefined
+      || body?.initialMessage !== undefined || body?.firstMessage !== undefined
+      || body?.exampleDialogue !== undefined || body?.systemPrompt !== undefined || body?.creatorNotes !== undefined;
+
+    let nsfwUpdate: boolean | undefined;
+    if (touchesRating) {
+      const existing = await prisma.character.findUnique({ where: { id } });
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      const merged = {
+        name: body?.name ?? existing.name,
+        title: body?.title ?? existing.title,
+        summary: body?.summary ?? existing.summary,
+        personality: body?.personality ?? existing.personality,
+        scenario: body?.scenario ?? existing.scenario,
+        initialMessage: body?.initialMessage ?? body?.firstMessage ?? existing.initialMessage,
+        exampleDialogue: body?.exampleDialogue ?? existing.exampleDialogue,
+        creatorNotes: body?.creatorNotes ?? existing.creatorNotes,
+        systemPrompt: body?.systemPrompt ?? existing.systemPrompt,
+        tags: body?.tags ?? existing.tags,
+        gallery: body?.gallery ?? existing.gallery,
+      };
+      const rating = rateCharacterContent(merged);
+      const wantsNsfw = body?.nsfw === true;
+      // Declaring SFW while the card still contains NSFW material is blocked before save.
+      if (!wantsNsfw && rating.isNsfw) return sfwViolationResponse(rating);
+      nsfwUpdate = wantsNsfw || rating.isNsfw;
+      if (nsfwUpdate && !canViewNsfw(viewer)) return nsfwLocked();
+
+      const prohibited = moderateGenerationText(
+        merged.name, merged.summary, merged.personality, merged.scenario,
+        merged.initialMessage, merged.exampleDialogue, merged.systemPrompt, merged.creatorNotes,
+      );
+      if (!prohibited.allowed) {
+        await logModerationFlag({
+          userId: viewer.user.id,
+          route: '/api/characters/[id]',
+          category: prohibited.category || 'illegal',
+          matched: prohibited.matched,
+        });
+        return moderationBlockedResponse(prohibited);
+      }
+    }
+
     const audioUrl = body?.audioUrl === undefined ? undefined : normalizeAudioUrl(body.audioUrl);
     if (audioUrl === '' && String(body?.audioUrl ?? '').trim()) {
       return NextResponse.json({ error: 'Use Choose audio to add an mp3. A computer file path is not saved.' }, { status: 400 });
@@ -85,12 +141,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         title: body?.title === undefined ? undefined : String(body.title).trim(),
         gallery: Array.isArray(body?.gallery) ? body.gallery : undefined,
         sceneImages: typeof body?.sceneImages === 'boolean' ? body.sceneImages : undefined,
-        summary: body?.summary,
-        personality: body?.personality,
-        scenario: body?.scenario,
-        initialMessage: body?.firstMessage === undefined && body?.initialMessage === undefined
-          ? undefined
-          : String(body?.firstMessage ?? body?.initialMessage ?? ''),
+        summary: savedStaticField(body, 'summary'),
+        personality: savedStaticField(body, 'personality'),
+        scenario: savedStaticField(body, 'scenario'),
+        initialMessage: savedFirstMessage(body),
         exampleDialogue: body?.exampleDialogue,
         customRules: body?.customRules,
         systemPrompt: can(viewer, 'customPrompts') ? body?.systemPrompt : undefined,
@@ -100,12 +154,27 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         banner: body?.banner === undefined ? undefined : body.banner || null,
         audioUrl,
         creator: body?.creator === undefined ? undefined : (String(body.creator).trim() || 'Anonymous'),
-        nsfw: typeof body?.nsfw === 'boolean' ? body.nsfw : undefined,
+        nsfw: nsfwUpdate,
         visibility: body?.visibility === undefined ? undefined : (parseVisibility(body.visibility) ?? undefined),
         moderated: viewer.isCreatorAdmin && typeof body?.moderated === 'boolean' ? body.moderated : undefined,
       },
     });
-    return NextResponse.json(character);
+    if (body?.avatar !== undefined) void refreshCharacterVisual(character.id, character.avatar);
+    revalidatePath(`/characters/${id}`);
+    revalidatePath(`/characters/${id}/chat`);
+    revalidatePath(`/characters/${id}/edit`);
+    try {
+      await syncCharacterToCloud(character, viewer.user);
+    } catch (error) {
+      console.error('Character cloud sync failed', error instanceof Error ? error.message : '');
+      return NextResponse.json(
+        { error: 'The card was saved, but Supabase did not store the bio, scenario, personality, and first message.' },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json({ ...character, firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }) }, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (err: any) {
     console.error('PUT /api/characters/[id] error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });
@@ -118,6 +187,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     const viewer = await requireEditor(id);
     if (viewer instanceof Response) return viewer;
     await prisma.character.delete({ where: { id } });
+    void deleteCharacterFromCloud(id, viewer.user);
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('DELETE /api/characters/[id] error:', err);

@@ -3,13 +3,25 @@ import type { LegalPolicy } from './types';
 export const terms: LegalPolicy = {
   title: 'Terms of Service',
   pageTitle: 'Terms of Service · NexusAI',
-  effective: 'October 8, 2026',
+  effective: 'November 19, 2026',
   sections: [
     {
       title: 'Agreement',
       blocks: [
-        { kind: 'p', text: 'These Terms are the user agreement between you and Nexus AI. By creating an account, checking the age-and-terms box, or using the site, you agree to these Terms, the [[Privacy Policy|/privacy]], and the [[Acceptable Use Policy|/guidelines]].' },
+        { kind: 'p', text: 'These Terms are the user agreement between you and Nexus AI. By creating an account, checking the age-and-terms box, or using the site, you agree to these Terms, the [[Privacy Policy|/privacy]], the [[Prohibited Content & Use Rules|/prohibited-content]], and the [[Acceptable Use Policy|/guidelines]].' },
         { kind: 'p', text: 'Nexus AI is a fictional roleplay service for adults. You must be at least 18 years old to register or use it.' },
+        { kind: 'p', text: 'Paid plans are sold through SubscribeStar.adult. After purchasing, link your SubscribeStar account in Nexus AI Settings so your tier unlocks. Refund requests are handled by SubscribeStar support ([[Refund Policy|/refund-policy]]).' },
+      ],
+    },
+    {
+      title: 'SFW and NSFW content ratings',
+      blocks: [
+        { kind: 'p', text: 'Character cards, images, and text fields must be rated accurately:' },
+        { kind: 'list', items: [
+          '**NSFW** — (a) visual nudity: outwardly exposed bare breasts/nipples, genitalia, or bare buttocks; or (b) explicit sexual text in dialogue, descriptions, bios, greetings, or scenarios (even if the image is clothed).',
+          '**SFW** — non-sexual cards where the character is clothed. High-slit dresses/nightgowns, bare hips, bikini-style armor, and sheer/semi-translucent fabrics are allowed on SFW when nipples, genitalia, bare buttocks, and explicit pelvic outlines are not visible and the text is non-sexual.',
+        ] },
+        { kind: 'p', text: 'Saving or publishing SFW-marked content that violates the SFW rules is blocked. You will see: “This falls under NSFW content and cannot be applied to SFW fields.” You may switch the card to NSFW if you meet the age and plan requirements, or edit the content to comply with SFW. Full detail is in [[Prohibited Content|/prohibited-content]].' },
       ],
     },
     {
@@ -30,8 +42,8 @@ export const terms: LegalPolicy = {
     {
       title: 'Fictional adult content that is allowed',
       blocks: [
-        { kind: 'p', text: 'Nexus AI allows fictional adult roleplay. Dark fantasy, dubious consent (dub-con), non-consent (non-con), and Dead Dove themes are allowed when every character involved is a fictional adult. Original adult and NSFW character cards are allowed and may stay on the platform.' },
-        { kind: 'p', text: 'Dead Dove means the work is tagged so readers know it contains extreme fictional themes. Those themes stay allowed only for fictional characters who are adults. Sexual, romantic, or intimate content involving anyone under 18 is prohibited, including fictional minors. The full list of what is prohibited and what is protected is in the Acceptable Use Policy.' },
+        { kind: 'p', text: 'Nexus AI allows fictional adult roleplay. Dark fantasy, dubious consent (dub-con), non-consent (non-con), and Dead Dove themes are allowed when every character involved is a fictional adult. Original adult and NSFW character cards are allowed when correctly rated NSFW and may stay on the platform.' },
+        { kind: 'p', text: 'Dead Dove means the work is tagged so readers know it contains extreme fictional themes. Those themes stay allowed only for fictional characters who are adults. Sexual, romantic, or intimate content involving anyone under 18 is prohibited, including fictional minors. The full list of what is prohibited and what is protected is in the Acceptable Use Policy and [[Prohibited Content|/prohibited-content]].' },
       ],
     },
     {

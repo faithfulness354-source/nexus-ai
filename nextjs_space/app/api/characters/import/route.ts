@@ -4,6 +4,8 @@ import { prisma } from '@/lib/db';
 import { normalizeCard } from '@/lib/card-parser';
 import { ImportError, ImportResult, importFromUrl, parseCardBytes, storeAvatar } from '@/lib/card-import-server';
 import { getViewer, unauthorized, can, canViewNsfw, nsfwLocked } from '@/lib/access';
+import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
+import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 
 const MAX_UPLOAD = 15 * 1024 * 1024;
 
@@ -34,7 +36,24 @@ export async function POST(request: NextRequest) {
     }
 
     const { card } = result;
-    if (card.nsfw && !canViewNsfw(viewer)) return nsfwLocked();
+    const rating = rateCharacterContent(card);
+    const wantsNsfw = card.nsfw === true;
+    if (!wantsNsfw && rating.isNsfw) return sfwViolationResponse(rating);
+    const nsfwCard = wantsNsfw || rating.isNsfw;
+    if (nsfwCard && !canViewNsfw(viewer)) return nsfwLocked();
+    const prohibited = moderateGenerationText(
+      card.name, card.summary, card.personality, card.scenario,
+      card.initialMessage, card.exampleDialogue, card.systemPrompt, card.creatorNotes,
+    );
+    if (!prohibited.allowed) {
+      await logModerationFlag({
+        userId: viewer.user.id,
+        route: '/api/characters/import',
+        category: prohibited.category || 'illegal',
+        matched: prohibited.matched,
+      });
+      return moderationBlockedResponse(prohibited);
+    }
     const avatar = await storeAvatar(result.avatarPng, card.name).catch((err) => {
       console.error('Avatar upload failed during import:', err);
       return null;
@@ -56,7 +75,7 @@ export async function POST(request: NextRequest) {
         tags: Array.isArray(card.tags) ? card.tags.join(',') : '',
         avatar,
         creator: card.creator,
-        nsfw: card.nsfw,
+        nsfw: nsfwCard,
         visibility: 'PRIVATE',
         moderated: false,
       },

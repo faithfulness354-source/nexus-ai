@@ -18,7 +18,7 @@ import { mediaVersionUrl } from '@/lib/media-src';
 import { GalleryEditor } from './gallery-editor';
 import { RoleplayText } from '@/components/chat/roleplay-text';
 import { estimateTokens } from '@/lib/tokens';
-import { imageForCard, uploadProfileAudio } from '@/lib/upload-client';
+import { uploadImage, uploadProfileAudio } from '@/lib/upload-client';
 import type { GalleryImage } from '@/lib/types';
 import { useAccess } from '@/components/billing/access-provider';
 import { Lock } from 'lucide-react';
@@ -26,7 +26,7 @@ import { RichTextEditor } from '@/components/editor/rich-text-editor';
 import { RichContent } from '@/components/editor/rich-content';
 import { escapeHtml, looksLikeHtml, textToHtml } from '@/lib/rich-text';
 import { CARD_VISIBILITIES, visibilityBadgeClass, visibilityLabel, type CardVisibility } from '@/lib/card-visibility';
-import { textImpliesNsfw } from '@/lib/nsfw-notice';
+import { rateCharacterContent, SFW_VIOLATION_MESSAGE } from '@/lib/content-rating';
 
 interface CharacterFormProps {
   initialData?: any;
@@ -157,21 +157,16 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
 
   const [form, setForm] = useState(() => initialForm(initialData));
   const formRef = useRef(form);
-  formRef.current = form;
-  const dirtyRef = useRef(false);
+  useEffect(() => { formRef.current = form; }, [form]);
   // Draft persistence (create mode only): restore once on mount, then auto-save on every change.
   const isCreate = mode === 'create';
   const loadedId = initialData?.id as string | undefined;
   // Hydrate once per card. A later parent render must not wipe an audio path the user just chose.
-  const hydratedId = useRef<string | undefined>(loadedId);
-
-  // Edit pages can pass the record after the first render. Copy every saved field into the inputs.
-  useEffect(() => {
-    if (isCreate || !initialData || !loadedId) return;
-    if (hydratedId.current === loadedId) return;
-    hydratedId.current = loadedId;
+  const [hydratedId, setHydratedId] = useState(loadedId);
+  if (!isCreate && initialData && loadedId && hydratedId !== loadedId) {
+    setHydratedId(loadedId);
     setForm(initialForm(initialData));
-  }, [isCreate, loadedId, initialData]);
+  }
 
   useEffect(() => {
     if (isCreate || initialData || !characterId) return;
@@ -186,40 +181,20 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
   }, [isCreate, characterId, initialData]);
   const [draftReady, setDraftReady] = useState(false);
   const [dirty, setDirty] = useState(false);
-  dirtyRef.current = dirty;
-
-  useEffect(() => {
-    if (isCreate) return;
-    const id = characterId || loadedId;
-    if (!id) return;
-    function onRevision() {
-      if (dirtyRef.current) return;
-      fetch(`/api/characters/${id}`)
-        .then((response) => (response.ok ? response.json() : null))
-        .then((data) => {
-          if (data && !data.error && !dirtyRef.current) setForm(initialForm(data));
-        })
-        .catch(() => {});
-    }
-    window.addEventListener('nexus:cloud-revision', onRevision);
-    return () => window.removeEventListener('nexus:cloud-revision', onRevision);
-  }, [isCreate, characterId, loadedId]);
-
-  useEffect(() => {
-    if (!isCreate) return;
+  const dirtyRef = useRef(false);
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  if (isCreate && !draftReady && typeof window !== 'undefined') {
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && typeof saved === 'object') {
         const restored = initialForm(undefined);
         for (const k of Object.keys(restored) as FormKey[]) {
-          // NSFW always starts OFF (age gate) and is never restored from a draft.
           if (k === 'nsfw' || saved[k] === undefined) continue;
           const sameType = Array.isArray(restored[k]) ? Array.isArray(saved[k]) : typeof saved[k] === typeof restored[k];
           if (sameType) (restored as any)[k] = saved[k];
         }
         if (hasContent(restored)) {
-          formRef.current = restored;
           setForm(restored);
           setDirty(true);
           toast.info('Restored your unsaved character draft.');
@@ -229,7 +204,42 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       console.error('Failed to restore character draft:', err);
     }
     setDraftReady(true);
-  }, [isCreate]);
+  }
+
+  useEffect(() => {
+    if (isCreate) return;
+    const id = characterId || loadedId;
+    if (!id) return;
+    function onCloud(event: Event) {
+      const detail = (event as CustomEvent<{ table?: string; localId?: string }>).detail;
+      if (!detail) return;
+      if (detail.table === 'characters' && detail.localId !== id) return;
+      if (detail.table === 'scenarios' && detail.localId !== `${id}:scenario`) return;
+      if (detail.table !== 'characters' && detail.table !== 'scenarios') return;
+      if (dirtyRef.current) return;
+      fetch(`/api/characters/${id}`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (data && !data.error && !dirtyRef.current) setForm(initialForm(data));
+        })
+        .catch(() => {});
+    }
+    function onRevision() {
+      if (dirtyRef.current) return;
+      fetch(`/api/characters/${id}`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (data && !data.error && !dirtyRef.current) setForm(initialForm(data));
+        })
+        .catch(() => {});
+    }
+    window.addEventListener('nexus:cloud-sync', onCloud);
+    window.addEventListener('nexus:cloud-revision', onRevision);
+    return () => {
+      window.removeEventListener('nexus:cloud-sync', onCloud);
+      window.removeEventListener('nexus:cloud-revision', onRevision);
+    };
+  }, [isCreate, characterId, loadedId]);
 
   useEffect(() => {
     if (!isCreate || !draftReady) return;
@@ -284,13 +294,20 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     setDirty(true);
   }
 
-  const autoNsfw = textImpliesNsfw(
-    form.name, form.title, form.summary, form.personality, form.scenario, form.initialMessage,
-    form.exampleDialogue, form.creatorNotes, form.systemPrompt, form.tags, form.gallery,
-  );
-  useEffect(() => {
-    if (autoNsfw && !formRef.current.nsfw) updateField('nsfw', true);
-  }, [autoNsfw]);
+  const contentRating = rateCharacterContent({
+    name: form.name,
+    title: form.title,
+    summary: form.summary,
+    personality: form.personality,
+    scenario: form.scenario,
+    initialMessage: form.initialMessage,
+    exampleDialogue: form.exampleDialogue,
+    creatorNotes: form.creatorNotes,
+    systemPrompt: form.systemPrompt,
+    tags: form.tags,
+    gallery: form.gallery,
+  });
+  const needsNsfwRating = contentRating.isNsfw && !form.nsfw;
 
   function insertSnippet(text: string) {
     // The definition is rich text (HTML); append the snippet as escaped paragraphs.
@@ -369,7 +386,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     if (!file) return;
     setAvatarUploading(true);
     try {
-      const up = await imageForCard(file, 'avatar');
+      const up = await uploadImage(file, 'avatar');
       updateField('avatar', up.url);
       updateField('banner', up.url);
       toast.success('Main card image saved');
@@ -379,6 +396,56 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     } finally {
       setAvatarUploading(false);
       if (avatarInput.current) avatarInput.current.value = '';
+    }
+  }
+
+  async function persistCard(nsfwOverride?: boolean) {
+    const url = mode === 'edit' ? `/api/characters/${initialData?.id}` : '/api/characters';
+    const payload = {
+      ...form,
+      nsfw: nsfwOverride ?? form.nsfw,
+      firstMessage: form.initialMessage,
+      tags: mergeTags(form.tags, tagInput),
+    };
+    const res = await fetch(url, {
+      method: mode === 'edit' ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = Object.assign(new Error(body?.error ?? body?.message ?? 'Save failed'), {
+        code: body?.code,
+        canSwitchToNsfw: body?.canSwitchToNsfw === true,
+        reasons: body?.reasons,
+      });
+      throw err;
+    }
+    return body;
+  }
+
+  async function switchToNsfwAndSave() {
+    const ok = await requestNsfw();
+    if (!ok) {
+      toast.error('NSFW cards need age verification and a Premium or Ultimate plan.');
+      return;
+    }
+    updateField('nsfw', true);
+    setLoading(true);
+    try {
+      const saved = await persistCard(true);
+      if (!saved?.id) throw new Error('Save did not return the character');
+      if (isCreate) clearDraft();
+      setDirty(false);
+      toast.success('Saved as NSFW');
+      window.dispatchEvent(new Event('nexus:cloud-revision'));
+      queueNovelAiSync('character', saved.id);
+      router.refresh();
+      router.push(`/characters/${saved.id}/chat`);
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Failed to save');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -393,32 +460,31 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     }
     setLoading(true);
     try {
-      const url = mode === 'edit' ? `/api/characters/${initialData?.id}` : '/api/characters';
-      const res = await fetch(url, {
-        method: mode === 'edit' ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // A typed-but-not-yet-added tag is saved too, so nothing in the input is lost.
-        body: JSON.stringify({
-          ...form,
-          firstMessage: form.initialMessage,
-          tags: mergeTags(form.tags, tagInput),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? 'Save failed');
-      }
-      const saved = await res.json();
+      const saved = await persistCard();
       if (!saved?.id) throw new Error('Save did not return the character');
       // Draft is only discarded after the server confirms the save.
       if (isCreate) clearDraft();
       setDirty(false);
       toast.success(mode === 'edit' ? 'Character updated!' : 'Character created!');
-      queueNovelAiSync('character', saved.id);
       window.dispatchEvent(new Event('nexus:cloud-revision'));
+      queueNovelAiSync('character', saved.id);
+      router.refresh();
       router.push(`/characters/${saved.id}/chat`);
     } catch (err: any) {
-      toast.error(err?.message ?? 'Failed to save');
+      if (err?.code === 'SFW_VIOLATION' || err?.canSwitchToNsfw) {
+        toast.error(SFW_VIOLATION_MESSAGE, {
+          description: Array.isArray(err?.reasons) && err.reasons[0]
+            ? String(err.reasons[0])
+            : (err?.message || 'Mark this card NSFW to continue, or remove the violating content.'),
+          duration: 12_000,
+          action: {
+            label: 'Switch to NSFW & save',
+            onClick: () => { void switchToNsfwAndSave(); },
+          },
+        });
+      } else {
+        toast.error(err?.message ?? 'Failed to save');
+      }
     } finally {
       setLoading(false);
     }
@@ -468,10 +534,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
   const totalTokens = estimateTokens([form.personality, form.scenario, form.exampleDialogue, form.systemPrompt].join('\n'));
 
   return (
-    <div
-      className="max-w-3xl mx-auto py-6 sm:py-8 px-4"
-      style={{ paddingBottom: mode === 'edit' ? 'calc(env(safe-area-inset-bottom, 0px) + 7.5rem)' : '6rem' }}
-    >
+    <div className="card-form max-w-3xl mx-auto px-4 py-6 sm:py-8">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-2 min-w-0">
@@ -715,9 +778,23 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
             </div>
           )}
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Switch checked={form.nsfw || autoNsfw} disabled={autoNsfw} onCheckedChange={async (v: boolean) => { if (!v && autoNsfw) return; updateField('nsfw', v ? await requestNsfw() : false); }} />
+            <Switch
+              checked={form.nsfw}
+              onCheckedChange={async (v: boolean) => {
+                updateField('nsfw', v ? await requestNsfw() : false);
+              }}
+            />
             <Label>NSFW content</Label>
-            {autoNsfw && <p className="w-full text-xs text-rose-300">NSFW notice added because this card mentions nudity, underwear, or lingerie.</p>}
+            <p className="w-full text-xs text-muted-foreground">
+              NSFW means exposed bare breasts/nipples, genitalia, or bare buttocks, or sexually explicit text.
+              High-slit dresses, bare hips, bikini armor, and sheer fabrics stay SFW when those areas are covered and the text is non-sexual.
+            </p>
+            {needsNsfwRating && (
+              <p className="w-full rounded-lg bg-rose-500/15 px-3 py-2 text-xs text-rose-200 ring-1 ring-rose-400/30">
+                <strong>{SFW_VIOLATION_MESSAGE}</strong>
+                {contentRating.reasons[0] ? ` ${contentRating.reasons[0]}` : ''} Turn on NSFW to save, or remove the violating content.
+              </p>
+            )}
           </div>
         </Section>
 

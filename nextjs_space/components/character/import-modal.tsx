@@ -123,6 +123,9 @@ export function ImportModal({ open, onClose, onImported }: ImportModalProps) {
       if (status === 403 && data?.code === 'NSFW_LOCKED') {
         throw new Error('This card is tagged NSFW. Importing NSFW characters needs age verification and a paid plan.');
       }
+      if (status === 400 && data?.code === 'SFW_VIOLATION') {
+        throw new Error(data?.message || data?.error || 'This falls under NSFW content and cannot be applied to SFW fields. Re-import with the card marked NSFW, or edit the card text/image.');
+      }
       if (status === 401) throw new Error('Please sign in to import characters.');
       if (status < 200 || status >= 300) throw new Error(data?.error ?? 'Import failed');
       setReport(data);

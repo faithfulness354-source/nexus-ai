@@ -26,7 +26,7 @@ import { RichTextEditor } from '@/components/editor/rich-text-editor';
 import { RichContent } from '@/components/editor/rich-content';
 import { escapeHtml, looksLikeHtml, textToHtml } from '@/lib/rich-text';
 import { CARD_VISIBILITIES, visibilityBadgeClass, visibilityLabel, type CardVisibility } from '@/lib/card-visibility';
-import { textImpliesNsfw } from '@/lib/nsfw-notice';
+import { rateCharacterContent, SFW_VIOLATION_MESSAGE } from '@/lib/content-rating';
 
 interface CharacterFormProps {
   initialData?: any;
@@ -294,13 +294,20 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     setDirty(true);
   }
 
-  const autoNsfw = textImpliesNsfw(
-    form.name, form.title, form.summary, form.personality, form.scenario, form.initialMessage,
-    form.exampleDialogue, form.creatorNotes, form.systemPrompt, form.tags, form.gallery,
-  );
-  useEffect(() => {
-    if (autoNsfw && !formRef.current.nsfw) updateField('nsfw', true);
-  }, [autoNsfw]);
+  const contentRating = rateCharacterContent({
+    name: form.name,
+    title: form.title,
+    summary: form.summary,
+    personality: form.personality,
+    scenario: form.scenario,
+    initialMessage: form.initialMessage,
+    exampleDialogue: form.exampleDialogue,
+    creatorNotes: form.creatorNotes,
+    systemPrompt: form.systemPrompt,
+    tags: form.tags,
+    gallery: form.gallery,
+  });
+  const needsNsfwRating = contentRating.isNsfw && !form.nsfw;
 
   function insertSnippet(text: string) {
     // The definition is rich text (HTML); append the snippet as escaped paragraphs.
@@ -392,6 +399,56 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     }
   }
 
+  async function persistCard(nsfwOverride?: boolean) {
+    const url = mode === 'edit' ? `/api/characters/${initialData?.id}` : '/api/characters';
+    const payload = {
+      ...form,
+      nsfw: nsfwOverride ?? form.nsfw,
+      firstMessage: form.initialMessage,
+      tags: mergeTags(form.tags, tagInput),
+    };
+    const res = await fetch(url, {
+      method: mode === 'edit' ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = Object.assign(new Error(body?.error ?? body?.message ?? 'Save failed'), {
+        code: body?.code,
+        canSwitchToNsfw: body?.canSwitchToNsfw === true,
+        reasons: body?.reasons,
+      });
+      throw err;
+    }
+    return body;
+  }
+
+  async function switchToNsfwAndSave() {
+    const ok = await requestNsfw();
+    if (!ok) {
+      toast.error('NSFW cards need age verification and a Premium or Ultimate plan.');
+      return;
+    }
+    updateField('nsfw', true);
+    setLoading(true);
+    try {
+      const saved = await persistCard(true);
+      if (!saved?.id) throw new Error('Save did not return the character');
+      if (isCreate) clearDraft();
+      setDirty(false);
+      toast.success('Saved as NSFW');
+      window.dispatchEvent(new Event('nexus:cloud-revision'));
+      queueNovelAiSync('character', saved.id);
+      router.refresh();
+      router.push(`/characters/${saved.id}/chat`);
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Failed to save');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSubmit() {
     if (!form.name.trim()) {
       toast.error('Character name is required');
@@ -403,22 +460,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     }
     setLoading(true);
     try {
-      const url = mode === 'edit' ? `/api/characters/${initialData?.id}` : '/api/characters';
-      const res = await fetch(url, {
-        method: mode === 'edit' ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // A typed-but-not-yet-added tag is saved too, so nothing in the input is lost.
-        body: JSON.stringify({
-          ...form,
-          firstMessage: form.initialMessage,
-          tags: mergeTags(form.tags, tagInput),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? 'Save failed');
-      }
-      const saved = await res.json();
+      const saved = await persistCard();
       if (!saved?.id) throw new Error('Save did not return the character');
       // Draft is only discarded after the server confirms the save.
       if (isCreate) clearDraft();
@@ -429,7 +471,20 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
       router.refresh();
       router.push(`/characters/${saved.id}/chat`);
     } catch (err: any) {
-      toast.error(err?.message ?? 'Failed to save');
+      if (err?.code === 'SFW_VIOLATION' || err?.canSwitchToNsfw) {
+        toast.error(SFW_VIOLATION_MESSAGE, {
+          description: Array.isArray(err?.reasons) && err.reasons[0]
+            ? String(err.reasons[0])
+            : (err?.message || 'Mark this card NSFW to continue, or remove the violating content.'),
+          duration: 12_000,
+          action: {
+            label: 'Switch to NSFW & save',
+            onClick: () => { void switchToNsfwAndSave(); },
+          },
+        });
+      } else {
+        toast.error(err?.message ?? 'Failed to save');
+      }
     } finally {
       setLoading(false);
     }
@@ -723,9 +778,23 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
             </div>
           )}
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Switch checked={form.nsfw || autoNsfw} disabled={autoNsfw} onCheckedChange={async (v: boolean) => { if (!v && autoNsfw) return; updateField('nsfw', v ? await requestNsfw() : false); }} />
+            <Switch
+              checked={form.nsfw}
+              onCheckedChange={async (v: boolean) => {
+                updateField('nsfw', v ? await requestNsfw() : false);
+              }}
+            />
             <Label>NSFW content</Label>
-            {autoNsfw && <p className="w-full text-xs text-rose-300">NSFW notice added because this card mentions nudity, underwear, or lingerie.</p>}
+            <p className="w-full text-xs text-muted-foreground">
+              NSFW means exposed bare breasts/nipples, genitalia, or bare buttocks, or sexually explicit text.
+              High-slit dresses, bare hips, bikini armor, and sheer fabrics stay SFW when those areas are covered and the text is non-sexual.
+            </p>
+            {needsNsfwRating && (
+              <p className="w-full rounded-lg bg-rose-500/15 px-3 py-2 text-xs text-rose-200 ring-1 ring-rose-400/30">
+                <strong>{SFW_VIOLATION_MESSAGE}</strong>
+                {contentRating.reasons[0] ? ` ${contentRating.reasons[0]}` : ''} Turn on NSFW to save, or remove the violating content.
+              </p>
+            )}
           </div>
         </Section>
 

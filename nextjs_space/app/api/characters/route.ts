@@ -8,10 +8,12 @@ import { syncCharacterToCloud } from '@/lib/supabase/sync';
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { pullCloudLibrary } from '@/lib/supabase/apply';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -112,8 +114,27 @@ export async function POST(request: NextRequest) {
     const viewer = await getViewer();
     if (!viewer) return unauthorized();
     const body = await request.json();
-    const nsfwCard = body?.nsfw === true || characterImpliesNsfw(body);
+    const rating = rateCharacterContent(body);
+    const wantsNsfw = body?.nsfw === true;
+    // SFW-marked cards that violate SFW rules are rejected before any Supabase/Prisma write.
+    if (!wantsNsfw && rating.isNsfw) return sfwViolationResponse(rating);
+    const nsfwCard = wantsNsfw || rating.isNsfw;
     if (nsfwCard && !canViewNsfw(viewer)) return nsfwLocked();
+
+    const prohibited = moderateGenerationText(
+      body?.name, body?.summary, body?.personality, body?.scenario,
+      body?.initialMessage ?? body?.firstMessage, body?.exampleDialogue, body?.systemPrompt, body?.creatorNotes,
+    );
+    if (!prohibited.allowed) {
+      await logModerationFlag({
+        userId: viewer.user.id,
+        route: '/api/characters',
+        category: prohibited.category || 'illegal',
+        matched: prohibited.matched,
+      });
+      return moderationBlockedResponse(prohibited);
+    }
+
     const character = await prisma.character.create({
       data: {
         ownerId: viewer.user.id,

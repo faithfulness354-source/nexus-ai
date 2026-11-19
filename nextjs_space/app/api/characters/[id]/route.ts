@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, forbidden, canEditCharacter, can, canViewNsfw, nsfwLocked } from '@/lib/access';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
+import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
@@ -85,8 +87,49 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (viewer instanceof Response) return viewer;
     const body = await request.json();
     const fullCard = body?.name !== undefined || body?.summary !== undefined || body?.personality !== undefined || body?.scenario !== undefined;
-    const nsfwCard = body?.nsfw === true || (fullCard && characterImpliesNsfw(body));
-    if (nsfwCard && !canViewNsfw(viewer)) return nsfwLocked();
+    const touchesRating = fullCard || typeof body?.nsfw === 'boolean' || body?.gallery !== undefined
+      || body?.initialMessage !== undefined || body?.firstMessage !== undefined
+      || body?.exampleDialogue !== undefined || body?.systemPrompt !== undefined || body?.creatorNotes !== undefined;
+
+    let nsfwUpdate: boolean | undefined;
+    if (touchesRating) {
+      const existing = await prisma.character.findUnique({ where: { id } });
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      const merged = {
+        name: body?.name ?? existing.name,
+        title: body?.title ?? existing.title,
+        summary: body?.summary ?? existing.summary,
+        personality: body?.personality ?? existing.personality,
+        scenario: body?.scenario ?? existing.scenario,
+        initialMessage: body?.initialMessage ?? body?.firstMessage ?? existing.initialMessage,
+        exampleDialogue: body?.exampleDialogue ?? existing.exampleDialogue,
+        creatorNotes: body?.creatorNotes ?? existing.creatorNotes,
+        systemPrompt: body?.systemPrompt ?? existing.systemPrompt,
+        tags: body?.tags ?? existing.tags,
+        gallery: body?.gallery ?? existing.gallery,
+      };
+      const rating = rateCharacterContent(merged);
+      const wantsNsfw = body?.nsfw === true;
+      // Declaring SFW while the card still contains NSFW material is blocked before save.
+      if (!wantsNsfw && rating.isNsfw) return sfwViolationResponse(rating);
+      nsfwUpdate = wantsNsfw || rating.isNsfw;
+      if (nsfwUpdate && !canViewNsfw(viewer)) return nsfwLocked();
+
+      const prohibited = moderateGenerationText(
+        merged.name, merged.summary, merged.personality, merged.scenario,
+        merged.initialMessage, merged.exampleDialogue, merged.systemPrompt, merged.creatorNotes,
+      );
+      if (!prohibited.allowed) {
+        await logModerationFlag({
+          userId: viewer.user.id,
+          route: '/api/characters/[id]',
+          category: prohibited.category || 'illegal',
+          matched: prohibited.matched,
+        });
+        return moderationBlockedResponse(prohibited);
+      }
+    }
+
     const audioUrl = body?.audioUrl === undefined ? undefined : normalizeAudioUrl(body.audioUrl);
     if (audioUrl === '' && String(body?.audioUrl ?? '').trim()) {
       return NextResponse.json({ error: 'Use Choose audio to add an mp3. A computer file path is not saved.' }, { status: 400 });
@@ -111,7 +154,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         banner: body?.banner === undefined ? undefined : body.banner || null,
         audioUrl,
         creator: body?.creator === undefined ? undefined : (String(body.creator).trim() || 'Anonymous'),
-        nsfw: fullCard || typeof body?.nsfw === 'boolean' ? nsfwCard : undefined,
+        nsfw: nsfwUpdate,
         visibility: body?.visibility === undefined ? undefined : (parseVisibility(body.visibility) ?? undefined),
         moderated: viewer.isCreatorAdmin && typeof body?.moderated === 'boolean' ? body.moderated : undefined,
       },
