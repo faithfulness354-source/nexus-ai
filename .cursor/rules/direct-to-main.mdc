@@ -1,0 +1,23 @@
+---
+description: Always ship completed work straight to origin/main — no feature branches or PRs.
+alwaysApply: true
+---
+
+# Direct-to-main workflow
+
+ALWAYS work directly on the `main` branch.
+
+## Required behavior
+
+- NEVER create feature branches (including `cursor/*` branches).
+- NEVER open, update, or stack pull requests for routine task delivery.
+- After completing a task (implementation + verification), automatically:
+  1. `git add` the relevant changes
+  2. `git commit` with a clear message
+  3. `git push origin main`
+- Do this without waiting for manual merge approval so Vercel can update the live web and Android apps immediately.
+
+## Exceptions
+
+- Only create a branch or PR when the user explicitly asks for one in that message.
+- If `main` cannot be updated (permissions, protection, or conflicts), stop and report the blocker instead of inventing a parallel long-lived branch workflow.
