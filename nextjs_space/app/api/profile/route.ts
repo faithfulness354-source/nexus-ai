@@ -4,8 +4,9 @@ import { getViewer, unauthorized, json, can, canToggleNsfw, type Viewer } from '
 import { ACCENT_THEMES, FEATURED_CARD_MAX, USERNAME_RE, applyBadgePrefs, isAccentTheme, sanitizeBadgePrefs, sanitizeBannerNameSize, sanitizeBgType, sanitizeCardOpacity, sanitizeMediaUrl, sanitizeProfileStyle, sanitizeSongUrl } from '@/lib/profile';
 import { readProfileExtras, writeProfileExtras } from '@/lib/profile-style';
 import { profileStats, profileBadges, findUserByUsername, pinIds } from '@/lib/profile-server';
-import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { characterBrowseImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled, writeAccountNsfwEnabled } from '@/lib/nsfw-account';
+import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
 
 const MAX_PINS = FEATURED_CARD_MAX;
 
@@ -13,13 +14,17 @@ async function payload(viewer: Viewer) {
   const userId = viewer.user.id;
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const stats = await profileStats(userId);
-  const showNsfw = await adultCardsEnabled(viewer);
+  const showNsfw = await adultCardsEnabled(viewer).catch(() => false);
   const extras = await readProfileExtras(userId);
-  const characters = await prisma.character.findMany({
-    where: { ownerId: userId },
-    select: { id: true, name: true, avatar: true, title: true, nsfw: true, summary: true, personality: true, scenario: true, initialMessage: true, tags: true, banner: true, creator: true, ownerId: true, visibility: true, moderated: true, updatedAt: true },
-    orderBy: { updatedAt: 'desc' },
-  });
+  const characters = await withVisualColumnRetry(
+    () => prisma.character.findMany({
+      where: { ownerId: userId },
+      select: { id: true, name: true, avatar: true, title: true, nsfw: true, summary: true, personality: true, scenario: true, initialMessage: true, tags: true, banner: true, creator: true, ownerId: true, visibility: true, moderated: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    [],
+    'GET /api/profile characters',
+  );
   return {
     username: user.username,
     displayName: user.displayName,
@@ -51,14 +56,14 @@ async function payload(viewer: Viewer) {
     badges: applyBadgePrefs(profileBadges(user, stats), extras.badgePrefs),
     earnedBadges: profileBadges(user, stats),
     characters: characters.flatMap((c) => {
-      const flagged = c.nsfw || characterImpliesNsfw(c);
+      const flagged = c.nsfw === true || characterBrowseImpliesNsfw(c);
       if (!showNsfw && flagged) return [];
       return [{
         id: c.id, name: c.name, avatar: c.avatar, title: c.title, summary: c.summary, banner: c.banner, updatedAt: c.updatedAt,
         creator: c.creator, ownerId: c.ownerId, visibility: c.visibility, moderated: c.moderated,
         nsfw: flagged,
         hiddenFromPublic: flagged && showNsfw,
-        tags: c.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        tags: String(c.tags ?? '').split(',').map((tag) => tag.trim()).filter(Boolean),
       }];
     }),
   };
@@ -67,7 +72,12 @@ async function payload(viewer: Viewer) {
 export async function GET() {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
-  return json(await payload(viewer));
+  try {
+    return json(await payload(viewer));
+  } catch (err) {
+    console.error('GET /api/profile error:', err instanceof Error ? err.message : err);
+    return json({ error: 'Profile could not be loaded right now.' }, 500);
+  }
 }
 
 export async function PUT(request: Request) {

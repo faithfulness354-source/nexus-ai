@@ -15,17 +15,26 @@ export function pinIds(value: unknown): string[] {
   }
 }
 
+async function safeCount(label: string, run: () => Promise<number>): Promise<number> {
+  try {
+    return await run();
+  } catch (err) {
+    console.warn(`[profileStats] ${label}:`, err instanceof Error ? err.message : err);
+    return 0;
+  }
+}
+
 export async function profileStats(userId: string, opts?: { publicOnly?: boolean }) {
   const [characters, loreEntries, lorebooks, personas, chats] = await Promise.all([
-    prisma.character.count({
+    safeCount('characters', () => prisma.character.count({
       where: opts?.publicOnly
         ? { ownerId: userId, visibility: 'PUBLIC', moderated: false }
         : { ownerId: userId },
-    }),
-    prisma.loreEntry.count({ where: { lorebook: { userId } } }),
-    prisma.lorebook.count({ where: { userId } }),
-    prisma.persona.count({ where: { userId } }),
-    prisma.chatSession.count({ where: { character: { ownerId: userId } } }),
+    })),
+    safeCount('loreEntries', () => prisma.loreEntry.count({ where: { lorebook: { userId } } })),
+    safeCount('lorebooks', () => prisma.lorebook.count({ where: { userId } })),
+    safeCount('personas', () => prisma.persona.count({ where: { userId } })),
+    safeCount('chats', () => prisma.chatSession.count({ where: { character: { ownerId: userId } } })),
   ]);
   return { characters, loreEntries, lorebooks, personas, chats };
 }

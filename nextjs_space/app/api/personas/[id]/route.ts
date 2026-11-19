@@ -11,7 +11,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
   try {
-    await ensureVisualColumns();
+    await ensureVisualColumns().catch(() => {});
     const { id } = await params;
     const userId = viewer.user.id;
     const existing = await prisma.persona.findFirst({ where: { id, userId } });

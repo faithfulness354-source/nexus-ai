@@ -4,6 +4,7 @@
  */
 export {
   characterImpliesNsfw,
+  characterBrowseImpliesNsfw,
   textImpliesNsfw,
   rateCharacterContent,
   rateContentText,

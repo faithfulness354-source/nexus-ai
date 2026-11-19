@@ -3,28 +3,37 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getViewer, canEditCharacter } from '@/lib/access';
 import { canViewCharacter } from '@/lib/card-visibility';
-import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { characterBrowseImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { AppHeader } from '@/components/layout/app-header';
 import { RichContent } from '@/components/editor/rich-content';
 import { CommentThread } from '@/components/comments/comment-thread';
+import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
 
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const character = await prisma.character.findUnique({ where: { id }, select: { name: true } });
+  const character = await withVisualColumnRetry(
+    () => prisma.character.findUnique({ where: { id }, select: { name: true } }),
+    null,
+    'character metadata',
+  );
   return { title: character ? `${character.name} · NexusAI` : 'Card · NexusAI' };
 }
 
 export default async function CharacterDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const character = await prisma.character.findUnique({ where: { id } });
-  const viewer = await getViewer();
+  const character = await withVisualColumnRetry(
+    () => prisma.character.findUnique({ where: { id } }),
+    null,
+    'character detail',
+  );
+  const viewer = await getViewer().catch(() => null);
   if (!character || !canViewCharacter(viewer ? { isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id } : null, character)) notFound();
-  if ((character.nsfw || characterImpliesNsfw(character)) && !(await adultCardsEnabled(viewer))) notFound();
+  if ((character.nsfw || characterBrowseImpliesNsfw(character)) && !(await adultCardsEnabled(viewer).catch(() => false))) notFound();
   const canEdit = !!viewer && canEditCharacter(viewer, character);
-  const tags = character.tags.split(',').map((tag) => tag.trim()).filter(Boolean);
+  const tags = String(character.tags ?? '').split(',').map((tag) => tag.trim()).filter(Boolean);
   const cover = character.banner || character.avatar;
 
   return (

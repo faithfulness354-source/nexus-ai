@@ -181,6 +181,29 @@ export function characterImpliesNsfw(card: RateableCard): boolean {
   return rateCharacterContent(card).isNsfw;
 }
 
+/**
+ * Browse/list NSFW cue — user-facing fields only.
+ * Skips systemPrompt / creatorNotes / exampleDialogue so policy wording
+ * (“no nudity”, “pornography is not”) cannot empty Discover for SFW cards.
+ * Save-time `rateCharacterContent` still checks the full card.
+ */
+export function characterBrowseImpliesNsfw(card: RateableCard): boolean {
+  if (!card) return false;
+  return rateContentText(
+    card.name,
+    card.title,
+    card.summary,
+    card.personality,
+    card.scenario,
+    card.initialMessage,
+    card.firstMessage,
+    card.tags,
+    card.gallery,
+    card.avatarLabel,
+    card.attire,
+  ).isNsfw;
+}
+
 export function textImpliesNsfw(...parts: unknown[]): boolean {
   return rateContentText(...parts).isNsfw;
 }

@@ -7,13 +7,13 @@ import { parseVisibility } from '@/lib/card-visibility';
 import { syncCharacterToCloud } from '@/lib/supabase/sync';
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { pullCloudLibrary } from '@/lib/supabase/apply';
-import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { characterBrowseImpliesNsfw } from '@/lib/nsfw-notice';
 import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
 import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
-import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
 import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 
 function plainExcerpt(value: string, limit = 280) {
@@ -27,18 +27,18 @@ function tagList(tags: string) {
 
 export async function GET(request: NextRequest) {
   try {
-    // Heal missing VLM columns before any Character query (additive only; no data loss).
-    await ensureVisualColumns();
     const url = new URL(request.url);
     const search = url.searchParams.get('search') ?? '';
     const tag = url.searchParams.get('tag') ?? '';
     const mine = url.searchParams.get('mine') === 'true';
     const viewer = await getViewer();
-    const showNsfw = await adultCardsEnabled(viewer);
+    const showNsfw = await adultCardsEnabled(viewer).catch(() => false);
     const filters: Record<string, unknown>[] = [];
     if (mine) {
       if (!viewer) return unauthorized();
-      await pullCloudLibrary(viewer.user, { force: url.searchParams.get('refresh') === '1' });
+      await pullCloudLibrary(viewer.user, { force: url.searchParams.get('refresh') === '1' }).catch((err) => {
+        console.warn('pullCloudLibrary skipped', err instanceof Error ? err.message : err);
+      });
       filters.push({ ownerId: viewer.user.id });
     } else if (viewer) {
       filters.push({
@@ -67,46 +67,56 @@ export async function GET(request: NextRequest) {
     }
     const where = { AND: filters };
 
-    let characters = await prisma.character.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      include: { _count: { select: { sessions: true } } },
-    });
-    if (characters.length === 0 && !mine && !search && !tag && await ensureDefaultCards()) {
-      characters = await prisma.character.findMany({
+    let characters = await withVisualColumnRetry(
+      () => prisma.character.findMany({
         where,
         orderBy: { updatedAt: 'desc' },
         include: { _count: { select: { sessions: true } } },
-      });
+      }),
+      [],
+      'GET /api/characters',
+    );
+    if (characters.length === 0 && !mine && !search && !tag && await ensureDefaultCards()) {
+      characters = await withVisualColumnRetry(
+        () => prisma.character.findMany({
+          where,
+          orderBy: { updatedAt: 'desc' },
+          include: { _count: { select: { sessions: true } } },
+        }),
+        [],
+        'GET /api/characters seed-retry',
+      );
     }
 
     return NextResponse.json(
       characters.flatMap(({ _count, ...c }) => {
-        const flagged = c.nsfw || characterImpliesNsfw(c);
+        const flagged = c.nsfw === true || characterBrowseImpliesNsfw(c);
         if (!showNsfw && flagged) return [];
         const editable = !!viewer && canEditCharacter(viewer, c);
         return [{
           id: c.id,
           name: c.name,
-          title: c.title,
+          title: c.title ?? '',
           summary: plainExcerpt(c.summary || c.scenario || ''),
-          creator: c.creator,
-          tags: tagList(c.tags || ''),
-          avatar: c.avatar,
-          banner: c.banner,
+          creator: c.creator ?? 'Anonymous',
+          tags: tagList(typeof c.tags === 'string' ? c.tags : ''),
+          avatar: c.avatar ?? null,
+          banner: c.banner ?? null,
           updatedAt: c.updatedAt,
           nsfw: flagged,
           chatCount: _count?.sessions ?? 0,
-          ownerId: c.ownerId,
-          visibility: c.visibility,
-          moderated: c.moderated,
-          audioUrl: editable ? c.audioUrl : '',
+          ownerId: c.ownerId ?? null,
+          visibility: c.visibility ?? 'PRIVATE',
+          moderated: c.moderated === true,
+          audioUrl: editable ? (c.audioUrl ?? '') : '',
         }];
       })
     );
   } catch (err: any) {
     console.error('GET /api/characters error:', err);
-    return NextResponse.json({ error: err?.message ?? 'Failed to fetch characters' }, { status: 500 });
+    // Prefer an empty catalog over a hard 500 so Discover never looks "broken"
+    // when optional schema heals are mid-flight.
+    return NextResponse.json([], { status: 200, headers: { 'X-Nexus-Characters-Degraded': '1' } });
   }
 }
 

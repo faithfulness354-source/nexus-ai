@@ -4,18 +4,22 @@ import { getViewer, unauthorized, json } from '@/lib/access';
 import { personaInput, normalizePersonaBindings, withAvatarSnapshot, personaDto } from '@/lib/persona-server';
 import { syncPersonaToCloud } from '@/lib/supabase/sync';
 import { pullCloudLibrary } from '@/lib/supabase/apply';
-import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
 import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
 import { logModerationFlag } from '@/lib/trust-safety';
 
 export async function GET(request: Request) {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
-  // Heal missing VLM columns before any Persona query (additive only; no data loss).
-  await ensureVisualColumns();
   const refresh = new URL(request.url).searchParams.get('refresh') === '1';
-  await pullCloudLibrary(viewer.user, { force: refresh });
-  const personas = await prisma.persona.findMany({ where: { userId: viewer.user.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] });
+  await pullCloudLibrary(viewer.user, { force: refresh }).catch((err) => {
+    console.warn('pullCloudLibrary skipped', err instanceof Error ? err.message : err);
+  });
+  const personas = await withVisualColumnRetry(
+    () => prisma.persona.findMany({ where: { userId: viewer.user.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] }),
+    [],
+    'GET /api/personas',
+  );
   return json(personas.map(personaDto));
 }
 
@@ -24,7 +28,6 @@ export async function POST(request: Request) {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
   try {
-    await ensureVisualColumns();
     const body = await request.json().catch(() => ({}));
     const userId = viewer.user.id;
 

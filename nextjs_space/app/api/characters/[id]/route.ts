@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, forbidden, canEditCharacter, can, canViewNsfw, nsfwLocked } from '@/lib/access';
-import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import { characterBrowseImpliesNsfw } from '@/lib/nsfw-notice';
 import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
@@ -13,7 +13,7 @@ import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/s
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
 import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
-import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -32,7 +32,7 @@ function parseStoredTags(value: unknown): string[] {
 function presentCharacter(character: any, includeAudio: boolean) {
   return {
     ...character,
-    nsfw: !!character.nsfw || characterImpliesNsfw(character),
+    nsfw: !!character.nsfw || characterBrowseImpliesNsfw(character),
     tags: parseStoredTags(character.tags),
     audioUrl: includeAudio ? character.audioUrl ?? '' : '',
     firstMessage: cardFirstMessage({ initialMessage: character.initialMessage }),
@@ -62,15 +62,19 @@ async function requireEditor(id: string) {
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await ensureVisualColumns();
     const { id } = await params;
-    const character = await prisma.character.findUnique({ where: { id } });
+    const character = await withVisualColumnRetry(
+      () => prisma.character.findUnique({ where: { id } }),
+      null,
+      'GET /api/characters/[id]',
+    );
     if (!character) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     const viewer = await getViewer();
     if (!canViewCharacter(viewer ? { isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id } : null, character)) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    if ((character.nsfw || characterImpliesNsfw(character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
+    const flagged = character.nsfw || characterBrowseImpliesNsfw(character);
+    if (flagged && !(await adultCardsEnabled(viewer).catch(() => false))) return nsfwLocked();
     const includeAudio = !!viewer && canEditCharacter(viewer, character);
     return NextResponse.json(presentCharacter(character, includeAudio), {
       headers: { 'Cache-Control': 'no-store' },
