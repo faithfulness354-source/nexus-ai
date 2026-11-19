@@ -8,6 +8,7 @@ import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { AppHeader } from '@/components/layout/app-header';
 import { PublicProfile } from '@/components/profile/public-profile';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
   const includeNsfw = showNsfw;
   const extras = await readProfileExtras(user.id);
   const stats = await profileStats(user.id, { publicOnly: !seeAll });
+  await ensureVisualColumns();
   const rows = await prisma.character.findMany({
     // Visitors only see published cards. The author and the creator admin also see drafts, unlisted, and moderated cards.
     where: {

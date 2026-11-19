@@ -3,11 +3,13 @@ import { prisma } from '@/lib/db';
 import { getViewer, unauthorized, json } from '@/lib/access';
 import { personaInput, normalizePersonaBindings, withAvatarSnapshot, personaDto } from '@/lib/persona-server';
 import { deletePersonaFromCloud, syncPersonaToCloud } from '@/lib/supabase/sync';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
   try {
+    await ensureVisualColumns();
     const { id } = await params;
     const userId = viewer.user.id;
     const existing = await prisma.persona.findFirst({ where: { id, userId } });

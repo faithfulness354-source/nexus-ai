@@ -10,6 +10,7 @@ import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -58,6 +59,7 @@ async function requireEditor(id: string) {
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await ensureVisualColumns();
     const { id } = await params;
     const character = await prisma.character.findUnique({ where: { id } });
     if (!character) return NextResponse.json({ error: 'Not found' }, { status: 404 });

@@ -2,6 +2,7 @@ import 'server-only';
 import { prisma } from '@/lib/db';
 import { ensureCloudUser } from '@/lib/supabase/identity';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 type Owner = { id: string; email: string };
 type Row = Record<string, unknown>;
@@ -34,6 +35,7 @@ async function owns(owner: Owner, record: Row): Promise<boolean> {
 export async function applyRemoteRecord(owner: Owner, table: string, record: Row): Promise<void> {
   const localId = text(record.local_id);
   if (!localId || localId.startsWith('draft:') || !(await owns(owner, record))) return;
+  if (table === 'characters' || table === 'personas') await ensureVisualColumns();
 
   if (table === 'characters') {
     const existing = await prisma.character.findUnique({ where: { id: localId } });
@@ -226,6 +228,7 @@ export async function pullCloudLibrary(owner: Owner, options?: { force?: boolean
   if (!options?.force && Date.now() - last < LIBRARY_GAP_MS) return;
   libraryPulledAt.set(owner.id, Date.now());
   try {
+    await ensureVisualColumns();
     const admin = supabaseAdmin();
     const userId = await ensureCloudUser(owner.email, owner.id);
     if (!admin || !userId) return;

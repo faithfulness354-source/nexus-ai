@@ -11,6 +11,7 @@ import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
+import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -23,6 +24,8 @@ function tagList(tags: string) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Heal missing VLM columns before any Character query (additive only; no data loss).
+    await ensureVisualColumns();
     const url = new URL(request.url);
     const search = url.searchParams.get('search') ?? '';
     const tag = url.searchParams.get('tag') ?? '';
