@@ -4,7 +4,7 @@
  * - After rendering, the server rewrites it to `[SCENE_IMAGE: <public url> | scene description]`.
  */
 export const GENERATE_TAG_RE = /\[GENERATE_IMAGE:\s*([^\]]+?)\s*\]/gi;
-const SCENE_TAG_RE = /\[SCENE_IMAGE:\s*(\S+?)\s*\|\s*([^\]]*?)\s*\]/gi;
+export const SCENE_TAG_RE = /\[SCENE_IMAGE:\s*(\S+?)\s*\|\s*([^\]]*?)\s*\]/gi;
 const ANY_TAG_RE = /\[(GENERATE_IMAGE|SCENE_IMAGE):\s*([^\]]+?)\s*\]/gi;
 
 export type SceneSegment =

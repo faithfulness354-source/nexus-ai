@@ -7,9 +7,11 @@ import { MessageInput } from './message-input';
 import { ContextBar } from './context-bar';
 import { GenerationPanel } from './generation-panel';
 import { TypingIndicator } from './typing-indicator';
-import { estimateTokens, countSystemTokens, countHistoryTokens } from '@/lib/tokens';
+import { DEFINITION_TOKEN_CAP, estimateTokens, countSystemTokens } from '@/lib/tokens';
+import { recountTurnTokens } from '@/lib/context-manager';
 import { spliceDeletedMessages } from '@/lib/llm/messages';
-import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
+import { CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
+import { pickActiveChatModel, purgeStoredChatModelIfStale, readStoredChatModel, writeStoredChatModel } from '@/lib/chat-models';
 import { Plus, Pencil, SlidersHorizontal, MoreVertical, KeyRound, Brain, CreditCard, UserRound, Check } from 'lucide-react';
 import { applyScripts, fillMacros, pickPersona, type PersonaData, type ScriptData } from '@/lib/hubs';
 import { cardFirstMessage, composeOpening } from '@/lib/opening';
@@ -33,9 +35,29 @@ import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlaye
 import { usePersonaName } from '@/lib/persona';
 import { toast } from 'sonner';
 import Link from 'next/link';
-// Mirrors lib/payload-router: compressed system prompt ≤ ~500 tokens, last 5 turns (10 messages) re-sent.
-const SYSTEM_PROMPT_ESTIMATE_CAP = 500;
 const BASELINE_HISTORY_TURNS = 5;
+
+function priorMeterSnapshots(
+  messages: { index: number }[],
+  meterStates: Record<number, MeterSnapshot> | undefined,
+): Array<MeterSnapshot | undefined> {
+  const previous: Array<MeterSnapshot | undefined> = [];
+  let last: MeterSnapshot | undefined;
+  for (const msg of messages) {
+    previous.push(last);
+    const snap = meterStates?.[msg.index];
+    if (snap) last = snap;
+  }
+  return previous;
+}
+
+function draftUserMessage(input: Omit<ChatMessage, 'id' | 'createdAt'>): ChatMessage {
+  return {
+    ...input,
+    id: `temp-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 interface CharacterData {
   id: string;
@@ -159,8 +181,11 @@ export function ChatView({ characterId }: ChatViewProps) {
   const [genSettings, setGenSettings] = useState<Partial<GenSettings>>({});
   const [currentModel, setCurrentModel] = useState<string>(DEFAULT_MODEL);
   const [currentProvider, setCurrentProvider] = useState<string>(DEFAULT_PROVIDER);
+  const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [sessionModelHint, setSessionModelHint] = useState<string | null>(null);
   // What the server actually sent on the last request (compressed system prompt size + plan cap).
   const [payloadInfo, setPayloadInfo] = useState<{ systemTokens: number; contextCap: number | null } | null>(null);
+  const [tokenUsage, setTokenUsage] = useState({ sent_tokens: 0, recent_history_tokens: 0, definition_tokens: 0 });
   const [streaming, setStreaming] = useState(false);
   const [modelNotice, setModelNotice] = useState<string | null>(null);
   const [streamContent, setStreamContent] = useState('');
@@ -177,21 +202,35 @@ export function ChatView({ characterId }: ChatViewProps) {
   const [scripts, setScripts] = useState<ScriptData[]>([]);
   const [sessionPersonaId, setSessionPersonaId] = useState<string | null>(null);
   const [chooser, setChooser] = useState(!sessionIdParam);
+  const chooserKey = `${characterId ?? ''}:${sessionIdParam ?? ''}`;
+  const [chooserKeySeen, setChooserKeySeen] = useState(chooserKey);
+  if (chooserKeySeen !== chooserKey) {
+    setChooserKeySeen(chooserKey);
+    setChooser(!sessionIdParam);
+  }
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
   const [recentSessionId, setRecentSessionId] = useState<string | null>(null);
   const [startingChat, setStartingChat] = useState(false);
   const [editingPersona, setEditingPersona] = useState<PersonaData | null>(null);
   const activePersona = pickPersona(personas, characterId, sessionPersonaId);
   const userDisplayName = activePersona?.name || personaName;
-  const [visualContext, setVisualContext] = useState('');
-  useEffect(() => {
-    setVisualContext(activePersona ? compilePerceivedAppearance(activePersona) : '');
-  }, [activePersona]);
+  const compiledAppearance = activePersona ? compilePerceivedAppearance(activePersona) : '';
+  const [visualOverride, setVisualContext] = useState<string | null>(null);
+  const [appearanceSeen, setAppearanceSeen] = useState(compiledAppearance);
+  if (appearanceSeen !== compiledAppearance) {
+    setAppearanceSeen(compiledAppearance);
+    setVisualContext(null);
+  }
+  const visualContext = visualOverride ?? compiledAppearance;
+  const [personaCharacter, setPersonaCharacter] = useState(characterId);
+  if (personaCharacter !== characterId) {
+    setPersonaCharacter(characterId);
+    setPersonasReady(false);
+  }
   const displayTransform = useCallback((t: string) => applyScripts(t, scripts, 'DISPLAY'), [scripts]);
 
   useEffect(() => {
     let cancel = false;
-    setPersonasReady(false);
     Promise.all([
       fetch('/api/personas').then((r) => (r.ok ? r.json() : [])),
       fetch('/api/scripts').then((r) => (r.ok ? r.json() : [])),
@@ -209,6 +248,23 @@ export function ChatView({ characterId }: ChatViewProps) {
     }).catch(() => { if (!cancel) setPersonasReady(true); });
     return () => { cancel = true; };
   }, [characterId]);
+
+  useEffect(() => {
+    function onRevision() {
+      if (streaming || editingPersona) return;
+      fetch('/api/personas', { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : []))
+        .then((rows) => { if (Array.isArray(rows)) setPersonas(rows); })
+        .catch(() => {});
+      if (!sessionId) return;
+      fetch(`/api/sessions/${sessionId}`, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((session) => { if (session) setSessionPersonaId(session.personaId ?? null); })
+        .catch(() => {});
+    }
+    window.addEventListener('nexus:cloud-revision', onRevision);
+    return () => window.removeEventListener('nexus:cloud-revision', onRevision);
+  }, [streaming, editingPersona, sessionId]);
 
   async function switchPersona(personaId: string | null) {
     if (!sessionId) return;
@@ -265,20 +321,30 @@ export function ChatView({ characterId }: ChatViewProps) {
       .catch(() => toast.error('Failed to load character'));
   }, [characterId]);
 
-  useEffect(() => {
-    setChooser(!sessionIdParam);
-  }, [characterId, sessionIdParam]);
+  const [forceNewChat, setForceNewChat] = useState(false);
+  const [sessionSeen, setSessionSeen] = useState(sessionIdParam);
+  if (sessionIdParam && forceNewChat) setForceNewChat(false);
+  if (sessionSeen !== sessionIdParam) {
+    setSessionSeen(sessionIdParam);
+    setSessionId(sessionIdParam ?? null);
+  }
 
   // Load an existing session. A new chat waits for the persona gate.
   useEffect(() => {
     if (!characterId) return;
-
-    async function initSession() {
+    let cancel = false;
+    void (async () => {
       if (!sessionIdParam) {
+        if (forceNewChat) {
+          setActiveMessages([]);
+          setLoading(false);
+          return;
+        }
         try {
-          const res = await fetch(`/api/sessions?characterId=${characterId}`);
+          const res = await fetch(`/api/sessions?characterId=${characterId}`, { cache: 'no-store' });
           const sessions = await res.json();
           const recent = Array.isArray(sessions) ? sessions.find((session) => (session?._count?.messages ?? 0) > 0) ?? null : null;
+          if (cancel) return;
           if (recent?.id) {
             setRecentSessionId(recent.id);
             router.replace(`/characters/${characterId}/chat?session=${recent.id}`);
@@ -286,66 +352,115 @@ export function ChatView({ characterId }: ChatViewProps) {
           }
           setRecentSessionId(null);
         } catch {
-          setRecentSessionId(null);
+          if (!cancel) setRecentSessionId(null);
         }
-        setSessionId(null);
+        if (cancel) return;
         setActiveMessages([]);
         setLoading(false);
         return;
       }
 
-      const sid = sessionIdParam;
-      setSessionId(sid);
-
-      // Load session data
       try {
-        const res = await fetch(`/api/sessions/${sid}`, { cache: 'no-store' });
+        const res = await fetch(`/api/sessions/${sessionIdParam}`, { cache: 'no-store' });
         const session = await res.json();
+        if (cancel) return;
         const incoming = Array.isArray(session?.messages) ? session.messages : [];
         setActiveMessages(dedupeIdentical(incoming));
         setSessionPersonaId(session?.personaId ?? null);
         const prov = normalizeProvider(session?.provider);
         setCurrentProvider(prov);
-        const savedModel = typeof session?.model === 'string' ? session.model.trim() : '';
-        // Never rehydrate a Gemini family id into the chat chip.
-        const safeModel = savedModel && !/gemini|gemma/i.test(savedModel) ? savedModel : DEFAULT_MODEL;
-        setCurrentModel(safeModel || DEFAULT_MODEL);
+        setSessionModelHint(typeof session?.model === 'string' ? session.model : null);
         if (session?.generationSettings) {
           setGenSettings(session.generationSettings);
         }
-        // Load meter states
         const mStates: Record<number, MeterSnapshot> = {};
         for (const ms of (session?.meterStates ?? [])) {
           mStates[ms.messageIndex] = ms.metersJson as MeterSnapshot;
         }
         setMeterStates(mStates);
       } catch {
-        toast.error('Failed to load session');
+        if (!cancel) toast.error('Failed to load session');
       }
-      setLoading(false);
-    }
+      if (!cancel) setLoading(false);
+    })();
+    return () => { cancel = true; };
+  }, [characterId, sessionIdParam, router, forceNewChat]);
 
-    initSession();
-  }, [characterId, sessionIdParam, router]);
+  // Paid-provider catalog for the chat model dropdown (never a static Gemini list).
+  useEffect(() => {
+    let cancel = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/models', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (cancel || !res.ok) return;
+        const models = Array.isArray(data?.models)
+          ? data.models.filter((model: unknown): model is string => typeof model === 'string' && !!model.trim())
+          : [];
+        if (!models.length) return;
+        if (typeof data?.provider === 'string' && data.provider.trim()) {
+          setCurrentProvider(normalizeProvider(data.provider));
+        }
+        const serverDefault = typeof data?.defaultModel === 'string' ? data.defaultModel.trim() : '';
+        const ordered = serverDefault && !models.includes(serverDefault)
+          ? [serverDefault, ...models]
+          : serverDefault
+            ? [serverDefault, ...models.filter((model: string) => model !== serverDefault)]
+            : models;
+        setProviderModels(ordered);
+        if (serverDefault) setCurrentModel(serverDefault);
+        purgeStoredChatModelIfStale(ordered);
+      } catch {
+        /* keep last known list */
+      }
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  // Drop Gemini / stale prefs and bind the chat chip to the configured paid model id.
+  useEffect(() => {
+    if (!providerModels.length) return;
+    const next = pickActiveChatModel(
+      [sessionModelHint, readStoredChatModel(), DEFAULT_MODEL, providerModels[0], currentModel],
+      providerModels,
+    );
+    if (next !== currentModel) setCurrentModel(next);
+    writeStoredChatModel(next, currentProvider);
+    if (sessionId && sessionModelHint && sessionModelHint !== next) {
+      void fetch(`/api/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: next, provider: currentProvider }),
+      }).catch(() => {});
+      setSessionModelHint(next);
+    }
+  }, [providerModels, sessionModelHint, sessionId, currentProvider]);
+
+  useEffect(() => {
+    if (!access || access.can.proModels || !isProModel(currentModel) || !providerModels.length) return;
+    const next = pickActiveChatModel([readStoredChatModel()], providerModels.filter((model) => !isProModel(model)));
+    if (next && next !== currentModel) setCurrentModel(next);
+  }, [access, currentModel, providerModels]);
 
   // Before a session exists, preview the card's first message. A created session uses only the greeting stored for that session.
   useEffect(() => {
     if (loading || !character || streaming || sessionId || sessionIdParam) return;
     const content = stripPromptLeak(composeOpening(character, userDisplayName || 'You'));
     if (!content) return;
-    setActiveMessages((prev) => {
-      if (prev.length > 0) return prev;
-      return [{
-        id: `greeting-${character.id}`,
-        sessionId: sessionId ?? '',
-        role: 'ASSISTANT',
-        content,
-        model: null,
-        tokenCount: 0,
-        editHistory: [],
-        createdAt: new Date().toISOString(),
-        index: 0,
-      }];
+    const createdAt = new Date().toISOString();
+    const greeting: ChatMessage = {
+      id: `greeting-${character.id}`,
+      sessionId: sessionId ?? '',
+      role: 'ASSISTANT',
+      content,
+      model: null,
+      tokenCount: 0,
+      editHistory: [],
+      createdAt,
+      index: 0,
+    };
+    queueMicrotask(() => {
+      setActiveMessages((prev) => (prev.length > 0 ? prev : [greeting]));
     });
   }, [loading, character, sessionId, sessionIdParam, userDisplayName, streaming]);
 
@@ -382,17 +497,15 @@ export function ChatView({ characterId }: ChatViewProps) {
   async function handleSend(content: string): Promise<boolean> {
     if (!sessionId || streaming) return false;
 
-    const userMsg: ChatMessage = {
-      id: `temp-${Date.now()}`,
+    const userMsg = draftUserMessage({
       sessionId: sessionId,
       role: 'USER',
       content,
       model: currentModel,
       tokenCount: estimateTokens(content),
       editHistory: [],
-      createdAt: new Date().toISOString(),
       index: spliceDeletedMessages(messages ?? []).length,
-    };
+    });
     setActiveMessages(prev => [...(prev ?? []), userMsg]);
     setStreaming(true);
     setStreamContent('');
@@ -449,8 +562,10 @@ export function ChatView({ characterId }: ChatViewProps) {
         savedUserId = res.headers.get('X-User-Message-Id') || userMsg.id;
         keepUserMessage();
         const notice = typeof err?.error === 'string' ? err.error : 'The reply failed. Your message is still in this chat.';
-        if (res.status === 402 && err?.code === 'OUT_OF_CREDITS') {
+        if ((res.status === 429 || res.status === 402) && err?.code === 'OUT_OF_CREDITS') {
           openPaywall('credits');
+        } else if (res.status === 429 && (err?.code === 'GENERATION_COOLDOWN' || err?.code === 'TEXT_SWIPE_LIMIT')) {
+          toast.error(notice);
         } else if (res.status === 402 && err?.feature === 'proModels') {
           openPaywall('proModels');
         } else if (res.status === 403 && err?.code === 'NSFW_LOCKED') {
@@ -481,7 +596,16 @@ export function ChatView({ characterId }: ChatViewProps) {
       }
       const sentSystem = Number(res.headers.get('X-Payload-System-Tokens'));
       const sentCap = Number(res.headers.get('X-Payload-Context-Cap'));
-      if (sentSystem > 0) setPayloadInfo({ systemTokens: sentSystem, contextCap: sentCap > 0 ? sentCap : null });
+      const sentTokens = Number(res.headers.get('X-Sent-Tokens'));
+      const recentHistoryTokens = Number(res.headers.get('X-Recent-History-Tokens'));
+      if (sentSystem > 0) setPayloadInfo({ systemTokens: Math.min(DEFINITION_TOKEN_CAP, sentSystem), contextCap: sentCap > 0 ? sentCap : null });
+      if (sentTokens > 0 || recentHistoryTokens > 0) {
+        setTokenUsage({
+          sent_tokens: sentTokens,
+          recent_history_tokens: recentHistoryTokens,
+          definition_tokens: Math.min(DEFINITION_TOKEN_CAP, sentSystem || 0),
+        });
+      }
 
       const reader = res?.body?.getReader();
       if (!reader) {
@@ -557,11 +681,25 @@ export function ChatView({ characterId }: ChatViewProps) {
 
   async function handleDelete(messageId: string) {
     if (!sessionId) return;
+    const previous = messages ?? [];
+    const purged = spliceDeletedMessages(previous.map((message) => (
+      message.id === messageId ? { ...message, deleted: true, content: '' } : message
+    )));
+    setMessages(purged);
     try {
-      await fetch(`/api/sessions/${sessionId}/messages?messageId=${messageId}`, { method: 'DELETE' });
-      setActiveMessages(prev => (prev ?? []).filter((m: ChatMessage) => m.id !== messageId));
+      const res = await fetch(`/api/sessions/${sessionId}/messages?messageId=${messageId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to delete message');
+      if (typeof data.recent_history_tokens === 'number') {
+        setTokenUsage((current) => ({
+          definition_tokens: current.definition_tokens,
+          recent_history_tokens: data.recent_history_tokens,
+          sent_tokens: current.definition_tokens + data.recent_history_tokens,
+        }));
+      }
       toast.success('Message deleted');
     } catch {
+      setMessages(previous);
       toast.error('Failed to delete message');
     }
   }
@@ -582,22 +720,117 @@ export function ChatView({ characterId }: ChatViewProps) {
     }
   }
 
-  async function handleRegenerate() {
-    if (!sessionId || streaming) return;
-    // Remove last AI message and resend last user message
-    const safeMessages = spliceDeletedMessages(messages ?? []);
-    const lastAi = [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
-    const lastUser = [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'USER');
-    if (lastAi) {
-      await handleDelete(lastAi.id);
-    }
-    if (lastUser) {
-      handleSend(lastUser.content);
+  const [regenLabels, setRegenLabels] = useState<Record<string, string>>({});
+  const [regenBlocked, setRegenBlocked] = useState<Record<string, boolean>>({});
+
+  async function refreshRegenLabel(assistantMessageId: string) {
+    try {
+      const res = await fetch(`/api/chat/swipe-preview?assistantMessageId=${encodeURIComponent(assistantMessageId)}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRegenLabels((prev) => ({ ...prev, [assistantMessageId]: data.label || 'Regenerate (1 Credit)' }));
+      setRegenBlocked((prev) => ({ ...prev, [assistantMessageId]: data.allowed === false }));
+    } catch {
+      /* ignore */
     }
   }
 
-  function handleNewSession() {
+  useEffect(() => {
+    const safe = spliceDeletedMessages(messages ?? []);
+    const lastAi = [...safe].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
+    if (lastAi?.id) void refreshRegenLabel(lastAi.id);
+  }, [messages]);
+
+  async function handleRegenerate(assistantMessageId?: string) {
+    if (!sessionId || streaming) return;
+    const safeMessages = spliceDeletedMessages(messages ?? []);
+    const target = assistantMessageId
+      ? safeMessages.find((m: ChatMessage) => m.id === assistantMessageId && m.role === 'ASSISTANT')
+      : [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
+    if (!target) return;
+    if (regenBlocked[target.id]) {
+      toast.error('This turn has reached the regeneration limit.');
+      return;
+    }
+
+    setStreaming(true);
+    setStreamContent('');
+    let fullText = '';
+    try {
+      const res = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          regenerate: true,
+          replaceAssistantId: target.id,
+          model: currentModel,
+          personaId: sessionPersonaId,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 429 && err?.code === 'OUT_OF_CREDITS') openPaywall('credits');
+        else if (res.status === 429) toast.error(err?.error ?? 'Regeneration limit reached.');
+        else if (res.status === 402) openPaywall('credits');
+        else toast.error(err?.error ?? 'Regeneration failed.');
+        await refreshRegenLabel(target.id);
+        return;
+      }
+
+      // Optimistically hide the replaced assistant while the new stream arrives.
+      setActiveMessages((prev) => (prev ?? []).filter((m) => m.id !== target.id));
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error('No stream');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        fullText += decoder.decode(value, { stream: true });
+        setStreamContent(fullText);
+      }
+      setActiveMessages((prev) => [
+        ...(prev ?? []).filter((m) => m.id !== target.id),
+        {
+          id: `regen-${Date.now()}`,
+          sessionId,
+          role: 'ASSISTANT' as const,
+          content: fullText,
+          model: currentModel,
+          tokenCount: estimateTokens(fullText),
+          index: (prev ?? []).length,
+          createdAt: new Date().toISOString(),
+          editHistory: [],
+          deleted: false,
+        } as ChatMessage,
+      ]);
+      setStreamContent('');
+      // Refresh from server so indexes/ids stay authoritative.
+      const refreshed = await fetch(`/api/sessions/${sessionId}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+      if (Array.isArray(refreshed?.messages)) setActiveMessages(refreshed.messages);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Regeneration failed.');
+    } finally {
+      setStreaming(false);
+      setStreamContent('');
+    }
+  }
+
+  async function handleNewSession() {
+    setForceNewChat(true);
+    setActiveMessages([]);
     setChooser(true);
+    router.replace(`/characters/${characterId}/chat`);
+    try {
+      const res = await fetch(`/api/characters/${characterId}`, { cache: 'no-store' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) return;
+      const firstMessage = cardFirstMessage(data);
+      setCharacter({ ...data, initialMessage: firstMessage, firstMessage });
+    } catch {
+      toast.error('Failed to load the current greeting');
+    }
   }
 
   async function beginChat(personaId: string | null) {
@@ -646,35 +879,39 @@ export function ChatView({ characterId }: ChatViewProps) {
       openPaywall('proModels');
       return;
     }
+    if (providerModels.length && !providerModels.includes(model)) {
+      toast.error('That model is not available on the active provider.');
+      return;
+    }
     const previous = currentModel;
     setCurrentModel(model);
+    setSessionModelHint(model);
+    writeStoredChatModel(model, currentProvider);
     if (!sessionId) return;
     try {
       const res = await fetch(`/api/sessions/${sessionId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, provider: currentProvider }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setCurrentModel(previous);
+        setSessionModelHint(previous);
         if (res.status === 402) openPaywall(err?.feature === 'proModels' ? 'proModels' : 'credits');
         else toast.error(err?.error ?? 'Could not change model');
       }
     } catch {
       setCurrentModel(previous);
+      setSessionModelHint(previous);
       toast.error('Could not change model');
     }
   }
 
   // Pro models are a Premium+ perk (the server enforces this too).
   const canPro = !!access?.can.proModels;
-  const availableModels = (PROVIDER_MODELS?.[currentProvider] ?? []).filter((m: string) => canPro || !isProModel(m));
+  const availableModels = (providerModels.length ? providerModels : [DEFAULT_MODEL]).filter((m: string) => canPro || !isProModel(m));
   const canAdvanced = !!access?.can.advancedGeneration;
-  useEffect(() => {
-    if (!access || access.can.proModels || !isProModel(currentModel)) return;
-    setCurrentModel(DEFAULT_MODEL);
-  }, [access, currentModel]);
   const planCap = access?.isAdmin
     ? (CONTEXT_WINDOWS?.[currentModel] ?? 8192)
     : (access?.contextTokens ?? TIERS.FREE.contextTokens);
@@ -684,10 +921,25 @@ export function ChatView({ characterId }: ChatViewProps) {
   // stays on screen but is not re-sent, so it doesn't count against the context window.
   const contextWindow = payloadInfo?.contextCap
     ?? Math.min(CONTEXT_WINDOWS?.[currentModel] ?? planCap, planCap);
-  const systemTokens = payloadInfo?.systemTokens
-    ?? (character ? Math.min(countSystemTokens({ ...character, exampleDialogue: '' }), SYSTEM_PROMPT_ESTIMATE_CAP) : 0);
-  const activeMessages = spliceDeletedMessages(messages ?? []);
-  const historyTokens = countHistoryTokens(activeMessages.slice(-BASELINE_HISTORY_TURNS * 2));
+  const definitionEstimate = Math.min(
+    DEFINITION_TOKEN_CAP,
+    payloadInfo?.systemTokens ?? (character ? countSystemTokens({ ...character, exampleDialogue: '' }) : 0),
+  );
+  const activeMessages = spliceDeletedMessages(messages ?? []).filter((message) => (message.content ?? '').trim());
+  const liveUsage = recountTurnTokens(activeMessages.slice(-BASELINE_HISTORY_TURNS * 2), definitionEstimate);
+  if (
+    tokenUsage.sent_tokens !== liveUsage.sent_tokens
+    || tokenUsage.recent_history_tokens !== liveUsage.recent_history_tokens
+    || tokenUsage.definition_tokens !== liveUsage.definition_tokens
+  ) {
+    setTokenUsage({
+      sent_tokens: liveUsage.sent_tokens,
+      recent_history_tokens: liveUsage.recent_history_tokens,
+      definition_tokens: liveUsage.definition_tokens,
+    });
+  }
+  const systemTokens = liveUsage.definition_tokens;
+  const historyTokens = liveUsage.recent_history_tokens;
 
   if (loading) {
     return (
@@ -702,7 +954,7 @@ export function ChatView({ characterId }: ChatViewProps) {
     );
   }
 
-  let prevSnapshot: MeterSnapshot | undefined;
+  const previousMeters = priorMeterSnapshots(activeMessages, meterStates);
 
   const characterAudioUrl = character?.audioUrl?.trim() || '';
   const characterTags = (Array.isArray(character?.tags) ? character.tags : String(character?.tags ?? '').split(','))
@@ -832,15 +1084,19 @@ export function ChatView({ characterId }: ChatViewProps) {
         }
       />
 
-      <ContextBar systemTokens={systemTokens} historyTokens={historyTokens} maxTokens={contextWindow} />
+      <ContextBar
+        key={`${tokenUsage.sent_tokens}:${tokenUsage.recent_history_tokens}:${activeMessages.length}`}
+        systemTokens={systemTokens}
+        historyTokens={historyTokens}
+        maxTokens={contextWindow}
+      />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="w-full max-w-3xl mx-auto py-4">
           {activeMessages.map((msg: ChatMessage, position: number) => {
             const snap = meterStates?.[msg.index];
-            const prev = prevSnapshot;
-            if (snap) prevSnapshot = snap;
+            const prev = previousMeters[position];
             return (
               <MessageBubble
                 key={`${msg.id}:${msg.index}:${position}`}
@@ -855,7 +1111,9 @@ export function ChatView({ characterId }: ChatViewProps) {
                 meters={meters}
                 meterValues={snap}
                 previousMeterValues={prev}
-                onRegenerate={msg.role === 'ASSISTANT' ? handleRegenerate : undefined}
+                onRegenerate={msg.role === 'ASSISTANT' ? () => void handleRegenerate(msg.id) : undefined}
+                regenerateLabel={msg.role === 'ASSISTANT' ? (regenLabels[msg.id] || 'Regenerate (1 Credit)') : undefined}
+                regenerateDisabled={msg.role === 'ASSISTANT' ? !!regenBlocked[msg.id] || streaming : undefined}
                 onEdit={(newContent: string) => handleEdit(msg.id, newContent)}
                 onContentUpdate={(next) => {
                   setActiveMessages((prev) => (prev ?? []).map((m) => (m.id === msg.id ? { ...m, content: next } : m)));

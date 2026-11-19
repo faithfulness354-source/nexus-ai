@@ -15,10 +15,18 @@ import {
   refundImageCredit,
 } from '@/lib/access';
 import { TIERS } from '@/lib/tiers';
-import { GENERATE_TAG_RE } from '@/lib/scene-tags';
+import { GENERATE_TAG_RE, SCENE_TAG_RE } from '@/lib/scene-tags';
 import { renderSceneImage, type SceneCharacter } from '@/lib/scene-image';
 import { falConfigured } from '@/lib/fal/client';
 import { messageContent } from '@/lib/llm/messages';
+import {
+  acquireGenerationSlot,
+  bumpSceneGenerationCount,
+  getSceneGenerationCount,
+  GenerationLimitError,
+  sceneAttemptPreview,
+} from '@/lib/generation-limits';
+import { canSceneGenerate, MAX_SCENE_REROLLS, sceneCreditCost } from '@/lib/reroll-costs';
 
 type CharacterRow = SceneCharacter & {
   personality?: string | null;
@@ -38,10 +46,29 @@ function asSceneCharacter(character: any): CharacterRow {
   };
 }
 
+/** Preview next scene credit cost / reroll remaining for a message. */
+export async function GET(request: NextRequest) {
+  const viewer = await getViewer();
+  if (!viewer) return unauthorized();
+  const messageId = request.nextUrl.searchParams.get('messageId')?.trim() || '';
+  if (!messageId) return NextResponse.json({ error: 'messageId required' }, { status: 400 });
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    include: { session: { select: { userId: true } } },
+  });
+  if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 });
+  if (!canAccessSession(viewer, message.session)) return forbidden('This chat belongs to another account.');
+  const preview = await sceneAttemptPreview(messageId);
+  return NextResponse.json({
+    ...preview,
+    maxRerolls: MAX_SCENE_REROLLS,
+    dailyImageCredits: viewer.isAdmin ? null : TIERS[viewer.tier].dailyImageCredits,
+  });
+}
+
 /**
- * Production scene generation: Ultimate image credits → LLM visual prompt → fal-ai/flux-2
- * → durable Supabase `scene-renders` URL. Accepts either:
- *   { messageId } — render the first pending [GENERATE_IMAGE] tag in that message
+ * Production scene generation with escalating reroll costs + cooldown.
+ *   { messageId } — render/reroll the scene tag on that message
  *   { sessionId, description } — free-form scene for the session's character
  */
 export async function POST(request: NextRequest) {
@@ -62,13 +89,16 @@ export async function POST(request: NextRequest) {
   const messageId = typeof body?.messageId === 'string' ? body.messageId.trim() : '';
   const sessionIdIn = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
   const freeDescription = typeof body?.description === 'string' ? body.description.trim() : '';
+  const forceReroll = body?.reroll === true;
 
   let sessionId = '';
   let description = '';
-  let tagMatch: RegExpExecArray | null = null;
+  let generateMatch: RegExpExecArray | null = null;
+  let sceneMatch: RegExpExecArray | null = null;
   let messageIdToPatch: string | null = null;
   let originalContent = '';
   let character: CharacterRow | null = null;
+  let stateKey = '';
 
   if (messageId) {
     const message = await prisma.message.findUnique({
@@ -78,15 +108,30 @@ export async function POST(request: NextRequest) {
     if (!message) return NextResponse.json({ error: 'Message not found' }, { status: 404 });
     if (!canAccessSession(viewer, message.session)) return forbidden('This chat belongs to another account.');
     if (!message.session.character) return NextResponse.json({ error: 'This chat has no character.' }, { status: 400 });
-    tagMatch = new RegExp(GENERATE_TAG_RE.source, 'i').exec(message.content);
-    if (!tagMatch) {
+
+    generateMatch = new RegExp(GENERATE_TAG_RE.source, 'i').exec(message.content);
+    sceneMatch = new RegExp(SCENE_TAG_RE.source, 'i').exec(message.content);
+
+    if (!generateMatch && !sceneMatch) {
       return NextResponse.json({ content: message.content, rendered: false });
     }
-    description = tagMatch[1].trim();
+    if (sceneMatch && !generateMatch && !forceReroll) {
+      // Already rendered — client should pass reroll:true for regenerations.
+      const preview = await sceneAttemptPreview(messageId);
+      return NextResponse.json({
+        content: message.content,
+        rendered: true,
+        alreadyRendered: true,
+        ...preview,
+      });
+    }
+
+    description = (generateMatch?.[1] || sceneMatch?.[2] || '').trim();
     sessionId = message.sessionId;
     messageIdToPatch = message.id;
     originalContent = message.content;
     character = asSceneCharacter(message.session.character);
+    stateKey = message.id;
   } else if (sessionIdIn && freeDescription) {
     const session = await prisma.chatSession.findUnique({
       where: { id: sessionIdIn },
@@ -98,21 +143,54 @@ export async function POST(request: NextRequest) {
     sessionId = session.id;
     description = freeDescription;
     character = asSceneCharacter(session.character);
+    stateKey = `session:${session.id}:${description.slice(0, 80)}`;
   } else {
     return NextResponse.json({ error: 'Provide messageId, or sessionId with description.' }, { status: 400 });
   }
 
-  if (!(await consumeImageCredit(viewer))) {
+  const generationCount = await getSceneGenerationCount(stateKey);
+  if (!canSceneGenerate(generationCount)) {
     return NextResponse.json(
       {
-        error: `You've used all ${TIERS[viewer.tier].dailyImageCredits} image credits for today. They reset at midnight UTC.`,
-        code: 'OUT_OF_IMAGE_CREDITS',
-        feature: 'sceneImages',
-        tier: viewer.tier,
+        error: `This scene has reached the maximum of ${MAX_SCENE_REROLLS} regenerations.`,
+        code: 'SCENE_REROLL_LIMIT',
+        generationCount,
+        maxRerolls: MAX_SCENE_REROLLS,
       },
       { status: 429 },
     );
   }
+
+  const cost = sceneCreditCost(generationCount);
+  let slot: Awaited<ReturnType<typeof acquireGenerationSlot>> | null = null;
+  let charged = 0;
+
+  try {
+    slot = await acquireGenerationSlot(viewer.user.id, 'image');
+  } catch (err) {
+    if (err instanceof GenerationLimitError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, ...(err.meta ?? {}) },
+        { status: err.status },
+      );
+    }
+    throw err;
+  }
+
+  if (!(await consumeImageCredit(viewer, cost))) {
+    await slot.release();
+    return NextResponse.json(
+      {
+        error: `Need ${cost} image credit${cost === 1 ? '' : 's'} for this render. You've used your daily image credits (or don't have enough left). They reset at midnight UTC.`,
+        code: 'OUT_OF_IMAGE_CREDITS',
+        feature: 'sceneImages',
+        tier: viewer.tier,
+        cost,
+      },
+      { status: 429 },
+    );
+  }
+  charged = cost;
 
   try {
     const recent = await prisma.message.findMany({
@@ -136,16 +214,25 @@ export async function POST(request: NextRequest) {
       landscape: body?.landscape === true,
     });
 
+    const nextCount = await bumpSceneGenerationCount(stateKey, viewer.user.id);
+
     let content: string | undefined;
-    if (messageIdToPatch && tagMatch) {
+    if (messageIdToPatch) {
       const fresh = await prisma.message.findUnique({ where: { id: messageIdToPatch } });
       const base = fresh?.content ?? originalContent;
-      content = base.includes(tagMatch[0])
-        ? base.replace(tagMatch[0], `[SCENE_IMAGE: ${result.url} | ${description.replace(/[\[\]]/g, '')}]`)
-        : base;
+      const replacement = `[SCENE_IMAGE: ${result.url} | ${description.replace(/[\[\]]/g, '')}]`;
+      if (generateMatch && base.includes(generateMatch[0])) {
+        content = base.replace(generateMatch[0], replacement);
+      } else if (sceneMatch && base.includes(sceneMatch[0])) {
+        content = base.replace(sceneMatch[0], replacement);
+      } else {
+        content = `${base.trim()}\n\n${replacement}`;
+      }
       await prisma.message.update({ where: { id: messageIdToPatch }, data: { content } });
     }
 
+    await slot.release();
+    const preview = await sceneAttemptPreview(stateKey);
     return NextResponse.json({
       rendered: true,
       url: result.url,
@@ -154,9 +241,13 @@ export async function POST(request: NextRequest) {
       promptModel: result.promptModel,
       referencesUsed: result.referencesUsed,
       content,
+      creditsCharged: charged,
+      generationCount: nextCount,
+      next: preview,
     });
   } catch (err: any) {
-    await refundImageCredit(viewer).catch(() => {});
+    if (charged) await refundImageCredit(viewer, charged).catch(() => {});
+    await slot?.release();
     console.error('POST /api/generate-scene error:', err);
     return NextResponse.json({ error: err?.message ?? 'Scene render failed' }, { status: 502 });
   }

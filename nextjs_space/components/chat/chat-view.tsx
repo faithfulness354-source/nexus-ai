@@ -562,8 +562,10 @@ export function ChatView({ characterId }: ChatViewProps) {
         savedUserId = res.headers.get('X-User-Message-Id') || userMsg.id;
         keepUserMessage();
         const notice = typeof err?.error === 'string' ? err.error : 'The reply failed. Your message is still in this chat.';
-        if (res.status === 402 && err?.code === 'OUT_OF_CREDITS') {
+        if ((res.status === 429 || res.status === 402) && err?.code === 'OUT_OF_CREDITS') {
           openPaywall('credits');
+        } else if (res.status === 429 && (err?.code === 'GENERATION_COOLDOWN' || err?.code === 'TEXT_SWIPE_LIMIT')) {
+          toast.error(notice);
         } else if (res.status === 402 && err?.feature === 'proModels') {
           openPaywall('proModels');
         } else if (res.status === 403 && err?.code === 'NSFW_LOCKED') {
@@ -718,17 +720,100 @@ export function ChatView({ characterId }: ChatViewProps) {
     }
   }
 
-  async function handleRegenerate() {
-    if (!sessionId || streaming) return;
-    // Remove last AI message and resend last user message
-    const safeMessages = spliceDeletedMessages(messages ?? []);
-    const lastAi = [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
-    const lastUser = [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'USER');
-    if (lastAi) {
-      await handleDelete(lastAi.id);
+  const [regenLabels, setRegenLabels] = useState<Record<string, string>>({});
+  const [regenBlocked, setRegenBlocked] = useState<Record<string, boolean>>({});
+
+  async function refreshRegenLabel(assistantMessageId: string) {
+    try {
+      const res = await fetch(`/api/chat/swipe-preview?assistantMessageId=${encodeURIComponent(assistantMessageId)}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRegenLabels((prev) => ({ ...prev, [assistantMessageId]: data.label || 'Regenerate (1 Credit)' }));
+      setRegenBlocked((prev) => ({ ...prev, [assistantMessageId]: data.allowed === false }));
+    } catch {
+      /* ignore */
     }
-    if (lastUser) {
-      handleSend(lastUser.content);
+  }
+
+  useEffect(() => {
+    const safe = spliceDeletedMessages(messages ?? []);
+    const lastAi = [...safe].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
+    if (lastAi?.id) void refreshRegenLabel(lastAi.id);
+  }, [messages]);
+
+  async function handleRegenerate(assistantMessageId?: string) {
+    if (!sessionId || streaming) return;
+    const safeMessages = spliceDeletedMessages(messages ?? []);
+    const target = assistantMessageId
+      ? safeMessages.find((m: ChatMessage) => m.id === assistantMessageId && m.role === 'ASSISTANT')
+      : [...safeMessages].reverse().find((m: ChatMessage) => m.role === 'ASSISTANT');
+    if (!target) return;
+    if (regenBlocked[target.id]) {
+      toast.error('This turn has reached the regeneration limit.');
+      return;
+    }
+
+    setStreaming(true);
+    setStreamContent('');
+    let fullText = '';
+    try {
+      const res = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          regenerate: true,
+          replaceAssistantId: target.id,
+          model: currentModel,
+          personaId: sessionPersonaId,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 429 && err?.code === 'OUT_OF_CREDITS') openPaywall('credits');
+        else if (res.status === 429) toast.error(err?.error ?? 'Regeneration limit reached.');
+        else if (res.status === 402) openPaywall('credits');
+        else toast.error(err?.error ?? 'Regeneration failed.');
+        await refreshRegenLabel(target.id);
+        return;
+      }
+
+      // Optimistically hide the replaced assistant while the new stream arrives.
+      setActiveMessages((prev) => (prev ?? []).filter((m) => m.id !== target.id));
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error('No stream');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        fullText += decoder.decode(value, { stream: true });
+        setStreamContent(fullText);
+      }
+      setActiveMessages((prev) => [
+        ...(prev ?? []).filter((m) => m.id !== target.id),
+        {
+          id: `regen-${Date.now()}`,
+          sessionId,
+          role: 'ASSISTANT' as const,
+          content: fullText,
+          model: currentModel,
+          tokenCount: estimateTokens(fullText),
+          index: (prev ?? []).length,
+          createdAt: new Date().toISOString(),
+          editHistory: [],
+          deleted: false,
+        } as ChatMessage,
+      ]);
+      setStreamContent('');
+      // Refresh from server so indexes/ids stay authoritative.
+      const refreshed = await fetch(`/api/sessions/${sessionId}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+      if (Array.isArray(refreshed?.messages)) setActiveMessages(refreshed.messages);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Regeneration failed.');
+    } finally {
+      setStreaming(false);
+      setStreamContent('');
     }
   }
 
@@ -1026,7 +1111,9 @@ export function ChatView({ characterId }: ChatViewProps) {
                 meters={meters}
                 meterValues={snap}
                 previousMeterValues={prev}
-                onRegenerate={msg.role === 'ASSISTANT' ? handleRegenerate : undefined}
+                onRegenerate={msg.role === 'ASSISTANT' ? () => void handleRegenerate(msg.id) : undefined}
+                regenerateLabel={msg.role === 'ASSISTANT' ? (regenLabels[msg.id] || 'Regenerate (1 Credit)') : undefined}
+                regenerateDisabled={msg.role === 'ASSISTANT' ? !!regenBlocked[msg.id] || streaming : undefined}
                 onEdit={(newContent: string) => handleEdit(msg.id, newContent)}
                 onContentUpdate={(next) => {
                   setActiveMessages((prev) => (prev ?? []).map((m) => (m.id === msg.id ? { ...m, content: next } : m)));

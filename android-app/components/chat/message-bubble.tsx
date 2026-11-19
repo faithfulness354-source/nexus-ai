@@ -19,6 +19,8 @@ interface MessageBubbleProps {
   content: string;
   model?: string | null;
   onRegenerate?: () => void;
+  regenerateLabel?: string;
+  regenerateDisabled?: boolean;
   onEdit?: (newContent: string) => void;
   onBranch?: () => void;
   onDelete?: () => void;
@@ -45,16 +47,32 @@ export function stripMeterTags(text: string, meters?: MeterDef[]): string {
   return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function ActionButton({ label, onClick, danger, children }: { label: string; onClick: () => void; danger?: boolean; children: React.ReactNode }) {
+function ActionButton({
+  label,
+  onClick,
+  danger,
+  disabled,
+  wide,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
-        'h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground transition-colors',
-        danger ? 'hover:text-rose-400 hover:bg-rose-500/10' : 'hover:text-foreground hover:bg-secondary'
+        'h-7 rounded-md flex items-center justify-center text-muted-foreground transition-colors disabled:opacity-40 disabled:pointer-events-none',
+        wide ? 'px-2 gap-1 max-w-[11rem]' : 'w-7',
+        danger ? 'hover:text-rose-400 hover:bg-rose-500/10' : 'hover:text-foreground hover:bg-secondary',
       )}
     >
       {children}
@@ -63,7 +81,7 @@ function ActionButton({ label, onClick, danger, children }: { label: string; onC
 }
 
 export function MessageBubble({
-  id, role, content, model, onRegenerate, onEdit, onBranch, onDelete, onContentUpdate,
+  id, role, content, model, onRegenerate, regenerateLabel, regenerateDisabled, onEdit, onBranch, onDelete, onContentUpdate,
   characterName, characterAvatar, userName, meters, meterValues, previousMeterValues, isStreaming,
   transform,
 }: MessageBubbleProps) {
@@ -163,7 +181,15 @@ export function MessageBubble({
             )}
           >
             {!isUser && onRegenerate && (
-              <ActionButton label="Regenerate" onClick={onRegenerate}><RotateCcw className="h-3.5 w-3.5" /></ActionButton>
+              <ActionButton
+                label={regenerateLabel || 'Regenerate'}
+                onClick={onRegenerate}
+                disabled={!!regenerateDisabled}
+                wide
+              >
+                <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                <span className="text-[10px] truncate">{regenerateLabel || 'Regenerate'}</span>
+              </ActionButton>
             )}
             {onEdit && (
               <ActionButton label="Edit message" onClick={() => { setEditContent(content ?? ''); setEditing(true); }}>

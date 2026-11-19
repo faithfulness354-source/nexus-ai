@@ -123,50 +123,103 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
 }
 
 /**
- * Atomically consumes one credit for today. Admins and unlimited tiers always succeed.
- * Returns false when the daily allowance is used up.
+ * Atomically consumes `amount` text credits for today (default 1).
+ * Admins and unlimited tiers always succeed. Returns false when the daily allowance is insufficient.
  */
-export async function consumeCredit(viewer: Viewer): Promise<boolean> {
+export async function consumeCredit(viewer: Viewer, amount = 1): Promise<boolean> {
+  const n = Math.max(1, Math.floor(amount));
   if (viewer.isAdmin) return true;
   const limit = TIERS[viewer.tier].dailyCredits;
   const today = utcDay();
   const id = viewer.user.id;
-  // New day: reset the counter to 1 (only if it hasn't been reset concurrently).
-  const reset = await prisma.user.updateMany({ where: { id, creditsDay: { not: today } }, data: { creditsDay: today, creditsUsed: 1 } });
+  // New day: reset the counter to n (only if it hasn't been reset concurrently).
+  const reset = await prisma.user.updateMany({
+    where: { id, creditsDay: { not: today } },
+    data: { creditsDay: today, creditsUsed: n },
+  });
   if (reset.count > 0) return true;
   if (limit === null) {
-    await prisma.user.update({ where: { id }, data: { creditsUsed: { increment: 1 } } });
+    await prisma.user.update({ where: { id }, data: { creditsUsed: { increment: n } } });
     return true;
   }
-  const inc = await prisma.user.updateMany({ where: { id, creditsDay: today, creditsUsed: { lt: limit } }, data: { creditsUsed: { increment: 1 } } });
+  const inc = await prisma.user.updateMany({
+    where: { id, creditsDay: today, creditsUsed: { lte: limit - n } },
+    data: { creditsUsed: { increment: n } },
+  });
   return inc.count > 0;
 }
 
-/** Gives back a credit when generation failed before producing anything. */
-export async function refundCredit(viewer: Viewer): Promise<void> {
+/** Gives back credits when generation failed before producing anything. */
+export async function refundCredit(viewer: Viewer, amount = 1): Promise<void> {
   if (viewer.isAdmin) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, creditsDay: utcDay(), creditsUsed: { gt: 0 } }, data: { creditsUsed: { decrement: 1 } } });
+  const n = Math.max(1, Math.floor(amount));
+  const today = utcDay();
+  await prisma.$executeRawUnsafe(
+    `UPDATE nexus."User"
+     SET "creditsUsed" = GREATEST(0, "creditsUsed" - $2)
+     WHERE id = $1 AND "creditsDay" = $3`,
+    viewer.user.id,
+    n,
+    today,
+  ).catch(async () => {
+    for (let i = 0; i < n; i += 1) {
+      await prisma.user.updateMany({
+        where: { id: viewer.user.id, creditsDay: today, creditsUsed: { gt: 0 } },
+        data: { creditsUsed: { decrement: 1 } },
+      });
+    }
+  });
 }
 
 /**
- * Atomically consumes one image/scene credit for today (Ultimate: 100/day). Admins always succeed.
- * Returns false when the tier has no image allowance or it is used up.
+ * Atomically consumes `amount` image/scene credits for today (Ultimate: 100/day).
+ * Admins always succeed. Returns false when the tier has no image allowance or it is used up.
  */
-export async function consumeImageCredit(viewer: Viewer): Promise<boolean> {
+export async function consumeImageCredit(viewer: Viewer, amount = 1): Promise<boolean> {
+  const n = Math.max(1, Math.floor(amount));
   if (viewer.isAdmin) return true;
   const limit = TIERS[viewer.tier].dailyImageCredits;
   if (limit <= 0) return false;
   const today = utcDay();
   const id = viewer.user.id;
-  const reset = await prisma.user.updateMany({ where: { id, imageCreditsDay: { not: today } }, data: { imageCreditsDay: today, imageCreditsUsed: 1 } });
-  if (reset.count > 0) return true;
-  const inc = await prisma.user.updateMany({ where: { id, imageCreditsDay: today, imageCreditsUsed: { lt: limit } }, data: { imageCreditsUsed: { increment: 1 } } });
+  const reset = await prisma.user.updateMany({
+    where: { id, imageCreditsDay: { not: today } },
+    data: { imageCreditsDay: today, imageCreditsUsed: n },
+  });
+  if (reset.count > 0) {
+    // New day reset always starts at n — only valid when n <= limit.
+    if (n > limit) {
+      await prisma.user.update({ where: { id }, data: { imageCreditsUsed: 0 } });
+      return false;
+    }
+    return true;
+  }
+  const inc = await prisma.user.updateMany({
+    where: { id, imageCreditsDay: today, imageCreditsUsed: { lte: limit - n } },
+    data: { imageCreditsUsed: { increment: n } },
+  });
   return inc.count > 0;
 }
 
-export async function refundImageCredit(viewer: Viewer): Promise<void> {
+export async function refundImageCredit(viewer: Viewer, amount = 1): Promise<void> {
   if (viewer.isAdmin) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, imageCreditsDay: utcDay(), imageCreditsUsed: { gt: 0 } }, data: { imageCreditsUsed: { decrement: 1 } } });
+  const n = Math.max(1, Math.floor(amount));
+  const today = utcDay();
+  await prisma.$executeRawUnsafe(
+    `UPDATE nexus."User"
+     SET "imageCreditsUsed" = GREATEST(0, "imageCreditsUsed" - $2)
+     WHERE id = $1 AND "imageCreditsDay" = $3`,
+    viewer.user.id,
+    n,
+    today,
+  ).catch(async () => {
+    for (let i = 0; i < n; i += 1) {
+      await prisma.user.updateMany({
+        where: { id: viewer.user.id, imageCreditsDay: today, imageCreditsUsed: { gt: 0 } },
+        data: { imageCreditsUsed: { decrement: 1 } },
+      });
+    }
+  });
 }
 
 /** A chat session is accessible to its owner; legacy chats without an owner only to admins. */
