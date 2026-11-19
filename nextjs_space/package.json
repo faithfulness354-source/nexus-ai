@@ -6,7 +6,12 @@
     "postinstall": "prisma generate",
     "build": "node scripts/build.mjs",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "watchdog": "tsx --require dotenv/config src/scripts/nexus-healthcheck.ts",
+    "watchdog:dry": "tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --dry-run",
+    "watchdog:json": "tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --json",
+    "watchdog:sms-test": "tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --sms-test",
+    "watchdog:baseline": "tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --update-baseline --dry-run"
   },
   "prisma": {
     "seed": "tsx --require dotenv/config scripts/safe-seed.ts"

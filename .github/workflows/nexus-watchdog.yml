@@ -1,0 +1,82 @@
+name: Nexus Watchdog
+
+on:
+  schedule:
+    # Every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip SMS (dry-run)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      sms_test:
+        description: 'Send a one-off SMS test instead of full check'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: nexus-watchdog
+  cancel-in-progress: false
+
+jobs:
+  healthcheck:
+    name: Healthcheck + SMS on critical
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: nextjs_space
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nextjs_space/package-lock.json
+
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+      - name: Run watchdog
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          NEXUS_HEALTHCHECK_BASE_URL: ${{ secrets.NEXUS_HEALTHCHECK_BASE_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+          NEXUS_HEALTHCHECK_PROFILE_USER: ${{ secrets.NEXUS_HEALTHCHECK_PROFILE_USER }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_TO_PHONE_NUMBER: ${{ secrets.ALERT_TO_PHONE_NUMBER }}
+          ALERT_SMS_WEBHOOK_URL: ${{ secrets.ALERT_SMS_WEBHOOK_URL }}
+          ALERT_SMS_COOLDOWN_MINUTES: ${{ secrets.ALERT_SMS_COOLDOWN_MINUTES }}
+          ALERT_SMS_COOLDOWN_FILE: ${{ runner.temp }}/nexus-watchdog-sms-cooldown.json
+        run: |
+          set -euo pipefail
+          ARGS=(--json)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.sms_test }}" = "true" ]; then
+            npx tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --sms-test
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          npx tsx --require dotenv/config src/scripts/nexus-healthcheck.ts "${ARGS[@]}"

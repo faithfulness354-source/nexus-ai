@@ -15,6 +15,11 @@ out/
 
 logs/
 *.log
+
+# Watchdog cooldown / baseline (local + runner state)
+**/data/watchdog-sms-cooldown.json
+**/data/watchdog-baseline.json
+
 .cursor/
 !.cursor/rules/
 !.cursor/rules/**
