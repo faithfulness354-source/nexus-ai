@@ -37,8 +37,8 @@ create table if not exists public.chats (
   user_id uuid not null references auth.users (id) on delete cascade,
   character_local_id text,
   title text not null default 'New Chat',
-  model text not null default '',
-  provider text not null default '',
+  model text not null default 'llama-3-erato-v1',
+  provider text not null default 'NOVELAI',
   updated_at timestamptz not null default now()
 );
 

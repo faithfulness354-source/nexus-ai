@@ -119,7 +119,7 @@ export function resolveChatContext(
   return recountTurnTokens(history, definitionTokens);
 }
 
-/** Provider + model new sessions should start with (NovelAI when the paid key is present). */
+/** Provider + model new sessions should start with. Never defaults to Gemini. */
 export async function getDefaultSessionTarget(): Promise<{ provider: string; model: string }> {
   if (process.env.NOVELAI_API_KEY?.trim()) {
     return { provider: 'NOVELAI', model: DEFAULT_MODEL };
@@ -134,11 +134,10 @@ export async function getDefaultSessionTarget(): Promise<{ provider: string; mod
       : paid.provider === 'OPENROUTER'
         ? resolveOpenRouterModel(null, paid.defaultModel)
         : (paid.defaultModel || DEFAULT_MODEL);
-    return { provider: paid.provider, model };
-  }
-  const gemini = await prisma.providerConfig.findUnique({ where: { provider: 'GEMINI' as any } });
-  if (gemini?.isActive && (gemini.apiKey?.trim() || gemini.baseUrl?.trim())) {
-    return { provider: 'GEMINI', model: geminiModel(null, gemini.defaultModel) };
+    // Reject Gemini family ids that may linger in ProviderConfig.defaultModel.
+    if (model && !/gemini/i.test(model)) {
+      return { provider: paid.provider, model };
+    }
   }
   return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
 }

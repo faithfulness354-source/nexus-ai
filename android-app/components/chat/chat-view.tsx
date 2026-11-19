@@ -9,7 +9,7 @@ import { GenerationPanel } from './generation-panel';
 import { TypingIndicator } from './typing-indicator';
 import { estimateTokens, countSystemTokens, countHistoryTokens } from '@/lib/tokens';
 import { spliceDeletedMessages } from '@/lib/llm/messages';
-import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, usableCustomModel, usableGeminiModel, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
+import { PROVIDER_MODELS, CONTEXT_WINDOWS, DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, MeterDef, MeterSnapshot, GenSettings, ChatMessage } from '@/lib/types';
 import { Plus, Pencil, SlidersHorizontal, MoreVertical, KeyRound, Brain, CreditCard, UserRound, Check } from 'lucide-react';
 import { applyScripts, fillMacros, pickPersona, type PersonaData, type ScriptData } from '@/lib/hubs';
 import { cardFirstMessage, composeOpening } from '@/lib/opening';
@@ -306,8 +306,10 @@ export function ChatView({ characterId }: ChatViewProps) {
         setSessionPersonaId(session?.personaId ?? null);
         const prov = normalizeProvider(session?.provider);
         setCurrentProvider(prov);
-        const savedModel = usableCustomModel(session?.model);
-        setCurrentModel(prov === DEFAULT_PROVIDER ? usableGeminiModel(savedModel) : savedModel);
+        const savedModel = typeof session?.model === 'string' ? session.model.trim() : '';
+        // Never rehydrate a Gemini family id into the chat chip.
+        const safeModel = savedModel && !/gemini|gemma/i.test(savedModel) ? savedModel : DEFAULT_MODEL;
+        setCurrentModel(safeModel || DEFAULT_MODEL);
         if (session?.generationSettings) {
           setGenSettings(session.generationSettings);
         }

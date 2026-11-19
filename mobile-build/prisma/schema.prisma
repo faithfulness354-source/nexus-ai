@@ -56,8 +56,8 @@ model ChatSession {
   characterId             String
   character               Character           @relation(fields: [characterId], references: [id], onDelete: Cascade)
   title                   String              @default("New Chat")
-  model                   String              @default("gemini-flash-latest")
-  provider                String              @default("GEMINI")
+  model                   String              @default("llama-3-erato-v1")
+  provider                String              @default("NOVELAI")
   branchedFromSessionId   String?
   branchedAtMessageIndex  Int?
   /// Owner of the chat. Null for legacy chats (visible to admins only).

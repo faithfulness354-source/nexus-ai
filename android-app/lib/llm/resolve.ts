@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, isGeminiModel, usableGeminiModel } from '@/lib/types';
+import { DEFAULT_PROVIDER, DEFAULT_MODEL, normalizeProvider, isGeminiModel, novelApiModel, usableGeminiModel, GEMINI_DEFAULT_MODEL } from '@/lib/types';
 import { resolveCustomModel, resolveOpenRouterModel } from '@/lib/llm/messages';
 
 export interface ResolvedTarget {
@@ -8,30 +8,62 @@ export interface ResolvedTarget {
   config: { apiKey: string | null; baseUrl: string | null; defaultModel: string | null };
 }
 
+/**
+ * Stop strings for a user turn only. A bare line break is never a stop,
+ * so a new paragraph does not end the reply.
+ */
+export function novelUserStopSequences(userName?: string | null): string[] {
+  const name = (userName ?? '').replace(/[\r\n]+/g, ' ').trim();
+  const labels = ['[User]'];
+  if (name) labels.push(name);
+  if (!labels.some((label) => label.toLowerCase() === 'user')) labels.push('User');
+  const sequences: string[] = [];
+  for (const label of labels) {
+    if (!label || label === '\n' || label === '\n\n') continue;
+    const sequence = label.startsWith('[') ? `\n${label}` : `\n${label}:`;
+    if (sequence === '\n' || sequence === '\n\n') continue;
+    sequences.push(sequence);
+  }
+  return [...new Set(sequences)];
+}
+
 function geminiModel(requested?: string | null, configured?: string | null): string {
   if (isGeminiModel(requested)) return usableGeminiModel(requested);
-  return usableGeminiModel(configured);
+  return usableGeminiModel(configured || GEMINI_DEFAULT_MODEL);
 }
 
 /**
  * Resolve which provider/model/key to use for a chat request.
- * - Unsupported providers (e.g. legacy OpenAI sessions) are mapped to Google Gemini.
- * - If the selected provider has no saved key, the saved Gemini key is used instead.
+ * When NOVELAI_API_KEY is set, every chat turn uses NovelAI with the requested model id.
  * Returns null if no usable key exists.
  */
 export async function resolveChatTarget(provider?: string | null, model?: string | null): Promise<ResolvedTarget | null> {
+  const novelKey = process.env.NOVELAI_API_KEY?.trim();
+  if (novelKey) {
+    const novelModel = novelApiModel(model) || DEFAULT_MODEL;
+    return {
+      provider: 'NOVELAI',
+      model: novelModel,
+      config: { apiKey: novelKey, baseUrl: 'https://text.novelai.net/ai/generate', defaultModel: novelModel },
+    };
+  }
+
   let p = normalizeProvider(provider);
   let m = model ?? null;
 
-  let config = p === DEFAULT_PROVIDER ? null : await prisma.providerConfig.findUnique({ where: { provider: p as any } });
+  let config = p === 'NOVELAI' ? null : await prisma.providerConfig.findUnique({ where: { provider: p as any } });
   const selectedReady = !!config?.isActive && !!(config?.apiKey?.trim() || config?.baseUrl?.trim());
-  if (p !== DEFAULT_PROVIDER && !selectedReady) {
+  if (p !== DEFAULT_PROVIDER && !selectedReady && p !== 'GEMINI') {
     p = DEFAULT_PROVIDER;
     config = null;
   }
 
-  if (p === DEFAULT_PROVIDER) {
-    config = await prisma.providerConfig.findUnique({ where: { provider: DEFAULT_PROVIDER as any } });
+  if (p === 'NOVELAI') {
+    return null;
+  }
+
+  if (p === 'GEMINI') {
+    config = await prisma.providerConfig.findUnique({ where: { provider: 'GEMINI' as any } });
     const geminiReady = !!config?.isActive && !!(config?.apiKey?.trim() || config?.baseUrl?.trim());
     if (!geminiReady) {
       const proxy = await prisma.providerConfig.findFirst({
@@ -53,7 +85,10 @@ export async function resolveChatTarget(provider?: string | null, model?: string
       }
       return null;
     }
-    m = geminiModel(m, config.defaultModel);
+    m = geminiModel(m, config?.defaultModel);
+  } else {
+    config = config ?? await prisma.providerConfig.findUnique({ where: { provider: p as any } });
+    if (!config?.isActive || !(config.apiKey?.trim() || config.baseUrl?.trim())) return null;
   }
 
   return {
@@ -71,8 +106,24 @@ export async function resolveChatTarget(provider?: string | null, model?: string
   };
 }
 
-/** Provider + model new sessions should start with (always Google Gemini). */
+/** Provider + model new sessions should start with. Never defaults to Gemini. */
 export async function getDefaultSessionTarget(): Promise<{ provider: string; model: string }> {
-  const gemini = await prisma.providerConfig.findUnique({ where: { provider: DEFAULT_PROVIDER as any } });
-  return { provider: DEFAULT_PROVIDER, model: geminiModel(null, gemini?.defaultModel) };
+  if (process.env.NOVELAI_API_KEY?.trim()) {
+    return { provider: 'NOVELAI', model: DEFAULT_MODEL };
+  }
+  const paid = await prisma.providerConfig.findFirst({
+    where: { provider: { in: ['OPENROUTER', 'CUSTOM', 'ANTHROPIC'] as any }, isActive: true },
+    orderBy: { provider: 'asc' },
+  });
+  if (paid && (paid.apiKey?.trim() || paid.baseUrl?.trim())) {
+    const model = paid.provider === 'CUSTOM'
+      ? resolveCustomModel(null, paid.defaultModel)
+      : paid.provider === 'OPENROUTER'
+        ? resolveOpenRouterModel(null, paid.defaultModel)
+        : (paid.defaultModel || DEFAULT_MODEL);
+    if (model && !/gemini/i.test(model)) {
+      return { provider: paid.provider, model };
+    }
+  }
+  return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
 }

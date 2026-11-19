@@ -23,9 +23,9 @@ function outboundModel(provider: string, model: string): string {
   if (name === 'CUSTOM') return resolveCustomModel(model);
   if (name === 'OPENROUTER') return resolveOpenRouterModel(model);
   if (name === 'GEMINI') return usableGeminiModel(model);
-  if (name === 'NOVELAI') return novelApiModel(model);
+  if (name === 'NOVELAI') return novelApiModel(model) || DEFAULT_MODEL;
   const value = typeof model === 'string' ? model.trim() : '';
-  return value || PROVIDER_MODELS.ANTHROPIC?.[0] || DEFAULT_MODEL;
+  return value || PROVIDER_MODELS.NOVELAI?.[0] || DEFAULT_MODEL;
 }
 
 export function createLLMStream(opts: StreamOptions): ReadableStream {
@@ -66,8 +66,10 @@ export function createLLMStream(opts: StreamOptions): ReadableStream {
       stream = streamNovelAI(params);
       break;
     case 'GEMINI':
-    default:
       stream = streamGemini(params);
+      break;
+    default:
+      stream = streamNovelAI(params);
       break;
   }
 

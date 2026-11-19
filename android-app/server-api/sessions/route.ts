@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     }
     if (character.nsfw && !canViewNsfw(viewer)) return nsfwLocked();
 
-    // New sessions always start on Google Gemini (the primary provider)
+    // New sessions start on the configured paid chat model (NovelAI Llama 3 Erato by default).
     const target = await getDefaultSessionTarget();
 
     let personaId: string | null = null;

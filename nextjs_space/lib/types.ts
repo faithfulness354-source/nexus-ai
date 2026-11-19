@@ -110,19 +110,54 @@ export interface LLMMessage {
   content: string;
 }
 
+/** Built-in NovelAI chat model when CHAT_MODEL / NEXT_PUBLIC_DEFAULT_MODEL is unset. */
+export const BUILTIN_CHAT_MODEL = 'llama-3-erato-v1';
+
+function bareModelId(model?: string | null): string {
+  return (model ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+function looksLikeGeminiFamily(model?: string | null): boolean {
+  const value = bareModelId(model).toLowerCase();
+  if (!value) return false;
+  return /^(gemini|gemma)-/i.test(value) || value.startsWith('google/gemini') || value.startsWith('google/gemma') || value.includes('gemini');
+}
+
+/** NovelAI id for the selected chat model. Gemini / blank ids are rejected so chat falls back to DEFAULT_MODEL. */
+export function novelApiModel(model?: string | null): string {
+  const value = bareModelId(model);
+  if (!value || looksLikeGeminiFamily(value)) return '';
+  const key = value.toLowerCase().replace(/[\s_]+/g, '-');
+  // "Lama 3 Erdos" and similar display names map to NovelAI Erato.
+  if (/llama-?3-?(erato|erdos)/.test(key) || key === 'erato' || key === 'erdos') return 'llama-3-erato-v1';
+  return value;
+}
+
+function configuredDefaultModel(): string {
+  const fromEnv = bareModelId(process.env.NEXT_PUBLIC_DEFAULT_MODEL || process.env.CHAT_MODEL);
+  return novelApiModel(fromEnv) || BUILTIN_CHAT_MODEL;
+}
+
+function configuredDefaultProvider(): string {
+  const raw = bareModelId(process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || process.env.CHAT_PROVIDER).toUpperCase();
+  if (raw === 'GEMINI' || looksLikeGeminiFamily(raw)) return 'NOVELAI';
+  if (['NOVELAI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'].includes(raw)) return raw;
+  return 'NOVELAI';
+}
+
 // NovelAI is the paid chat provider. Gemini remains available only when an admin activates it in Settings.
-export const DEFAULT_PROVIDER = 'NOVELAI';
-export const DEFAULT_MODEL = 'glm-4.6-xialong-v1';
+export const DEFAULT_PROVIDER = configuredDefaultProvider();
+export const DEFAULT_MODEL = configuredDefaultModel();
 /** Gemini-only fallback for the Gemini transport — never used as the app-wide chat default. */
 export const GEMINI_DEFAULT_MODEL = 'gemini-flash-latest';
 /** Current Groq production and preview chat models. Speech and guard models are omitted. */
 export const GROQ_CHAT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'allam-2-7b'];
 /** Used when a custom or Groq request has no current model of its own. */
 export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-20b';
-/** Seed OpenRouter chat ids when the live catalog request fails. */
-export const OPENROUTER_CHAT_MODELS = ['anthropic/claude-sonnet-4', 'meta-llama/llama-3.3-70b-instruct', 'openai/gpt-4o-mini'];
+/** Seed OpenRouter chat ids when the live catalog request fails. Never includes google/gemini*. */
+export const OPENROUTER_CHAT_MODELS = ['meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-sonnet-4', 'openai/gpt-4o-mini'];
 /** Used when an OpenRouter request has no current vendor/model id. */
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
+export const OPENROUTER_DEFAULT_MODEL = 'meta-llama/llama-3.3-70b-instruct';
 const RETIRED_GROQ_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.3-70b-specdec',
@@ -146,19 +181,9 @@ const RETIRED_OPENROUTER_MODELS = [
   'openai/gpt-3.5-turbo',
   'google/gemini-pro',
   'google/gemini-flash-1.5',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
 ];
-
-function bareModelId(model?: string | null): string {
-  return (model ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
-}
-
-/** NovelAI id for the selected chat model. Display names map to the generation id; nothing is substituted. */
-export function novelApiModel(model?: string | null): string {
-  const value = bareModelId(model);
-  const key = value.toLowerCase().replace(/[\s_]+/g, '-');
-  if (/llama-?3-?erato/.test(key)) return 'llama-3-erato-v1';
-  return value;
-}
 
 /** Drops a blank id or a Groq model that has already been shut off. */
 export function usableCustomModel(model?: string | null): string {
@@ -197,7 +222,7 @@ export function isGeminiModel(model?: string | null): boolean {
   return !!model && /^(gemini|gemma)-/i.test(model);
 }
 
-// Versioned models Google has shut off for new API keys (they return 404). Saved values are mapped to DEFAULT_MODEL.
+// Versioned models Google has shut off for new API keys (they return 404). Saved values map to GEMINI_DEFAULT_MODEL.
 export const RETIRED_GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
 /** Returns a working Gemini model id, replacing missing/retired/non-Gemini values with GEMINI_DEFAULT_MODEL. */
@@ -207,9 +232,7 @@ export function usableGeminiModel(model?: string | null): string {
 
 /** True when a model id is a Google Gemini / Gemma SKU (including OpenRouter google/gemini*). */
 export function isGeminiFamilyModel(model?: string | null): boolean {
-  const value = bareModelId(model).toLowerCase();
-  if (!value) return false;
-  return isGeminiModel(value) || value.startsWith('google/gemini') || value.startsWith('google/gemma') || value.includes('gemini');
+  return looksLikeGeminiFamily(model);
 }
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
@@ -217,7 +240,7 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   ANTHROPIC: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
   OPENROUTER: OPENROUTER_CHAT_MODELS,
   CUSTOM: GROQ_CHAT_MODELS,
-  NOVELAI: ['glm-4.6-xialong-v1', 'xialong-v1', 'llama-3-erato-v1'],
+  NOVELAI: ['llama-3-erato-v1', 'glm-4.6-xialong-v1', 'xialong-v1'],
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -233,6 +256,12 @@ export const CONTEXT_WINDOWS: Record<string, number> = {
   'claude-3-5-sonnet-20241022': 200000,
   'claude-3-5-haiku-20241022': 200000,
   'claude-3-opus-20240229': 200000,
+  'llama-3-erato-v1': 8192,
+  'glm-4.6-xialong-v1': 8192,
+  'xialong-v1': 8192,
+  'meta-llama/llama-3.3-70b-instruct': 131072,
+  'anthropic/claude-sonnet-4': 200000,
+  'openai/gpt-4o-mini': 128000,
   'gemini-3.8-flash': 1048576,
   'gemini-3.5-flash-lite': 1048576,
   'gemini-flash-lite-latest': 1048576,

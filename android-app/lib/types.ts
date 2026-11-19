@@ -110,17 +110,53 @@ export interface LLMMessage {
   content: string;
 }
 
-// Google Gemini is the primary/default provider across the app. OpenAI is not supported.
-export const DEFAULT_PROVIDER = 'GEMINI';
-export const DEFAULT_MODEL = 'gemini-flash-latest';
+/** Built-in NovelAI chat model when CHAT_MODEL / NEXT_PUBLIC_DEFAULT_MODEL is unset. */
+export const BUILTIN_CHAT_MODEL = 'llama-3-erato-v1';
+
+function bareModelId(model?: string | null): string {
+  return (model ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+function looksLikeGeminiFamily(model?: string | null): boolean {
+  const value = bareModelId(model).toLowerCase();
+  if (!value) return false;
+  return /^(gemini|gemma)-/i.test(value) || value.startsWith('google/gemini') || value.startsWith('google/gemma') || value.includes('gemini');
+}
+
+/** NovelAI id for the selected chat model. Gemini / blank ids are rejected. */
+export function novelApiModel(model?: string | null): string {
+  const value = bareModelId(model);
+  if (!value || looksLikeGeminiFamily(value)) return '';
+  const key = value.toLowerCase().replace(/[\s_]+/g, '-');
+  if (/llama-?3-?(erato|erdos)/.test(key) || key === 'erato' || key === 'erdos') return 'llama-3-erato-v1';
+  return value;
+}
+
+function configuredDefaultModel(): string {
+  const fromEnv = bareModelId(process.env.NEXT_PUBLIC_DEFAULT_MODEL || process.env.CHAT_MODEL);
+  return novelApiModel(fromEnv) || BUILTIN_CHAT_MODEL;
+}
+
+function configuredDefaultProvider(): string {
+  const raw = bareModelId(process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || process.env.CHAT_PROVIDER).toUpperCase();
+  if (raw === 'GEMINI' || looksLikeGeminiFamily(raw)) return 'NOVELAI';
+  if (['NOVELAI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'].includes(raw)) return raw;
+  return 'NOVELAI';
+}
+
+// NovelAI is the paid chat provider. Gemini is opt-in via Settings only.
+export const DEFAULT_PROVIDER = configuredDefaultProvider();
+export const DEFAULT_MODEL = configuredDefaultModel();
+/** Gemini-only fallback for the Gemini transport — never the app-wide chat default. */
+export const GEMINI_DEFAULT_MODEL = 'gemini-flash-latest';
 /** Current Groq production and preview chat models. Speech and guard models are omitted. */
 export const GROQ_CHAT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'allam-2-7b'];
 /** Used when a custom or Groq request has no current model of its own. */
 export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-20b';
-/** Live OpenRouter chat ids. Confirmed against the public models list. */
-export const OPENROUTER_CHAT_MODELS = ['google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'anthropic/claude-sonnet-4', 'meta-llama/llama-3.3-70b-instruct'];
+/** Live OpenRouter chat ids. Never includes google/gemini*. */
+export const OPENROUTER_CHAT_MODELS = ['meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-sonnet-4', 'openai/gpt-4o-mini'];
 /** Used when an OpenRouter request has no current vendor/model id. */
-export const OPENROUTER_DEFAULT_MODEL = 'google/gemini-2.5-flash';
+export const OPENROUTER_DEFAULT_MODEL = 'meta-llama/llama-3.3-70b-instruct';
 const RETIRED_GROQ_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.3-70b-specdec',
@@ -144,11 +180,9 @@ const RETIRED_OPENROUTER_MODELS = [
   'openai/gpt-3.5-turbo',
   'google/gemini-pro',
   'google/gemini-flash-1.5',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
 ];
-
-function bareModelId(model?: string | null): string {
-  return (model ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
-}
 
 /** Drops a blank id or a Groq model that has already been shut off. */
 export function usableCustomModel(model?: string | null): string {
@@ -171,11 +205,12 @@ export function usableModelForProvider(provider: string, model?: string | null):
   if (provider === 'GEMINI') return usableGeminiModel(model);
   if (provider === 'OPENROUTER') return usableOpenRouterModel(model);
   if (provider === 'CUSTOM') return usableCustomModel(model);
+  if (provider === 'NOVELAI') return novelApiModel(model);
   return bareModelId(model);
 }
 // Tried in order when the selected Gemini model is retired, rate-limited or overloaded.
 export const GEMINI_FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'];
-export const SUPPORTED_PROVIDERS = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'] as const;
+export const SUPPORTED_PROVIDERS = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM', 'NOVELAI'] as const;
 
 export function normalizeProvider(provider?: string | null): string {
   const p = (provider ?? '').toUpperCase();
@@ -186,12 +221,16 @@ export function isGeminiModel(model?: string | null): boolean {
   return !!model && /^(gemini|gemma)-/i.test(model);
 }
 
-// Versioned models Google has shut off for new API keys (they return 404). Saved values are mapped to DEFAULT_MODEL.
+export function isGeminiFamilyModel(model?: string | null): boolean {
+  return looksLikeGeminiFamily(model);
+}
+
+// Versioned models Google has shut off for new API keys (they return 404).
 export const RETIRED_GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
-/** Returns a working Gemini model id, replacing missing/retired/non-Gemini values with DEFAULT_MODEL. */
+/** Returns a working Gemini model id for the Gemini transport only. */
 export function usableGeminiModel(model?: string | null): string {
-  return isGeminiModel(model) && !RETIRED_GEMINI_MODELS.includes(model as string) ? (model as string) : DEFAULT_MODEL;
+  return isGeminiModel(model) && !RETIRED_GEMINI_MODELS.includes(model as string) ? (model as string) : GEMINI_DEFAULT_MODEL;
 }
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
@@ -199,6 +238,7 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   ANTHROPIC: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
   OPENROUTER: OPENROUTER_CHAT_MODELS,
   CUSTOM: GROQ_CHAT_MODELS,
+  NOVELAI: ['llama-3-erato-v1', 'glm-4.6-xialong-v1', 'xialong-v1'],
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -206,6 +246,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   GEMINI: 'Google Gemini',
   OPENROUTER: 'OpenRouter',
   CUSTOM: 'Custom Endpoint',
+  NOVELAI: 'NovelAI',
 };
 
 export const CONTEXT_WINDOWS: Record<string, number> = {
@@ -213,6 +254,12 @@ export const CONTEXT_WINDOWS: Record<string, number> = {
   'claude-3-5-sonnet-20241022': 200000,
   'claude-3-5-haiku-20241022': 200000,
   'claude-3-opus-20240229': 200000,
+  'llama-3-erato-v1': 8192,
+  'glm-4.6-xialong-v1': 8192,
+  'xialong-v1': 8192,
+  'meta-llama/llama-3.3-70b-instruct': 131072,
+  'anthropic/claude-sonnet-4': 200000,
+  'openai/gpt-4o-mini': 128000,
   'gemini-3.8-flash': 1048576,
   'gemini-3.5-flash-lite': 1048576,
   'gemini-flash-lite-latest': 1048576,

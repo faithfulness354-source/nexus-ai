@@ -38,8 +38,8 @@ async function main() {
       update: {},
       create: {
         provider,
-        isActive: provider === 'OPENROUTER',
-        defaultModel: provider === 'OPENROUTER' ? 'anthropic/claude-sonnet-4' : provider === 'CUSTOM' ? 'openai/gpt-oss-20b' : null,
+        isActive: false,
+        defaultModel: provider === 'OPENROUTER' ? 'meta-llama/llama-3.3-70b-instruct' : provider === 'CUSTOM' ? 'openai/gpt-oss-20b' : null,
       },
     });
   }

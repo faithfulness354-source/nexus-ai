@@ -49,11 +49,11 @@ export function purgeStoredChatModelIfStale(activeModels: string[]) {
 
 /**
  * Picks a model that exists on the paid provider list.
- * Gemini family ids and unknown ids are replaced with the first active model.
+ * Gemini family ids and unknown ids are replaced with the env-configured DEFAULT_MODEL.
  */
 export function pickActiveChatModel(candidates: Array<string | null | undefined>, activeModels: string[]): string {
   const list = activeModels.map((model) => model.trim()).filter(Boolean);
-  const fallback = list[0] || DEFAULT_MODEL;
+  const fallback = list.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : (list[0] || DEFAULT_MODEL);
   if (!list.length) return fallback;
   for (const candidate of candidates) {
     const value = (candidate ?? '').trim();

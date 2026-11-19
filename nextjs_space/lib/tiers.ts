@@ -15,7 +15,7 @@ export interface TierDef {
   speed: 'standard' | 'fast' | 'priority' | 'priority-queue';
   customPrompts: boolean; // custom system prompts + lorebooks
   advancedGeneration: boolean; // temperature / top-p sampling sliders
-  proModels: boolean; // "pro" Gemini models
+  proModels: boolean; // higher-tier / "-pro" chat models
   nsfw: boolean; // 18+ content (still requires age verification)
   sceneImages: boolean; // dynamic inline scene rendering ([GENERATE_IMAGE])
   vipThemes: boolean; // VIP profile themes & badge

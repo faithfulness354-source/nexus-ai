@@ -17,7 +17,7 @@ const COPY: Record<PaywallReason, { title: string; body: string; minTier: TierId
   sceneImages: { title: 'Scene images are an Ultimate feature', body: 'Dynamic inline scene rendering with 100 daily image credits is included with Ultimate.', minTier: 'ULTIMATE' },
   advancedGeneration: { title: 'Advanced sampling sliders', body: 'Temperature and Top-P controls unlock with Premium.', minTier: 'PREMIUM' },
   customPrompts: { title: 'Custom system prompts & lorebooks', body: 'Custom system prompts and lorebooks unlock with Plus.', minTier: 'PLUS' },
-  proModels: { title: 'Pro models', body: 'The most capable Gemini models unlock with Premium.', minTier: 'PREMIUM' },
+  proModels: { title: 'Pro models', body: 'The most capable chat models unlock with Premium.', minTier: 'PREMIUM' },
   nsfw: { title: '18+ content', body: '18+ NSFW content and scenarios unlock with the Premium or Ultimate plan.', minTier: 'PREMIUM' },
   vipThemes: { title: 'VIP profile themes', body: 'VIP profile themes and the VIP badge are included with Ultimate.', minTier: 'ULTIMATE' },
 };

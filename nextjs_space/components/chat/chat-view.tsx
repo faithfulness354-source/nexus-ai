@@ -401,8 +401,15 @@ export function ChatView({ characterId }: ChatViewProps) {
         if (typeof data?.provider === 'string' && data.provider.trim()) {
           setCurrentProvider(normalizeProvider(data.provider));
         }
-        setProviderModels(models);
-        purgeStoredChatModelIfStale(models);
+        const serverDefault = typeof data?.defaultModel === 'string' ? data.defaultModel.trim() : '';
+        const ordered = serverDefault && !models.includes(serverDefault)
+          ? [serverDefault, ...models]
+          : serverDefault
+            ? [serverDefault, ...models.filter((model: string) => model !== serverDefault)]
+            : models;
+        setProviderModels(ordered);
+        if (serverDefault) setCurrentModel(serverDefault);
+        purgeStoredChatModelIfStale(ordered);
       } catch {
         /* keep last known list */
       }
@@ -410,10 +417,13 @@ export function ChatView({ characterId }: ChatViewProps) {
     return () => { cancel = true; };
   }, []);
 
-  // Drop Gemini / stale prefs and bind the chat chip to a live paid model id.
+  // Drop Gemini / stale prefs and bind the chat chip to the configured paid model id.
   useEffect(() => {
     if (!providerModels.length) return;
-    const next = pickActiveChatModel([sessionModelHint, readStoredChatModel(), currentModel], providerModels);
+    const next = pickActiveChatModel(
+      [sessionModelHint, readStoredChatModel(), DEFAULT_MODEL, providerModels[0], currentModel],
+      providerModels,
+    );
     if (next !== currentModel) setCurrentModel(next);
     writeStoredChatModel(next, currentProvider);
     if (sessionId && sessionModelHint && sessionModelHint !== next) {

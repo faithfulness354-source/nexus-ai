@@ -1,4 +1,4 @@
-import { LLMMessage, DEFAULT_MODEL, GEMINI_FALLBACK_MODELS } from '../types';
+import { LLMMessage, GEMINI_DEFAULT_MODEL, GEMINI_FALLBACK_MODELS } from '../types';
 import { isOpenAIProxy, lastRoleIndex, normalizeProviderMessages, usableImages, type ProviderImage } from './messages';
 import { streamOpenAICompatible } from './openai-compatible';
 
@@ -19,7 +19,7 @@ interface Params {
 }
 
 export function streamGemini(params: Params): ReadableStream {
-  const candidates = Array.from(new Set([params.model || DEFAULT_MODEL, ...GEMINI_FALLBACK_MODELS]));
+  const candidates = Array.from(new Set([params.model || GEMINI_DEFAULT_MODEL, ...GEMINI_FALLBACK_MODELS]));
 
   if (isOpenAIProxy(params.baseUrl)) return streamOpenAICompatible(params);
 

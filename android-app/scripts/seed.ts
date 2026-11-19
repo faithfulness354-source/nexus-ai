@@ -55,8 +55,7 @@ async function main() {
     },
   });
 
-  // Seed default provider configs
-  // Google Gemini is the default primary provider; OpenAI is not supported.
+  // Seed provider config rows for console keys. NovelAI chat uses NOVELAI_API_KEY.
   const providers = ['GEMINI', 'ANTHROPIC', 'OPENROUTER', 'CUSTOM'] as const;
   for (const provider of providers) {
     await prisma.providerConfig.upsert({
@@ -64,8 +63,8 @@ async function main() {
       update: {},
       create: {
         provider,
-        isActive: provider === 'GEMINI',
-        defaultModel: provider === 'GEMINI' ? 'gemini-flash-latest' : null,
+        isActive: false,
+        defaultModel: provider === 'OPENROUTER' ? 'meta-llama/llama-3.3-70b-instruct' : provider === 'CUSTOM' ? 'openai/gpt-oss-20b' : null,
       },
     });
   }

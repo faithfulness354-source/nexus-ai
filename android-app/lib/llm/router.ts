@@ -1,9 +1,10 @@
-import { LLMMessage, ProviderConfigData, GenSettings, DEFAULT_MODEL, PROVIDER_MODELS, normalizeProvider, usableGeminiModel } from '../types';
+import { LLMMessage, ProviderConfigData, GenSettings, DEFAULT_MODEL, PROVIDER_MODELS, normalizeProvider, novelApiModel, usableGeminiModel } from '../types';
 import { resolveCustomModel, resolveOpenRouterModel, sanitizeChatHistory, type ProviderImage } from './messages';
 import { streamOpenAICompatible } from './openai-compatible';
 import { streamAnthropic } from './anthropic';
 import { streamGemini } from './gemini';
 import { streamOpenRouter } from './openrouter';
+import { streamNovelAI } from './novelai';
 
 export interface StreamOptions {
   messages: LLMMessage[];
@@ -13,6 +14,7 @@ export interface StreamOptions {
   settings: Partial<GenSettings>;
   forbiddenWords?: string[];
   images?: ProviderImage[];
+  userName?: string;
 }
 
 function outboundModel(provider: string, model: string): string {
@@ -20,12 +22,13 @@ function outboundModel(provider: string, model: string): string {
   if (name === 'CUSTOM') return resolveCustomModel(model);
   if (name === 'OPENROUTER') return resolveOpenRouterModel(model);
   if (name === 'GEMINI') return usableGeminiModel(model);
+  if (name === 'NOVELAI') return novelApiModel(model) || DEFAULT_MODEL;
   const value = typeof model === 'string' ? model.trim() : '';
-  return value || PROVIDER_MODELS.ANTHROPIC?.[0] || DEFAULT_MODEL;
+  return value || PROVIDER_MODELS.NOVELAI?.[0] || DEFAULT_MODEL;
 }
 
 export function createLLMStream(opts: StreamOptions): ReadableStream {
-  const { provider, config, messages, model, settings, forbiddenWords, images } = opts;
+  const { provider, config, messages, model, settings, forbiddenWords, images, userName } = opts;
   const apiKey = config?.apiKey ?? '';
   const baseUrl = config?.baseUrl ?? '';
 
@@ -40,6 +43,7 @@ export function createLLMStream(opts: StreamOptions): ReadableStream {
     frequencyPenalty: settings?.frequencyPenalty ?? 0,
     presencePenalty: settings?.presencePenalty ?? 0,
     images,
+    userName,
   };
 
   let stream: ReadableStream;
@@ -54,9 +58,14 @@ export function createLLMStream(opts: StreamOptions): ReadableStream {
     case 'CUSTOM':
       stream = streamOpenAICompatible(params);
       break;
+    case 'NOVELAI':
+      stream = streamNovelAI(params);
+      break;
     case 'GEMINI':
-    default:
       stream = streamGemini(params);
+      break;
+    default:
+      stream = streamNovelAI(params);
       break;
   }
 

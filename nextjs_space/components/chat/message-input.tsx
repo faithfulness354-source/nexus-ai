@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { DEFAULT_MODEL } from '@/lib/types';
 
 interface MessageInputProps {
   onSend: (content: string) => void | boolean | Promise<void | boolean>;
@@ -55,7 +56,7 @@ export function MessageInput({ onSend, disabled, currentModel, models, onModelCh
             onClick={() => setShowModels(!showModels)}
             className="flex items-center gap-1 px-2 py-1.5 text-[10px] font-mono text-muted-foreground bg-secondary rounded-md hover:bg-accent transition-colors"
           >
-            <span className="max-w-[80px] truncate">{currentModel ?? 'model'}</span>
+            <span className="max-w-[140px] truncate" title={currentModel || DEFAULT_MODEL}>{currentModel || DEFAULT_MODEL}</span>
             <ChevronDown className="h-3 w-3" />
           </button>
           {showModels && (

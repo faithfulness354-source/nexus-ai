@@ -11,30 +11,36 @@ import { listProviderModels } from '@/lib/llm/provider-models';
  */
 export async function GET() {
   try {
-    if (process.env.NOVELAI_API_KEY?.trim()) {
+    if (process.env.NOVELAI_API_KEY?.trim() || DEFAULT_PROVIDER === 'NOVELAI') {
       const models = await listProviderModels('NOVELAI');
+      const list = models.length ? models : (PROVIDER_MODELS.NOVELAI ?? [DEFAULT_MODEL]);
       return NextResponse.json({
         provider: 'NOVELAI',
-        models: models.length ? models : (PROVIDER_MODELS.NOVELAI ?? [DEFAULT_MODEL]),
+        defaultModel: DEFAULT_MODEL,
+        models: list.includes(DEFAULT_MODEL) ? list : [DEFAULT_MODEL, ...list],
       });
     }
 
-    const preferred = [DEFAULT_PROVIDER, 'OPENROUTER', 'CUSTOM', 'ANTHROPIC', 'GEMINI'] as const;
+    const preferred = [DEFAULT_PROVIDER, 'OPENROUTER', 'CUSTOM', 'ANTHROPIC'] as const;
     for (const provider of preferred) {
-      if (provider === 'GEMINI') continue;
+      if (provider === 'GEMINI' || provider === 'NOVELAI') continue;
       const config = await prisma.providerConfig.findUnique({
         where: { provider: provider as any },
         select: { isActive: true, apiKey: true, baseUrl: true },
       });
       if (!config?.isActive || !(config.apiKey?.trim() || config.baseUrl?.trim())) continue;
       const models = await listProviderModels(provider);
-      if (models.length) return NextResponse.json({ provider, models });
+      if (models.length) {
+        return NextResponse.json({ provider, defaultModel: DEFAULT_MODEL, models });
+      }
     }
 
     const models = await listProviderModels(DEFAULT_PROVIDER);
+    const list = models.length ? models : (PROVIDER_MODELS[DEFAULT_PROVIDER] ?? [DEFAULT_MODEL]);
     return NextResponse.json({
       provider: DEFAULT_PROVIDER,
-      models: models.length ? models : (PROVIDER_MODELS[DEFAULT_PROVIDER] ?? [DEFAULT_MODEL]),
+      defaultModel: DEFAULT_MODEL,
+      models: list.includes(DEFAULT_MODEL) ? list : [DEFAULT_MODEL, ...list],
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Failed' }, { status: 500 });
