@@ -857,6 +857,9 @@ export function ChatView({ characterId }: ChatViewProps) {
                 previousMeterValues={prev}
                 onRegenerate={msg.role === 'ASSISTANT' ? handleRegenerate : undefined}
                 onEdit={(newContent: string) => handleEdit(msg.id, newContent)}
+                onContentUpdate={(next) => {
+                  setActiveMessages((prev) => (prev ?? []).map((m) => (m.id === msg.id ? { ...m, content: next } : m)));
+                }}
                 onBranch={() => handleBranch(msg.index)}
                 onDelete={() => handleDelete(msg.id)}
               />

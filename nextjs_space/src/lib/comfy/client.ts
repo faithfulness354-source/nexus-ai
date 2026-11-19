@@ -1,3 +1,7 @@
+/**
+ * @deprecated Production scene/portrait rendering uses fal.ai (`lib/fal/*`, `/api/generate-scene`).
+ * This local ComfyUI client remains only for offline batch card generation scripts.
+ */
 import { RENDER_POSITIVE, negativePrompt } from '../../config/card-prompts';
 
 async function io() {
@@ -217,21 +221,9 @@ async function queueWorkflow(workflow: Workflow): Promise<HistoryImage> {
   throw new Error('ComfyUI did not finish the image in time.');
 }
 
-/** Scene illustration. The card portrait is an IP-Adapter reference at a pinned low weight. */
+/** @deprecated Use `/api/generate-scene` (fal.ai). Kept for local offline tooling only. */
 export async function generateComfyScene(description: string, characterName: string, reference: Buffer, _isNsfw: boolean): Promise<string> {
-  const scene = description.replace(/\s+/g, ' ').trim();
-  if (!scene) throw new Error('A scene description is required.');
-  const positive = scenePositive(characterName, scene);
-  if (rejectsMinor(positive) || rejectsMinor(SCENE_NEGATIVE_PROMPT)) throw new Error('Portraits of minors are not allowed.');
-  const weight = pinIpAdapterWeight(IP_ADAPTER_WEIGHT);
-
-  const { fs, path } = await io();
-  const file = await fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ process.cwd(), 'src', 'lib', 'comfy', 'workflows', 'noobai_vpred_workflow.json'), 'utf8');
-  const workflow = JSON.parse(file) as Workflow;
-  const uploadedName = await uploadReference(reference, `scene-ref-${Date.now()}.png`);
-  sceneWorkflow(workflow, uploadedName, positive, weight);
-  const image = await queueWorkflow(workflow);
-  return saveImage(image, 'scenes', `scene-${Date.now()}`, `scene-${Date.now()}.png`);
+  throw new Error('Local ComfyUI scene rendering has been replaced by fal.ai. Use /api/generate-scene.');
 }
 
 /** Queue a local ComfyUI portrait, store it under nexus_assets, and return that public path. */

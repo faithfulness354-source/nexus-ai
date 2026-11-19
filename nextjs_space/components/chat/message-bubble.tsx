@@ -9,8 +9,9 @@ import { StatusTracker } from './status-tracker';
 import { RoleplayText } from './roleplay-text';
 import { CharacterAvatar } from '@/components/character/character-avatar';
 import { MeterDef, MeterSnapshot } from '@/lib/types';
-import { stripSceneTags } from '@/lib/scene-tags';
+import { hasPendingScene, stripSceneTags } from '@/lib/scene-tags';
 import { visibleChatText } from '@/lib/prompt-leak';
+import { SceneMessageBody } from '@/components/chat/scene-message-body';
 
 interface MessageBubbleProps {
   id: string;
@@ -21,6 +22,7 @@ interface MessageBubbleProps {
   onEdit?: (newContent: string) => void;
   onBranch?: () => void;
   onDelete?: () => void;
+  onContentUpdate?: (next: string) => void;
   characterName?: string;
   characterAvatar?: string | null;
   userName?: string;
@@ -61,7 +63,7 @@ function ActionButton({ label, onClick, danger, children }: { label: string; onC
 }
 
 export function MessageBubble({
-  role, content, model, onRegenerate, onEdit, onBranch, onDelete,
+  id, role, content, model, onRegenerate, onEdit, onBranch, onDelete, onContentUpdate,
   characterName, characterAvatar, userName, meters, meterValues, previousMeterValues, isStreaming,
   transform,
 }: MessageBubbleProps) {
@@ -137,6 +139,13 @@ export function MessageBubble({
                 </Button>
               </div>
             </div>
+          ) : !isUser && (hasPendingScene(spoken) || /\[SCENE_IMAGE:/i.test(spoken)) ? (
+            <SceneMessageBody
+              messageId={id}
+              content={transform ? transform(stripMeterTags(spoken, meters)) : stripMeterTags(spoken, meters)}
+              streaming={isStreaming}
+              onContentUpdate={onContentUpdate}
+            />
           ) : (
             <RoleplayText content={display} streaming={isStreaming} />
           )}

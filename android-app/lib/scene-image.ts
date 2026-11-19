@@ -1,13 +1,32 @@
-import { readFile } from 'fs/promises';
-import path from 'path';
+import 'server-only';
 import type { GalleryImage } from '@/lib/types';
-import { generateComfyScene } from '@/src/lib/comfy/client';
+import { falConfigured, generateFalScene } from '@/lib/fal/client';
+import { persistSceneRender } from '@/lib/fal/storage';
+import { translateScenePrompt } from '@/lib/fal/scene-prompt';
+import { htmlToPlainText } from '@/lib/rich-text';
 
 const STOP_WORDS = new Set(['character', 'the', 'and', 'with', 'image', 'reference', 'ref', 'portrait', 'photo', 'pic']);
 const MAX_REFS = 3;
-const MAX_REF_BYTES = 7 * 1024 * 1024;
 
-export interface SceneCharacter { name: string; avatar: string | null; gallery: unknown; nsfw?: boolean }
+export interface SceneCharacter {
+  name: string;
+  avatar: string | null;
+  gallery: unknown;
+  nsfw?: boolean;
+  personality?: string | null;
+  summary?: string | null;
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+}
+
+export interface SceneRenderOptions {
+  userId: string;
+  sessionId?: string | null;
+  recentMessages?: Array<{ role: string; content: string }>;
+  /** Authenticated Premium+/Ultimate NSFW session — disables fal safety checker. */
+  allowNsfwSafetyOff?: boolean;
+  landscape?: boolean;
+}
 
 export function parseGallery(raw: unknown): GalleryImage[] {
   if (!Array.isArray(raw)) return [];
@@ -36,63 +55,71 @@ export function pickReferences(character: SceneCharacter, description: string): 
   return refs;
 }
 
-function publicPortrait(url: string): string | null {
-  let pathname = url;
-  if (/^https?:\/\//i.test(url)) {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') return null;
-      pathname = parsed.pathname;
-    } catch {
-      return null;
-    }
-  }
-  if (!pathname.startsWith('/')) return null;
-  const relative = decodeURIComponent(pathname.split('?')[0]).replace(/^\/+/, '');
-  if (!relative || relative.split('/').includes('..')) return null;
-  const root = path.resolve(process.cwd(), 'public');
-  const file = path.resolve(root, relative);
-  const rootKey = root.toLowerCase();
-  const fileKey = file.toLowerCase();
-  if (fileKey !== rootKey && !fileKey.startsWith(`${rootKey}${path.sep}`)) return null;
-  return file;
-}
-
-async function loadPortrait(url: string): Promise<Buffer | null> {
-  if (url.startsWith('data:')) {
-    const match = url.match(/^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=\s]+)$/i);
-    if (!match) return null;
-    const data = Buffer.from(match[1].replace(/\s/g, ''), 'base64');
-    return data.length && data.length <= MAX_REF_BYTES ? data : null;
-  }
-  const local = publicPortrait(url);
-  if (local) {
-    try {
-      const data = await readFile(local);
-      return data.length && data.length <= MAX_REF_BYTES ? data : null;
-    } catch {
-      return null;
-    }
-  }
-  if (!/^https?:\/\//i.test(url)) return null;
+function publicHttpUrl(url: string | null | undefined): string | null {
+  const value = (url ?? '').trim();
+  if (!/^https?:\/\//i.test(value)) return null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const data = Buffer.from(await res.arrayBuffer());
-    return data.length && data.length <= MAX_REF_BYTES ? data : null;
+    const parsed = new URL(value);
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return null;
+    return parsed.toString();
   } catch {
     return null;
   }
 }
 
-/** Renders a scene in ComfyUI, using the card portrait so the character stays recognizable. */
-export async function renderSceneImage(character: SceneCharacter, description: string) {
+/**
+ * Production scene render via fal.ai (flux-2 / flux-2/edit).
+ * 1) LLM visual prompt enrichment  2) fal generation  3) persist to Supabase `scene-renders`.
+ */
+export async function renderSceneImage(
+  character: SceneCharacter,
+  description: string,
+  options: SceneRenderOptions,
+) {
+  if (!falConfigured()) {
+    throw new Error('Scene rendering is not configured. Set FAL_KEY on the server.');
+  }
+
   const portrait = character.avatar
     ? { url: character.avatar, label: character.name }
     : pickReferences(character, description)[0] ?? null;
-  if (!portrait) throw new Error('This card has no portrait to match.');
-  const reference = await loadPortrait(portrait.url);
-  if (!reference) throw new Error('The card portrait could not be loaded for ComfyUI.');
-  const url = await generateComfyScene(description, character.name?.trim() || portrait.label || 'Character', reference, !!character.nsfw);
-  return { url, cloud_storage_path: url, engine: 'comfyui', referencesUsed: [portrait.label || character.name] };
+  const referenceUrl = publicHttpUrl(portrait?.url);
+  const appearance = [
+    character.visualDescription,
+    character.summary,
+    character.personality,
+  ].map((v) => htmlToPlainText(v || '')).filter(Boolean).join('. ');
+
+  const translated = await translateScenePrompt({
+    characterName: character.name?.trim() || 'Character',
+    appearance,
+    attire: description,
+    visualDescription: character.visualDescription,
+    visualAnchor: character.visualAnchor,
+    sceneHint: description,
+    recentMessages: options.recentMessages,
+    hasReferenceImage: !!referenceUrl,
+  });
+
+  const fal = await generateFalScene({
+    prompt: translated.prompt,
+    referenceImageUrl: referenceUrl,
+    landscape: options.landscape,
+    disableSafetyChecker: !!options.allowNsfwSafetyOff && !!character.nsfw,
+  });
+
+  const stored = await persistSceneRender({
+    falImageUrl: fal.url,
+    userId: options.userId,
+    sessionId: options.sessionId,
+  });
+
+  return {
+    url: stored.url,
+    cloud_storage_path: stored.path,
+    engine: fal.model,
+    promptModel: translated.model,
+    visualPrompt: translated.prompt,
+    referencesUsed: portrait ? [portrait.label || character.name] : [],
+  };
 }
