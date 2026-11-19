@@ -268,14 +268,14 @@ export function PublicProfile({ profile, pinned, creations, compact, onProfileSo
         </div>
       )}
 
-      {profile.bio.trim() && (
+      {String(profile.bio || '').trim() && (
         compact ? (
           <div className="relative mx-4 mt-6 sm:mx-8">
-            <RichContent content={profile.bio} />
+            <RichContent content={String(profile.bio || '')} />
           </div>
         ) : (
           <div className={cn('profile-card bio-card relative mt-6 mx-4 sm:mx-8 rounded-2xl p-5', theme.sovereign && 'sovereign-glitch')} style={{ borderTop: `2px solid ${typeColor}`, ...frameStyle }}>
-            <RichContent content={profile.bio} />
+            <RichContent content={String(profile.bio || '')} />
           </div>
         )
       )}

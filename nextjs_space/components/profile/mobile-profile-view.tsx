@@ -103,9 +103,9 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
 
           <MobileSongPlayer url={profile.profileSongUrl} ownProfile={ownProfile} accent={theme.accent} />
 
-          {profile.bio.trim() && (
+          {String(profile.bio || '').trim() && (
             <div className="rounded-2xl bg-card/80 p-4 ring-1 ring-white/10" style={{ borderTop: `2px solid ${theme.accent}` }}>
-              <RichContent content={profile.bio} />
+              <RichContent content={String(profile.bio || '')} />
             </div>
           )}
 
