@@ -10,13 +10,12 @@ import {
   forbidden,
   canAccessSession,
   can,
-  canViewNsfw,
   consumeImageCredit,
   refundImageCredit,
 } from '@/lib/access';
 import { TIERS } from '@/lib/tiers';
 import { GENERATE_TAG_RE, SCENE_TAG_RE } from '@/lib/scene-tags';
-import { renderSceneImage, type SceneCharacter } from '@/lib/scene-image';
+import { renderSceneImage, ScenePolicyError, type SceneCharacter } from '@/lib/scene-image';
 import { falConfigured } from '@/lib/fal/client';
 import { messageContent } from '@/lib/llm/messages';
 import {
@@ -27,6 +26,14 @@ import {
   sceneAttemptPreview,
 } from '@/lib/generation-limits';
 import { canSceneGenerate, MAX_SCENE_REROLLS, sceneCreditCost } from '@/lib/reroll-costs';
+import {
+  assertNsfwAccess,
+  logModerationFlag,
+  moderateGenerationText,
+  moderationBlockedResponse,
+  resolveSafetyChecker,
+} from '@/lib/trust-safety';
+import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 
 type CharacterRow = SceneCharacter & {
   personality?: string | null;
@@ -35,6 +42,7 @@ type CharacterRow = SceneCharacter & {
 
 function asSceneCharacter(character: any): CharacterRow {
   return {
+    id: character.id,
     name: character.name,
     avatar: character.avatar,
     gallery: character.gallery,
@@ -68,8 +76,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * Production scene generation with escalating reroll costs + cooldown.
- *   { messageId } — render/reroll the scene tag on that message
- *   { sessionId, description } — free-form scene for the session's character
+ * Moderates prompts before charging credits. NSFW scenes require 18+ + Premium/Ultimate.
  */
 export async function POST(request: NextRequest) {
   const viewer = await getViewer();
@@ -99,6 +106,7 @@ export async function POST(request: NextRequest) {
   let originalContent = '';
   let character: CharacterRow | null = null;
   let stateKey = '';
+  let characterRaw: any = null;
 
   if (messageId) {
     const message = await prisma.message.findUnique({
@@ -116,7 +124,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ content: message.content, rendered: false });
     }
     if (sceneMatch && !generateMatch && !forceReroll) {
-      // Already rendered — client should pass reroll:true for regenerations.
       const preview = await sceneAttemptPreview(messageId);
       return NextResponse.json({
         content: message.content,
@@ -130,6 +137,7 @@ export async function POST(request: NextRequest) {
     sessionId = message.sessionId;
     messageIdToPatch = message.id;
     originalContent = message.content;
+    characterRaw = message.session.character;
     character = asSceneCharacter(message.session.character);
     stateKey = message.id;
   } else if (sessionIdIn && freeDescription) {
@@ -142,10 +150,36 @@ export async function POST(request: NextRequest) {
     if (!session.character) return NextResponse.json({ error: 'This chat has no character.' }, { status: 400 });
     sessionId = session.id;
     description = freeDescription;
+    characterRaw = session.character;
     character = asSceneCharacter(session.character);
     stateKey = `session:${session.id}:${description.slice(0, 80)}`;
   } else {
     return NextResponse.json({ error: 'Provide messageId, or sessionId with description.' }, { status: 400 });
+  }
+
+  const wantsNsfw = !!(character?.nsfw || (characterRaw && characterImpliesNsfw(characterRaw)));
+  if (wantsNsfw) {
+    const blocked = await assertNsfwAccess(viewer);
+    if (blocked) return blocked;
+  }
+
+  // Pre-generation moderation — before credits or fal (no charge on policy blocks).
+  const moderation = moderateGenerationText(
+    character?.name,
+    character?.personality,
+    character?.summary,
+    character?.visualDescription,
+    character?.visualAnchor,
+    description,
+  );
+  if (!moderation.allowed) {
+    await logModerationFlag({
+      userId: viewer.user.id,
+      route: '/api/generate-scene',
+      category: moderation.category || 'illegal',
+      matched: moderation.matched,
+    });
+    return moderationBlockedResponse(moderation);
   }
 
   const generationCount = await getSceneGenerationCount(stateKey);
@@ -204,13 +238,16 @@ export async function POST(request: NextRequest) {
       .map((m) => ({ role: m.role, content: messageContent(m.content) }))
       .slice(-3);
 
-    const allowNsfwSafetyOff = canViewNsfw(viewer) && (viewer.tier === 'PREMIUM' || viewer.tier === 'ULTIMATE' || viewer.isAdmin);
+    const safety = await resolveSafetyChecker(viewer, {
+      characterNsfw: !!character?.nsfw,
+      requestNsfw: wantsNsfw,
+    });
 
     const result = await renderSceneImage(character!, description, {
       userId: viewer.user.id,
       sessionId,
       recentMessages,
-      allowNsfwSafetyOff,
+      enableSafetyChecker: safety.enableSafetyChecker,
       landscape: body?.landscape === true,
     });
 
@@ -244,10 +281,18 @@ export async function POST(request: NextRequest) {
       creditsCharged: charged,
       generationCount: nextCount,
       next: preview,
+      safetyChecker: result.safetyChecker,
     });
   } catch (err: any) {
     if (charged) await refundImageCredit(viewer, charged).catch(() => {});
     await slot?.release();
+    if (err instanceof ScenePolicyError) {
+      return moderationBlockedResponse({
+        allowed: false,
+        category: (err.category as any) || 'illegal',
+        message: err.message,
+      });
+    }
     console.error('POST /api/generate-scene error:', err);
     return NextResponse.json({ error: err?.message ?? 'Scene render failed' }, { status: 502 });
   }

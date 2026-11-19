@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AgeGateModal } from '@/components/safety/age-gate-modal';
 import { getAgeVerified, setAgeVerified } from '@/lib/age-gate';
+import { readNsfwView, writeNsfwView } from '@/lib/nsfw-view';
 import { useSession } from 'next-auth/react';
 import type { AccessStatus } from '@/lib/tiers';
 import { useAuth } from '@/lib/use-auth';
@@ -40,8 +41,21 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (sessionStatus !== 'loading') refresh();
+    if (sessionStatus === 'loading') return;
+    void (async () => { await refresh(); })();
   }, [sessionStatus, refresh]);
+
+  // Restore a saved profile preference only when this account may still view adult cards.
+  useEffect(() => {
+    if (!status) return;
+    const saved = !!status.nsfwEnabled;
+    const allowed = !!status.can.nsfw && saved && (status.isAdmin || status.isCreatorAdmin || getAgeVerified() === true);
+    if (saved && allowed) {
+      if (!readNsfwView()) writeNsfwView(true);
+      return;
+    }
+    if (readNsfwView() || saved) writeNsfwView(false);
+  }, [status]);
 
   // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
   const openPaywall = useCallback(
@@ -84,9 +98,26 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     const current = await checkSubscriber();
     // The creator account already confirmed 18+ and bypasses payment and plan limits.
     if (current?.isAdmin || current?.isCreatorAdmin || is_admin) return true;
+    // Prefer server-side verification; fall back to sessionStorage only when server hasn't recorded it yet.
+    if (current?.isAdultVerified) {
+      setAgeVerified(true);
+      return allowNsfw(current);
+    }
     const verified = getAgeVerified();
     if (verified === false) { setAgeGate('denied'); return false; }
-    if (verified === true) return allowNsfw(current);
+    if (verified === true) {
+      // Session said yes but DB may not — persist before allowing.
+      try {
+        await fetch('/api/account/age-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmed: true }),
+        });
+      } catch (err) {
+        console.error('Failed to persist age verification:', err);
+      }
+      return allowNsfw(current);
+    }
     setAgeGate('form');
     return new Promise<boolean>((resolve) => { resolver.current = resolve; });
   }, [allowNsfw, checkSubscriber, is_admin, settle]);
@@ -99,6 +130,16 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setAgeVerified(true);
+    // Persist 18+ confirmation server-side (termsAccepted) — required for NSFW generation gates.
+    try {
+      await fetch('/api/account/age-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmed: true, age }),
+      });
+    } catch (err) {
+      console.error('Failed to persist age verification:', err);
+    }
     setAgeGate(null);
     settle(allowNsfw(await checkSubscriber()));
   }, [allowNsfw, checkSubscriber, settle]);

@@ -111,6 +111,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     paymentsConfigured: paymentsConfigured(),
     paypalClientId: paypalPublicClientId(),
     nsfwEnabled: false,
+    isAdultVerified: !!(viewer && (viewer.user.termsAccepted === true || !!viewer.user.termsAcceptedAt)),
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),
       advancedGeneration: !!viewer && can(viewer, 'advancedGeneration'),

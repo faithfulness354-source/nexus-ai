@@ -16,6 +16,12 @@ import { canTextSwipe, MAX_TEXT_SWIPES, textSwipeCreditCost } from '@/lib/reroll
 import { canViewCharacter } from '@/lib/card-visibility';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import {
+  assertNsfwAccess,
+  logModerationFlag,
+  moderateGenerationText,
+  moderationBlockedResponse,
+} from '@/lib/trust-safety';
 import { TIERS, isProModel, clampSampling, SAMPLING_LIMITS } from '@/lib/tiers';
 import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
 import { stripSceneTags } from '@/lib/scene-tags';
@@ -113,7 +119,31 @@ export async function POST(request: NextRequest) {
     if (session.character && !canViewCharacter({ isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id }, session.character)) {
       return new Response(JSON.stringify({ error: 'This character is not available.' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
-    if (session.character && (session.character.nsfw || characterImpliesNsfw(session.character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
+    const characterIsNsfw = !!(session.character && (session.character.nsfw || characterImpliesNsfw(session.character)));
+    if (characterIsNsfw) {
+      const nsfwGate = await assertNsfwAccess(viewer);
+      if (nsfwGate) return nsfwGate;
+      if (!(await adultCardsEnabled(viewer))) return nsfwLocked();
+    }
+
+    // Hard blocklist before credits / LLM — prohibited content never deducts credits.
+    const moderation = moderateGenerationText(
+      typeof rawContent === 'string' ? rawContent : '',
+      session.character?.name,
+      session.character?.personality,
+      session.character?.summary,
+      session.character?.scenario,
+      session.character?.systemPrompt,
+    );
+    if (!moderation.allowed) {
+      await logModerationFlag({
+        userId: viewer.user.id,
+        route: '/api/chat/stream',
+        category: moderation.category || 'illegal',
+        matched: moderation.matched,
+      });
+      return moderationBlockedResponse(moderation);
+    }
 
     try {
       textSlot = await acquireGenerationSlot(viewer.user.id, 'text');
