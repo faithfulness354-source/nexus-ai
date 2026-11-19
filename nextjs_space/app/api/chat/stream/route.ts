@@ -5,10 +5,23 @@ import { createLLMStream } from '@/lib/llm/router';
 import { resolveChatContext, resolveChatTarget } from '@/lib/llm/resolve';
 import { estimateTokens } from '@/lib/tokens';
 import { CONTEXT_WINDOWS, DEFAULT_MODEL } from '@/lib/types';
-import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked, dailyLimitReached, textCreditLimit } from '@/lib/access';
+import { getViewer, can, consumeCredit, refundCredit, canAccessSession, unauthorized, forbidden, nsfwLocked } from '@/lib/access';
+import {
+  acquireGenerationSlot,
+  bumpTextSwipeCount,
+  getTextSwipeCount,
+  GenerationLimitError,
+} from '@/lib/generation-limits';
+import { canTextSwipe, MAX_TEXT_SWIPES, textSwipeCreditCost } from '@/lib/reroll-costs';
 import { canViewCharacter } from '@/lib/card-visibility';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
+import {
+  assertNsfwAccess,
+  logModerationFlag,
+  moderateGenerationText,
+  moderationBlockedResponse,
+} from '@/lib/trust-safety';
 import { TIERS, isProModel, clampSampling, SAMPLING_LIMITS } from '@/lib/tiers';
 import { acquireSlot, laneFor, QueueTimeoutError } from '@/lib/priority-queue';
 import { stripSceneTags } from '@/lib/scene-tags';
@@ -53,7 +66,10 @@ export async function POST(request: NextRequest) {
   const viewer = await getViewer();
   if (!viewer) return unauthorized();
   let charged = false;
+  let chargedAmount = 0;
   let sessionId = '';
+  let textSlot: Awaited<ReturnType<typeof acquireGenerationSlot>> | null = null;
+  let swipeTurnId: string | null = null;
   try {
     const body = await request.json();
     const {
@@ -63,11 +79,21 @@ export async function POST(request: NextRequest) {
       personaId: requestedPersonaId,
       imageUrl: bodyImageUrl,
       image: bodyImage,
+      regenerate: regenerateFlag,
+      replaceAssistantId: replaceAssistantRaw,
     } = body ?? {};
     sessionId = String(incomingSessionId ?? '');
+    const isRegenerate = regenerateFlag === true;
+    const replaceAssistantId = typeof replaceAssistantRaw === 'string' ? replaceAssistantRaw.trim() : '';
 
-    if (!sessionId || !rawContent) {
+    if (!sessionId || (!rawContent && !isRegenerate)) {
       return new Response(JSON.stringify({ error: 'sessionId and content required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (isRegenerate && !replaceAssistantId) {
+      return new Response(JSON.stringify({ error: 'replaceAssistantId required for regenerate', code: 'REGENERATE_TARGET_REQUIRED' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -93,19 +119,100 @@ export async function POST(request: NextRequest) {
     if (session.character && !canViewCharacter({ isCreatorAdmin: viewer.isCreatorAdmin, userId: viewer.user.id }, session.character)) {
       return new Response(JSON.stringify({ error: 'This character is not available.' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
-    if (session.character && (session.character.nsfw || characterImpliesNsfw(session.character)) && !(await adultCardsEnabled(viewer))) return nsfwLocked();
+    const characterIsNsfw = !!(session.character && (session.character.nsfw || characterImpliesNsfw(session.character)));
+    if (characterIsNsfw) {
+      const nsfwGate = await assertNsfwAccess(viewer);
+      if (nsfwGate) return nsfwGate;
+      if (!(await adultCardsEnabled(viewer))) return nsfwLocked();
+    }
 
-    // Daily credits: 1 credit = 1 text message. Atomic RPC deduct before any LLM call; refund on failure.
-    // Ultimate uses a silent soft fair-use cap (10k/day). Admins always pass.
-    if (!(await consumeCredit(viewer))) {
-      const limit = textCreditLimit(viewer);
-      const plan = TIERS[viewer.tier];
-      const message = plan.fairUseSilent
-        ? `You've reached today's fair-use message limit on ${plan.name}. It resets at midnight UTC.`
-        : `You've used all ${limit} daily credits on the ${plan.name} plan. They reset at midnight UTC.`;
-      return dailyLimitReached('credits', message, viewer.tier);
+    // Hard blocklist before credits / LLM — prohibited content never deducts credits.
+    const moderation = moderateGenerationText(
+      typeof rawContent === 'string' ? rawContent : '',
+      session.character?.name,
+      session.character?.personality,
+      session.character?.summary,
+      session.character?.scenario,
+      session.character?.systemPrompt,
+    );
+    if (!moderation.allowed) {
+      await logModerationFlag({
+        userId: viewer.user.id,
+        route: '/api/chat/stream',
+        category: moderation.category || 'illegal',
+        matched: moderation.matched,
+      });
+      return moderationBlockedResponse(moderation);
+    }
+
+    try {
+      textSlot = await acquireGenerationSlot(viewer.user.id, 'text');
+    } catch (err) {
+      if (err instanceof GenerationLimitError) {
+        return new Response(JSON.stringify({ error: err.message, code: err.code, ...(err.meta ?? {}) }), {
+          status: err.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw err;
+    }
+
+    let turnUserMessage: { id: string; content: string; index: number } | null = null;
+    let swipeCount = 0;
+    if (isRegenerate) {
+      const assistant = await prisma.message.findFirst({
+        where: { id: replaceAssistantId, sessionId, role: 'ASSISTANT', deleted: false },
+      });
+      if (!assistant) {
+        await textSlot.release();
+        return new Response(JSON.stringify({ error: 'Assistant message not found', code: 'REGENERATE_TARGET_MISSING' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const priorUser = await prisma.message.findFirst({
+        where: { sessionId, role: 'USER', deleted: false, index: { lt: assistant.index } },
+        orderBy: { index: 'desc' },
+      });
+      if (!priorUser) {
+        await textSlot.release();
+        return new Response(JSON.stringify({ error: 'No user turn found to regenerate', code: 'REGENERATE_TURN_MISSING' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      turnUserMessage = { id: priorUser.id, content: priorUser.content, index: priorUser.index };
+      swipeCount = await getTextSwipeCount(priorUser.id);
+      if (!canTextSwipe(swipeCount)) {
+        await textSlot.release();
+        return new Response(JSON.stringify({
+          error: `This turn has reached the maximum of ${MAX_TEXT_SWIPES} regenerations.`,
+          code: 'TEXT_SWIPE_LIMIT',
+          swipeCount,
+          maxSwipes: MAX_TEXT_SWIPES,
+        }), { status: 429, headers: { 'Content-Type': 'application/json' } });
+      }
+      // Soft-delete the assistant reply being replaced (never free unlimited swipes).
+      await prisma.message.update({ where: { id: assistant.id }, data: { deleted: true } });
+      swipeTurnId = priorUser.id;
+    }
+
+    const creditCost = isRegenerate ? textSwipeCreditCost(swipeCount) : 1;
+    // Daily credits: every send/swipe deducts; regenerations escalate after 3 swipes.
+    if (!(await consumeCredit(viewer, creditCost))) {
+      await textSlot.release();
+      const limit = TIERS[viewer.tier].dailyCredits;
+      return new Response(JSON.stringify({
+        error: limit == null
+          ? `You've reached today's message fair-use limit.`
+          : `You've used all ${limit} daily credits on the ${TIERS[viewer.tier].name} plan.`,
+        code: 'OUT_OF_CREDITS',
+        tier: viewer.tier,
+        cost: creditCost,
+      }), { status: 429, headers: { 'Content-Type': 'application/json' } });
     }
     charged = true;
+    chargedAmount = creditCost;
 
     const character = session.character;
 
@@ -128,7 +235,8 @@ export async function POST(request: NextRequest) {
     const userName = persona?.name?.trim() || 'User';
     const charName = character?.name || 'Character';
     // Pre-response scripts rewrite the user's message before it is saved and sent.
-    const content = applyScripts(String(rawContent), scripts, 'PRE').trim() || String(rawContent);
+    const sourceText = isRegenerate ? (turnUserMessage?.content ?? String(rawContent ?? '')) : String(rawContent);
+    const content = applyScripts(sourceText, scripts, 'PRE').trim() || sourceText;
     // Advanced sampling (temperature/top-p/penalties) is a Premium+ feature; others use defaults.
     const genSettings = can(viewer, 'advancedGeneration')
       ? session.generationSettings && {
@@ -145,24 +253,32 @@ export async function POST(request: NextRequest) {
     const allowedModel = modelDowngraded ? DEFAULT_MODEL : requestedModel;
 
     // Persist the user's line before any model response, including a rejected key or a failed stream.
+    // Regenerations reuse the existing user turn — never insert a duplicate free swipe.
     const storedMessages = await listActiveMessages(sessionId);
     const nextIndex = await nextMessageIndex(sessionId);
-    const savedUserMessage = await prisma.message.create({
-      data: {
-        sessionId,
-        role: 'USER',
-        content,
-        model: allowedModel,
-        tokenCount: estimateTokens(content),
-        index: nextIndex,
-      },
-    });
-    void syncMessageToCloud(savedUserMessage, viewer.user);
+    let savedUserMessage: { id: string; content?: string };
+    if (isRegenerate && turnUserMessage) {
+      savedUserMessage = turnUserMessage;
+    } else {
+      savedUserMessage = await prisma.message.create({
+        data: {
+          sessionId,
+          role: 'USER',
+          content,
+          model: allowedModel,
+          tokenCount: estimateTokens(content),
+          index: nextIndex,
+        },
+      });
+      void syncMessageToCloud(savedUserMessage as any, viewer.user);
+    }
 
     // Resolve provider/model. When NOVELAI_API_KEY is set, the selected model is forwarded to NovelAI.
     const target = await resolveChatTarget(session.provider, allowedModel);
     if (!target) {
-      await refundCredit(viewer);
+      await refundCredit(viewer, chargedAmount);
+      charged = false;
+      await textSlot.release();
       return new Response(JSON.stringify({ error: 'No active API key. Open Settings → API to add a key or turn the provider back on.' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json', 'X-User-Message-Id': savedUserMessage.id },
@@ -318,11 +434,16 @@ export async function POST(request: NextRequest) {
         .filter((m) => !(greetingText && m.role === 'ASSISTANT' && messageContent(m.content).trim() === greetingText))
         .map((m) => ({ role: m.role, content: stripSceneTags(messageContent(m.content)) })),
     );
-    const allMessages = sanitizeChatHistory([
-      ...liveStored.map((m) => ({ role: m.role, content: m.content, deleted: m.deleted })),
-      { role: 'user', content },
-    ]);
-    const payload = assembleTierPayload(systemPrompt, [...historyForModel, { role: 'user', content: messageContent(content) }], policy);
+    const allMessages = sanitizeChatHistory(
+      isRegenerate
+        ? liveStored.map((m) => ({ role: m.role, content: m.content, deleted: m.deleted }))
+        : [...liveStored.map((m) => ({ role: m.role, content: m.content, deleted: m.deleted })), { role: 'user', content }],
+    );
+    // Fresh sends append the new user line; regenerations already include that turn in history.
+    const historyWithUser = isRegenerate
+      ? historyForModel
+      : [...historyForModel, { role: 'user', content: messageContent(content) }];
+    const payload = assembleTierPayload(systemPrompt, historyWithUser, policy);
     const contextMessages = payload.messages.filter((message) => message.role === 'system' || message.content.trim());
     const turnUsage = resolveChatContext(
       contextMessages.filter((message) => message.role !== 'system'),
@@ -346,8 +467,12 @@ export async function POST(request: NextRequest) {
       slot = await acquireSlot(lane);
     } catch (qErr) {
       if (qErr instanceof QueueTimeoutError) {
-        await prisma.message.deleteMany({ where: { sessionId, index: nextIndex, role: 'USER' } }).catch(() => {});
-        await refundCredit(viewer).catch(() => {});
+        if (!isRegenerate) {
+          await prisma.message.deleteMany({ where: { sessionId, index: nextIndex, role: 'USER' } }).catch(() => {});
+        }
+        if (charged) await refundCredit(viewer, chargedAmount).catch(() => {});
+        charged = false;
+        await textSlot?.release();
         return new Response(JSON.stringify({ error: qErr.message, code: 'QUEUE_BUSY' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
       }
       throw qErr;
@@ -388,14 +513,10 @@ export async function POST(request: NextRequest) {
               const spoken = stripPromptLeak(fullResponse);
               const finalResponse = trimIncompleteTail(applyScripts(spoken, scripts, 'POST'));
               if (!finalResponse.trim()) {
-                // Upstream returned nothing usable — roll the credit back.
-                if (charged) {
-                  charged = false;
-                  await refundCredit(viewer).catch(() => {});
-                }
                 controller.close();
                 return;
               }
+              const assistantIndex = isRegenerate ? nextIndex : nextIndex + 1;
               const savedAssistant = await prisma.message.create({
                 data: {
                   sessionId,
@@ -403,10 +524,13 @@ export async function POST(request: NextRequest) {
                   content: finalResponse,
                   model: useModel,
                   tokenCount: estimateTokens(finalResponse),
-                  index: nextIndex + 1,
+                  index: assistantIndex,
                 },
               });
               void syncMessageToCloud(savedAssistant, viewer.user);
+              if (swipeTurnId) {
+                await bumpTextSwipeCount(swipeTurnId, sessionId, viewer.user.id).catch(() => {});
+              }
               void commitWorldTurn(sessionId, content, finalResponse, {
                 provider,
                 model: useModel,
@@ -460,11 +584,6 @@ export async function POST(request: NextRequest) {
             userId: viewer.user.id,
             stack: err instanceof Error ? err.stack : '',
           });
-          // Roll back the credit when the upstream LLM failed before a usable reply.
-          if (charged && !fullResponse.trim()) {
-            charged = false;
-            await refundCredit(viewer).catch(() => {});
-          }
           releaseSlot();
           controller.error(err);
         }
@@ -475,6 +594,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    await textSlot?.release();
     return new Response(responseStream, {
       headers: {
         'X-Provider': provider,
@@ -492,6 +612,8 @@ export async function POST(request: NextRequest) {
         'X-Queue-Lane': lane,
         'X-Queue-Wait-Ms': String(slot.waitedMs),
         'X-User-Message-Id': savedUserMessage.id,
+        'X-Credits-Charged': String(chargedAmount),
+        'X-Regenerate': isRegenerate ? '1' : '0',
         'Content-Type': 'text/plain; charset=utf-8',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
@@ -508,7 +630,8 @@ export async function POST(request: NextRequest) {
       userId: viewer.user.id,
       stack: err?.stack,
     });
-    if (charged) await refundCredit(viewer).catch(() => {});
+    if (charged) await refundCredit(viewer, chargedAmount).catch(() => {});
+    await textSlot?.release();
     return new Response(JSON.stringify({ error: err?.message ?? 'Stream failed' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

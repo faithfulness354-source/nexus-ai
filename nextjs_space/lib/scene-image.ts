@@ -1,10 +1,47 @@
+import 'server-only';
 import type { GalleryImage } from '@/lib/types';
+import { falConfigured, generateFalScene } from '@/lib/fal/client';
+import { persistSceneRender } from '@/lib/fal/storage';
+import { translateScenePrompt } from '@/lib/fal/scene-prompt';
+import { htmlToPlainText } from '@/lib/rich-text';
+import {
+  hashUserId,
+  logImageGeneration,
+  logModerationFlag,
+  moderateGenerationText,
+} from '@/lib/trust-safety';
 
 const STOP_WORDS = new Set(['character', 'the', 'and', 'with', 'image', 'reference', 'ref', 'portrait', 'photo', 'pic']);
 const MAX_REFS = 3;
-const MAX_REF_BYTES = 7 * 1024 * 1024;
 
-export interface SceneCharacter { name: string; avatar: string | null; gallery: unknown; nsfw?: boolean }
+export interface SceneCharacter {
+  id?: string;
+  name: string;
+  avatar: string | null;
+  gallery: unknown;
+  nsfw?: boolean;
+  personality?: string | null;
+  summary?: string | null;
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+}
+
+export interface SceneRenderOptions {
+  userId: string;
+  sessionId?: string | null;
+  recentMessages?: Array<{ role: string; content: string }>;
+  /** When true, fal safety checker stays on. */
+  enableSafetyChecker: boolean;
+  landscape?: boolean;
+}
+
+export class ScenePolicyError extends Error {
+  category?: string;
+  constructor(message: string, category?: string) {
+    super(message);
+    this.category = category;
+  }
+}
 
 export function parseGallery(raw: unknown): GalleryImage[] {
   if (!Array.isArray(raw)) return [];
@@ -33,66 +70,115 @@ export function pickReferences(character: SceneCharacter, description: string): 
   return refs;
 }
 
-function publicPortrait(url: string, path: { resolve: (...parts: string[]) => string; sep: string }): string | null {
-  let pathname = url;
-  if (/^https?:\/\//i.test(url)) {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') return null;
-      pathname = parsed.pathname;
-    } catch {
-      return null;
-    }
-  }
-  if (!pathname.startsWith('/')) return null;
-  const relative = decodeURIComponent(pathname.split('?')[0]).replace(/^\/+/, '');
-  if (!relative || relative.split('/').includes('..')) return null;
-  const root = path.resolve(/*turbopackIgnore: true*/ process.cwd(), 'public');
-  const file = path.resolve(/*turbopackIgnore: true*/ root, relative);
-  const rootKey = root.toLowerCase();
-  const fileKey = file.toLowerCase();
-  if (fileKey !== rootKey && !fileKey.startsWith(`${rootKey}${path.sep}`)) return null;
-  return file;
-}
-
-async function loadPortrait(url: string): Promise<Buffer | null> {
-  if (url.startsWith('data:')) {
-    const match = url.match(/^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=\s]+)$/i);
-    if (!match) return null;
-    const data = Buffer.from(match[1].replace(/\s/g, ''), 'base64');
-    return data.length && data.length <= MAX_REF_BYTES ? data : null;
-  }
-  const { readFile } = await import('fs/promises');
-  const path = await import('path');
-  const local = publicPortrait(url, path);
-  if (local) {
-    try {
-      const data = await readFile(/*turbopackIgnore: true*/ local);
-      return data.length && data.length <= MAX_REF_BYTES ? data : null;
-    } catch {
-      return null;
-    }
-  }
-  if (!/^https?:\/\//i.test(url)) return null;
+function publicHttpUrl(url: string | null | undefined): string | null {
+  const value = (url ?? '').trim();
+  if (!/^https?:\/\//i.test(value)) return null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const data = Buffer.from(await res.arrayBuffer());
-    return data.length && data.length <= MAX_REF_BYTES ? data : null;
+    const parsed = new URL(value);
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return null;
+    return parsed.toString();
   } catch {
     return null;
   }
 }
 
-/** Renders a scene in ComfyUI, using the card portrait so the character stays recognizable. */
-export async function renderSceneImage(character: SceneCharacter, description: string) {
-  const { generateComfyScene } = await import('@/src/lib/comfy/client');
+/**
+ * Production scene render via fal.ai (flux-2 / flux-2/edit).
+ * Moderates inputs first (no credits should be charged by the caller on policy blocks).
+ */
+export async function renderSceneImage(
+  character: SceneCharacter,
+  description: string,
+  options: SceneRenderOptions,
+) {
+  if (!falConfigured()) {
+    throw new Error('Scene rendering is not configured. Set FAL_KEY on the server.');
+  }
+
+  const recentText = (options.recentMessages ?? []).map((m) => m.content).join('\n');
+  const moderation = moderateGenerationText(
+    character.name,
+    character.personality,
+    character.summary,
+    character.visualDescription,
+    character.visualAnchor,
+    description,
+    recentText,
+  );
+  if (!moderation.allowed) {
+    await logModerationFlag({
+      userId: options.userId,
+      route: '/api/generate-scene',
+      category: moderation.category || 'illegal',
+      matched: moderation.matched,
+    });
+    throw new ScenePolicyError(moderation.message || 'Blocked by content policy.', moderation.category);
+  }
+
   const portrait = character.avatar
     ? { url: character.avatar, label: character.name }
     : pickReferences(character, description)[0] ?? null;
-  if (!portrait) throw new Error('This card has no portrait to match.');
-  const reference = await loadPortrait(portrait.url);
-  if (!reference) throw new Error('The card portrait could not be loaded for ComfyUI.');
-  const url = await generateComfyScene(description, character.name?.trim() || portrait.label || 'Character', reference, !!character.nsfw);
-  return { url, cloud_storage_path: url, engine: 'comfyui', referencesUsed: [portrait.label || character.name] };
+  const referenceUrl = publicHttpUrl(portrait?.url);
+  const appearance = [
+    character.visualDescription,
+    character.summary,
+    character.personality,
+  ].map((v) => htmlToPlainText(v || '')).filter(Boolean).join('. ');
+
+  const translated = await translateScenePrompt({
+    characterName: character.name?.trim() || 'Character',
+    appearance,
+    attire: description,
+    visualDescription: character.visualDescription,
+    visualAnchor: character.visualAnchor,
+    sceneHint: description,
+    recentMessages: options.recentMessages,
+    hasReferenceImage: !!referenceUrl,
+  });
+
+  const translatedCheck = moderateGenerationText(translated.prompt);
+  if (!translatedCheck.allowed) {
+    await logModerationFlag({
+      userId: options.userId,
+      route: '/api/generate-scene/prompt',
+      category: translatedCheck.category || 'illegal',
+      matched: translatedCheck.matched,
+    });
+    throw new ScenePolicyError(translatedCheck.message || 'Blocked by content policy.', translatedCheck.category);
+  }
+
+  const enableSafetyChecker = options.enableSafetyChecker !== false;
+  const fal = await generateFalScene({
+    prompt: translated.prompt,
+    referenceImageUrl: referenceUrl,
+    landscape: options.landscape,
+    enableSafetyChecker,
+    userHash: hashUserId(options.userId),
+  });
+
+  await logImageGeneration({
+    userId: options.userId,
+    characterId: character.id ?? null,
+    nsfwFlag: !!character.nsfw && !enableSafetyChecker,
+    falRequestId: fal.requestId ?? null,
+    model: fal.model,
+    safetyChecker: enableSafetyChecker,
+  });
+
+  const stored = await persistSceneRender({
+    falImageUrl: fal.url,
+    userId: options.userId,
+    sessionId: options.sessionId,
+  });
+
+  return {
+    url: stored.url,
+    cloud_storage_path: stored.path,
+    engine: fal.model,
+    promptModel: translated.model,
+    visualPrompt: translated.prompt,
+    referencesUsed: portrait ? [portrait.label || character.name] : [],
+    falRequestId: fal.requestId,
+    safetyChecker: enableSafetyChecker,
+  };
 }

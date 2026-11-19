@@ -6,6 +6,7 @@ import { publicHealth, runHealthChecks } from '@/lib/health';
 import { logEvent } from '@/lib/logger';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 import { ensureCreditRpcs } from '@/lib/ensure-credit-rpc';
+import { ensureGenerationLimitTables } from '@/lib/ensure-generation-limits';
 
 export async function GET() {
   try {
@@ -15,6 +16,9 @@ export async function GET() {
     });
     await ensureCreditRpcs().catch((err) => {
       console.error('[health] ensureCreditRpcs failed:', err instanceof Error ? err.message : err);
+    });
+    await ensureGenerationLimitTables().catch((err) => {
+      console.error('[health] ensureGenerationLimitTables failed:', err instanceof Error ? err.message : err);
     });
     const [viewer, report] = await Promise.all([getViewer(), runHealthChecks()]);
     if (report.status === 'down') {

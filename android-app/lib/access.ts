@@ -127,6 +127,7 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     subscribeStarLinked: !!(viewer as any)?.user?.subscribeStarId,
     subscribeStarUsername: ((viewer as any)?.user?.subscribeStarUsername as string | null | undefined) ?? null,
     nsfwEnabled: false,
+    isAdultVerified: !!(viewer && (viewer.user.termsAccepted === true || !!viewer.user.termsAcceptedAt)),
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),
       advancedGeneration: !!viewer && can(viewer, 'advancedGeneration'),
@@ -196,62 +197,132 @@ async function refundImageViaRpc(userId: string, day: string): Promise<boolean> 
 }
 
 /**
- * Atomically consumes one text credit for today (1 credit = 1 message).
+ * Atomically consumes `amount` text credits for today (default 1).
  * Admins bypass. Ultimate uses a silent soft fair-use cap of 10,000/day.
  * Prefers the Supabase/Postgres RPC; falls back to conditional updateMany.
  */
-export async function consumeCredit(viewer: Viewer): Promise<boolean> {
+export async function consumeCredit(viewer: Viewer, amount = 1): Promise<boolean> {
+  const n = Math.max(1, Math.floor(amount));
   if (viewer.isAdmin) return true;
   const limit = textCreditLimit(viewer);
   const today = utcDay();
   const id = viewer.user.id;
 
-  const viaRpc = await consumeTextViaRpc(id, today, limit);
-  if (viaRpc !== null) return viaRpc;
+  if (n === 1) {
+    const viaRpc = await consumeTextViaRpc(id, today, limit);
+    if (viaRpc !== null) return viaRpc;
+  } else {
+    let charged = 0;
+    let usedRpc = true;
+    for (let i = 0; i < n; i += 1) {
+      const ok = await consumeTextViaRpc(id, today, limit);
+      if (ok === null) { usedRpc = false; break; }
+      if (!ok) {
+        for (let j = 0; j < charged; j += 1) await refundTextViaRpc(id, today);
+        return false;
+      }
+      charged += 1;
+    }
+    if (usedRpc) return true;
+  }
 
-  const reset = await prisma.user.updateMany({ where: { id, creditsDay: { not: today } }, data: { creditsDay: today, creditsUsed: 1 } });
-  if (reset.count > 0) return true;
-  if (limit === null) {
-    await prisma.user.update({ where: { id }, data: { creditsUsed: { increment: 1 } } });
+  const reset = await prisma.user.updateMany({
+    where: { id, creditsDay: { not: today } },
+    data: { creditsDay: today, creditsUsed: n },
+  });
+  if (reset.count > 0) {
+    if (limit != null && n > limit) {
+      await prisma.user.update({ where: { id }, data: { creditsUsed: 0 } });
+      return false;
+    }
     return true;
   }
-  const inc = await prisma.user.updateMany({ where: { id, creditsDay: today, creditsUsed: { lt: limit } }, data: { creditsUsed: { increment: 1 } } });
+  if (limit === null) {
+    await prisma.user.update({ where: { id }, data: { creditsUsed: { increment: n } } });
+    return true;
+  }
+  const inc = await prisma.user.updateMany({
+    where: { id, creditsDay: today, creditsUsed: { lte: limit - n } },
+    data: { creditsUsed: { increment: n } },
+  });
   return inc.count > 0;
 }
 
-/** Gives back a credit when generation failed before producing a usable reply. */
-export async function refundCredit(viewer: Viewer): Promise<void> {
+/** Gives back credits when generation failed before producing a usable reply. */
+export async function refundCredit(viewer: Viewer, amount = 1): Promise<void> {
   if (viewer.isAdmin) return;
+  const n = Math.max(1, Math.floor(amount));
   const today = utcDay();
-  if (await refundTextViaRpc(viewer.user.id, today)) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, creditsDay: today, creditsUsed: { gt: 0 } }, data: { creditsUsed: { decrement: 1 } } });
+  for (let i = 0; i < n; i += 1) {
+    if (!(await refundTextViaRpc(viewer.user.id, today))) {
+      await prisma.user.updateMany({
+        where: { id: viewer.user.id, creditsDay: today, creditsUsed: { gt: 0 } },
+        data: { creditsUsed: { decrement: 1 } },
+      });
+    }
+  }
 }
 
 /**
- * Atomically consumes one image/scene credit for today (Ultimate: 100/day hard cap).
+ * Atomically consumes `amount` image/scene credits for today (Ultimate: 100/day hard cap).
  * Admins always succeed. Returns false when the tier has no image allowance or it is used up.
  */
-export async function consumeImageCredit(viewer: Viewer): Promise<boolean> {
+export async function consumeImageCredit(viewer: Viewer, amount = 1): Promise<boolean> {
+  const n = Math.max(1, Math.floor(amount));
   if (viewer.isAdmin) return true;
   const limit = TIERS[viewer.tier].dailyImageCredits;
   if (limit <= 0) return false;
   const today = utcDay();
   const id = viewer.user.id;
 
-  const viaRpc = await consumeImageViaRpc(id, today, limit);
-  if (viaRpc !== null) return viaRpc;
+  if (n === 1) {
+    const viaRpc = await consumeImageViaRpc(id, today, limit);
+    if (viaRpc !== null) return viaRpc;
+  } else {
+    let charged = 0;
+    let usedRpc = true;
+    for (let i = 0; i < n; i += 1) {
+      const ok = await consumeImageViaRpc(id, today, limit);
+      if (ok === null) { usedRpc = false; break; }
+      if (!ok) {
+        for (let j = 0; j < charged; j += 1) await refundImageViaRpc(id, today);
+        return false;
+      }
+      charged += 1;
+    }
+    if (usedRpc) return true;
+  }
 
-  const reset = await prisma.user.updateMany({ where: { id, imageCreditsDay: { not: today } }, data: { imageCreditsDay: today, imageCreditsUsed: 1 } });
-  if (reset.count > 0) return true;
-  const inc = await prisma.user.updateMany({ where: { id, imageCreditsDay: today, imageCreditsUsed: { lt: limit } }, data: { imageCreditsUsed: { increment: 1 } } });
+  const reset = await prisma.user.updateMany({
+    where: { id, imageCreditsDay: { not: today } },
+    data: { imageCreditsDay: today, imageCreditsUsed: n },
+  });
+  if (reset.count > 0) {
+    if (n > limit) {
+      await prisma.user.update({ where: { id }, data: { imageCreditsUsed: 0 } });
+      return false;
+    }
+    return true;
+  }
+  const inc = await prisma.user.updateMany({
+    where: { id, imageCreditsDay: today, imageCreditsUsed: { lte: limit - n } },
+    data: { imageCreditsUsed: { increment: n } },
+  });
   return inc.count > 0;
 }
 
-export async function refundImageCredit(viewer: Viewer): Promise<void> {
+export async function refundImageCredit(viewer: Viewer, amount = 1): Promise<void> {
   if (viewer.isAdmin) return;
+  const n = Math.max(1, Math.floor(amount));
   const today = utcDay();
-  if (await refundImageViaRpc(viewer.user.id, today)) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, imageCreditsDay: today, imageCreditsUsed: { gt: 0 } }, data: { imageCreditsUsed: { decrement: 1 } } });
+  for (let i = 0; i < n; i += 1) {
+    if (!(await refundImageViaRpc(viewer.user.id, today))) {
+      await prisma.user.updateMany({
+        where: { id: viewer.user.id, imageCreditsDay: today, imageCreditsUsed: { gt: 0 } },
+        data: { imageCreditsUsed: { decrement: 1 } },
+      });
+    }
+  }
 }
 
 /** A chat session is accessible to its owner; legacy chats without an owner only to admins. */

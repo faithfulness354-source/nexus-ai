@@ -103,5 +103,7 @@ export interface AccessStatus {
   subscribeStarUsername: string | null;
   /** Saved profile preference. Adult cards stay hidden until this is on and the plan allows them. */
   nsfwEnabled: boolean;
+  /** Server-side 18+ / Terms confirmation (termsAccepted). */
+  isAdultVerified: boolean;
   can: Record<TierFeature, boolean>;
 }

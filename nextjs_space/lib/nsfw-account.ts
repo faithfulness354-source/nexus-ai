@@ -5,6 +5,10 @@ function asFlag(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
 }
 
+function isAdultVerified(user: { termsAccepted?: boolean | null; termsAcceptedAt?: Date | null }): boolean {
+  return user.termsAccepted === true || !!user.termsAcceptedAt;
+}
+
 /** Saved profile preference. Missing column or row stays off. */
 export async function readAccountNsfwEnabled(userId: string): Promise<boolean> {
   try {
@@ -24,11 +28,17 @@ export async function writeAccountNsfwEnabled(userId: string, on: boolean): Prom
   `;
 }
 
-/** Admins skip the plan lock and follow the saved toggle. Other accounts need an active NSFW plan and that same toggle. */
+/**
+ * Adult cards / NSFW chat require:
+ * - Premium/Ultimate (or admin), and
+ * - server-side 18+ verification (termsAccepted), and
+ * - the saved profile NSFW toggle.
+ */
 export async function adultCardsEnabled(viewer: Viewer | null): Promise<boolean> {
   // HARD GUARD: NEVER MODIFY OR STRIP IS_ADMIN PERMISSION CHECKS
   if (!viewer) return false;
   if (viewer.isAdmin || viewer.isCreatorAdmin) return readAccountNsfwEnabled(viewer.user.id);
   if (!canViewNsfw(viewer)) return false;
+  if (!isAdultVerified(viewer.user)) return false;
   return readAccountNsfwEnabled(viewer.user.id);
 }
