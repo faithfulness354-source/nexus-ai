@@ -34,12 +34,12 @@ export const TIERS: Record<TierId, TierDef> = {
     features: ['500 daily credits', 'Fast response speed', 'Lorebooks & custom system prompts', '16k context window'],
   },
   PREMIUM: {
-    id: 'PREMIUM', name: 'Premium', price: 19.99, dailyCredits: 2_000, dailyImageCredits: 0, contextTokens: 32_000, speed: 'priority',
+    id: 'PREMIUM', name: 'Premium', price: 29.99, dailyCredits: 2_000, dailyImageCredits: 0, contextTokens: 32_000, speed: 'priority',
     customPrompts: true, advancedGeneration: true, proModels: true, nsfw: true, sceneImages: false, vipThemes: false,
     features: ['2,000 daily credits', 'High-speed priority routing', 'Advanced sampling sliders (Temperature / Top-P)', '32k context window', '18+ NSFW content access'],
   },
   ULTIMATE: {
-    id: 'ULTIMATE', name: 'Ultimate', price: 49.99, dailyCredits: null, dailyImageCredits: 100, contextTokens: 64_000, speed: 'priority-queue',
+    id: 'ULTIMATE', name: 'Ultimate', price: 50.00, dailyCredits: null, dailyImageCredits: 100, contextTokens: 64_000, speed: 'priority-queue',
     customPrompts: true, advancedGeneration: true, proModels: true, nsfw: true, sceneImages: true, vipThemes: true,
     features: ['Unlimited text generations', '100 daily image / scene credits', 'Maximum 64k context window', 'Priority queue routing', 'Dynamic inline scene rendering', 'VIP profile themes & badge', 'Everything in Premium, incl. 18+ access'],
   },
@@ -91,5 +91,12 @@ export interface AccessStatus {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   paymentsConfigured: boolean;
+  /** SubscribeStar profile URL used for outbound checkout links. */
+  subscribeStarProfileUrl: string;
+  /** Linked SubscribeStar account (after OAuth). */
+  subscribeStarLinked: boolean;
+  subscribeStarUsername: string | null;
+  /** Saved profile preference. Adult cards stay hidden until this is on and the plan allows them. */
+  nsfwEnabled: boolean;
   can: Record<TierFeature, boolean>;
 }

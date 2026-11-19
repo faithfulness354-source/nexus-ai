@@ -20,15 +20,17 @@ interface TierCardProps {
   disabled?: boolean;
   onSelect?: (tier: TierId) => void;
   compact?: boolean;
+  /** When true, Free also shows a SubscribeStar profile CTA. */
+  freeSelectable?: boolean;
 }
 
-export function TierCard({ tier, currentTier, loading, disabled, onSelect, compact }: TierCardProps) {
+export function TierCard({ tier, currentTier, loading, disabled, onSelect, compact, freeSelectable }: TierCardProps) {
   const def = TIERS[tier];
   const Icon = ICONS[tier];
   const isCurrent = currentTier === tier;
   const isDowngrade = currentTier ? TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(currentTier) : false;
   const featured = tier === 'PREMIUM';
-  const selectable = tier !== 'FREE' && !!onSelect && !disabled && !loading;
+  const selectable = (tier !== 'FREE' || !!freeSelectable) && !!onSelect && !disabled && !loading;
 
   function select() {
     if (selectable && onSelect) onSelect(tier);
@@ -70,7 +72,7 @@ export function TierCard({ tier, currentTier, loading, disabled, onSelect, compa
           </li>
         ))}
       </ul>
-      {tier !== 'FREE' && onSelect && (
+      {onSelect && (tier !== 'FREE' || freeSelectable) && (
         <Button
           type="button"
           className="mt-4 w-full pointer-events-auto"
@@ -82,7 +84,13 @@ export function TierCard({ tier, currentTier, loading, disabled, onSelect, compa
             select();
           }}
         >
-          {isCurrent ? 'Your plan' : isDowngrade ? `Switch to ${def.name}` : `Upgrade to ${def.name}`}
+          {tier === 'FREE'
+            ? (isCurrent ? 'Your plan · View on SubscribeStar' : 'View Free on SubscribeStar')
+            : isCurrent
+              ? 'Your plan'
+              : isDowngrade
+                ? `Switch to ${def.name}`
+                : `Subscribe · ${def.name}`}
         </Button>
       )}
     </div>

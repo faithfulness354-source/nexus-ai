@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Lock } from 'lucide-react';
@@ -8,36 +8,32 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { TierCard } from './tier-card';
 import { PAID_TIERS, TIERS, TIER_ORDER, type AccessStatus, type PaidTierId, type TierId } from '@/lib/tiers';
 import { startCheckout } from '@/lib/billing-client';
-import { loadPaypalSdk } from '@/lib/paypal-browser';
 
 export type PaywallReason = 'credits' | 'sceneImages' | 'advancedGeneration' | 'customPrompts' | 'proModels' | 'nsfw' | 'vipThemes';
 
 const COPY: Record<PaywallReason, { title: string; body: string; minTier: TierId }> = {
-  credits: { title: "You're out of daily credits", body: 'Upgrade to keep the story going right now, or come back after your credits reset.', minTier: 'PLUS' },
-  sceneImages: { title: 'Scene images are an Ultimate feature', body: 'Dynamic inline scene rendering with 100 daily image credits is included with Ultimate.', minTier: 'ULTIMATE' },
-  advancedGeneration: { title: 'Advanced sampling sliders', body: 'Temperature and Top-P controls unlock with Premium.', minTier: 'PREMIUM' },
-  customPrompts: { title: 'Custom system prompts & lorebooks', body: 'Custom system prompts and lorebooks unlock with Plus.', minTier: 'PLUS' },
-  proModels: { title: 'Pro models', body: 'The most capable chat models unlock with Premium.', minTier: 'PREMIUM' },
-  nsfw: { title: '18+ content', body: '18+ NSFW content and scenarios unlock with the Premium or Ultimate plan.', minTier: 'PREMIUM' },
+  credits: { title: "You're out of daily credits", body: 'Upgrade on SubscribeStar to keep the story going, then link your account in Settings.', minTier: 'PLUS' },
+  sceneImages: { title: 'Scene images are an Ultimate feature', body: 'Dynamic inline scene rendering with 100 daily image credits is included with Ultimate ($50/mo).', minTier: 'ULTIMATE' },
+  advancedGeneration: { title: 'Advanced sampling sliders', body: 'Temperature and Top-P controls unlock with Premium ($29.99/mo).', minTier: 'PREMIUM' },
+  customPrompts: { title: 'Custom system prompts & lorebooks', body: 'Custom system prompts and lorebooks unlock with Plus ($9.99/mo).', minTier: 'PLUS' },
+  proModels: { title: 'Pro models', body: 'The most capable chat models unlock with Premium ($29.99/mo).', minTier: 'PREMIUM' },
+  nsfw: { title: '18+ content', body: '18+ NSFW content and scenarios unlock with Premium or Ultimate.', minTier: 'PREMIUM' },
   vipThemes: { title: 'VIP profile themes', body: 'VIP profile themes and the VIP badge are included with Ultimate.', minTier: 'ULTIMATE' },
 };
 
 export function PaywallModal({ reason, status, onClose }: { reason: PaywallReason | null; status: AccessStatus | null; onClose: () => void }) {
   const [pending, setPending] = useState<TierId | null>(null);
-  useEffect(() => {
-    if (!status?.paypalClientId) return;
-    void loadPaypalSdk(status.paypalClientId);
-  }, [status?.paypalClientId]);
   const copy = COPY[reason ?? 'credits'];
   const current = status?.tier ?? 'FREE';
   const options = PAID_TIERS.filter((t) => TIER_ORDER.indexOf(t) >= Math.max(TIER_ORDER.indexOf(copy.minTier), TIER_ORDER.indexOf(current) + 1));
   const resets = status?.resetsAt ? new Date(status.resetsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null;
 
   async function choose(tier: TierId) {
+    if (tier === 'FREE') return;
     setPending(tier);
     try {
-      const switched = await startCheckout(tier as PaidTierId);
-      if (switched) onClose();
+      await startCheckout(tier as PaidTierId);
+      toast.message('Complete checkout on SubscribeStar, then link your account in Settings to unlock.');
     } catch (err: any) {
       console.error('Checkout failed:', err);
       toast.error(err?.message ?? 'Checkout failed');
@@ -67,7 +63,18 @@ export function PaywallModal({ reason, status, onClose }: { reason: PaywallReaso
           ))}
         </div>
         <p className="text-center text-xs text-muted-foreground">
-          Compare every plan in <Link href="/settings?tab=subscription" onClick={onClose} className="text-primary hover:underline">Subscription &amp; Tiers</Link>.
+          After subscribing on SubscribeStar, open{' '}
+          <Link href="/settings?tab=subscription" onClick={onClose} className="text-primary hover:underline">
+            Settings → Subscription
+          </Link>{' '}
+          and click <strong>Connect / Link SubscribeStar Account</strong>.{' '}
+          <Link href="/terms" onClick={onClose} className="text-primary hover:underline">Terms</Link>
+          {' · '}
+          <Link href="/privacy" onClick={onClose} className="text-primary hover:underline">Privacy</Link>
+          {' · '}
+          <Link href="/refund-policy" onClick={onClose} className="text-primary hover:underline">Refunds</Link>
+          {' · '}
+          <Link href="/prohibited-content" onClick={onClose} className="text-primary hover:underline">Prohibited Content</Link>
         </p>
       </DialogContent>
     </Dialog>

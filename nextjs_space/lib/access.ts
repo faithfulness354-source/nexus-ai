@@ -2,7 +2,10 @@ import { prisma } from '@/lib/db';
 import { auth } from '@/auth';
 import { isWhitelistedEmail } from '@/lib/admin';
 import { hasAdminRole } from '@/lib/admin-role';
-import { paypalCredentialPairs, paypalPublicClientId } from '@/lib/paypal-credentials';
+import {
+  subscribeStarPaymentsReady,
+  subscribeStarProfileUrl,
+} from '@/lib/subscribestar';
 import { TIERS, type AccessStatus, type TierFeature, type TierId } from '@/lib/tiers';
 import type { User } from '@prisma/client';
 
@@ -13,7 +16,7 @@ export function isAdminUser(user: Pick<User, 'role' | 'isWhitelisted' | 'email'>
 
 const ACTIVE_STATUSES = new Set(['active', 'trialing']);
 
-/** Effective tier: paid tiers count while the PayPal subscription is active, or cancelled but still inside the paid period. */
+/** Effective tier: paid tiers count while the SubscribeStar subscription is active, or cancelled but still inside the paid period. */
 export function effectiveTier(user: Pick<User, 'tier' | 'subscriptionStatus' | 'currentPeriodEnd'>): TierId {
   if (user.tier === 'FREE') return 'FREE';
   if (ACTIVE_STATUSES.has(user.subscriptionStatus ?? '')) return user.tier as TierId;
@@ -80,7 +83,9 @@ export function contextBudget(viewer: Viewer, modelWindow: number): number {
 }
 
 export function paymentsConfigured(): boolean {
-  return paypalCredentialPairs().length > 0;
+  // Outbound SubscribeStar links work whenever the public profile URL is set.
+  // OAuth/webhook secrets may still be placeholders during platform review.
+  return subscribeStarPaymentsReady();
 }
 
 export function accessStatus(viewer: Viewer | null): AccessStatus {
@@ -107,9 +112,11 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     resetsAt: nextUtcMidnight(),
     subscriptionStatus: viewer?.user.subscriptionStatus ?? null,
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
-    hasSubscription: !!viewer?.user.paypalSubscriptionId && ['active', 'past_due'].includes(viewer.user.subscriptionStatus ?? ''),
+    hasSubscription: !!(viewer as any)?.user?.subscribeStarId && ['active', 'past_due'].includes((viewer?.user.subscriptionStatus) ?? ''),
     paymentsConfigured: paymentsConfigured(),
-    paypalClientId: paypalPublicClientId(),
+    subscribeStarProfileUrl: subscribeStarProfileUrl(),
+    subscribeStarLinked: !!(viewer as any)?.user?.subscribeStarId,
+    subscribeStarUsername: ((viewer as any)?.user?.subscribeStarUsername as string | null | undefined) ?? null,
     nsfwEnabled: false,
     can: {
       customPrompts: !!viewer && can(viewer, 'customPrompts'),

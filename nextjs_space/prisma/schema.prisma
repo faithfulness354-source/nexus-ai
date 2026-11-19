@@ -151,8 +151,13 @@ model User {
   stripeSubscriptionId String?       @unique
   subscriptionStatus   String?
   currentPeriodEnd     DateTime?
-  /// PayPal Subscriptions (the active billing provider).
+  /// Legacy PayPal field (no longer used for checkout).
   paypalSubscriptionId String?
+  /// SubscribeStar.adult subscriber id (linked via OAuth).
+  subscribeStarId        String?   @unique
+  subscribeStarUsername  String?
+  subscribeStarPaidUntil DateTime?
+  subscribeStarTierId    String?
   /// Credits used on `creditsDay` (UTC date YYYY-MM-DD); resets when the day changes.
   creditsUsed          Int           @default(0)
   creditsDay           String        @default("")

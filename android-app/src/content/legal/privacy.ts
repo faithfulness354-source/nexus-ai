@@ -47,7 +47,7 @@ export const privacy: LegalPolicy = {
     {
       title: 'Payments',
       blocks: [
-        { kind: 'p', text: 'Paid plans are processed by the payment provider (PayPal, when checkout is enabled). The provider collects the payment details needed to charge you. Nexus AI stores the subscription status and provider customer or subscription identifiers, not your full card number.' },
+        { kind: 'p', text: 'Paid plans are processed by SubscribeStar.adult. SubscribeStar collects the payment details needed to charge you. Nexus AI stores your linked SubscribeStar subscriber id, paid-until date, and subscription tier status — not your full card number.' },
       ],
     },
     {

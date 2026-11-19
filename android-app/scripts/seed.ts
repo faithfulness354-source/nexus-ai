@@ -69,7 +69,7 @@ async function main() {
     });
   }
 
-  // Subscription plan prices ($0 / $9.99 / $19.99 / $49.99). Stripe price IDs are kept as-is.
+  // Subscription plan prices ($0 / $9.99 / $29.99 / $50.00). Stripe price IDs are kept as-is.
   for (const t of TIER_ORDER) {
     const def = TIERS[t];
     const priceCents = Math.round(def.price * 100);

@@ -10,6 +10,7 @@ export const terms: LegalPolicy = {
       blocks: [
         { kind: 'p', text: 'These Terms are the user agreement between you and Nexus AI. By creating an account, checking the age-and-terms box, or using the site, you agree to these Terms, the [[Privacy Policy|/privacy]], and the [[Acceptable Use Policy|/guidelines]].' },
         { kind: 'p', text: 'Nexus AI is a fictional roleplay service for adults. You must be at least 18 years old to register or use it.' },
+        { kind: 'p', text: 'Paid plans are sold through SubscribeStar.adult. After purchasing, link your SubscribeStar account in Nexus AI Settings so your tier unlocks. Refund requests are handled by SubscribeStar support ([[Refund Policy|/refund-policy]]).' },
       ],
     },
     {
