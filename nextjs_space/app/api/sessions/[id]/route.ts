@@ -86,15 +86,32 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
     // Update generation settings if provided
     if (body?.generationSettings) {
-      // Sampling parameters are Premium+ only; Free/Plus saves keep the defaults.
-      if (!can(access, 'advancedGeneration')) {
-        body.generationSettings = { ...body.generationSettings, temperature: undefined, topP: undefined, frequencyPenalty: undefined, presencePenalty: undefined };
-      } else {
+      const wantsAdvanced =
+        body.generationSettings.temperature !== undefined
+        || body.generationSettings.topP !== undefined
+        || body.generationSettings.frequencyPenalty !== undefined
+        || body.generationSettings.presencePenalty !== undefined;
+      // Temperature / Top-P sliders are Premium+; return 402 so the UI can show an upgrade prompt.
+      if (wantsAdvanced && !can(access, 'advancedGeneration')) {
+        return NextResponse.json(
+          { error: 'Temperature and Top-P controls unlock with Premium.', code: 'UPGRADE_REQUIRED', feature: 'advancedGeneration' },
+          { status: 402 },
+        );
+      }
+      if (can(access, 'advancedGeneration')) {
         // Premium/Ultimate ranges: Temperature 0.1–1.5, Top-P 0.1–1.0.
         body.generationSettings = {
           ...body.generationSettings,
           temperature: clampSampling('temperature', body.generationSettings.temperature),
           topP: clampSampling('topP', body.generationSettings.topP),
+        };
+      } else {
+        body.generationSettings = {
+          ...body.generationSettings,
+          temperature: undefined,
+          topP: undefined,
+          frequencyPenalty: undefined,
+          presencePenalty: undefined,
         };
       }
       await prisma.generationSettings.upsert({

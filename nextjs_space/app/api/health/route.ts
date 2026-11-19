@@ -5,12 +5,16 @@ import { getViewer } from '@/lib/access';
 import { publicHealth, runHealthChecks } from '@/lib/health';
 import { logEvent } from '@/lib/logger';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { ensureCreditRpcs } from '@/lib/ensure-credit-rpc';
 
 export async function GET() {
   try {
     // Additive schema heal for VLM columns so gallery/persona queries stop 500ing after deploy.
     await ensureVisualColumns().catch((err) => {
       console.error('[health] ensureVisualColumns failed:', err instanceof Error ? err.message : err);
+    });
+    await ensureCreditRpcs().catch((err) => {
+      console.error('[health] ensureCreditRpcs failed:', err instanceof Error ? err.message : err);
     });
     const [viewer, report] = await Promise.all([getViewer(), runHealthChecks()]);
     if (report.status === 'down') {

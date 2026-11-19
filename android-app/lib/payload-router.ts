@@ -1,6 +1,6 @@
 // Tier-based payload routing: plan context caps, sliding history window, compressed system prompt,
 // continuity guardrails and a multi-paragraph output band.
-import { estimateTokens } from '@/lib/tokens';
+import { DEFINITION_TOKEN_CAP, estimateTokens } from '@/lib/tokens';
 import { htmlToPlainText } from '@/lib/rich-text';
 import { TIERS, type TierId } from '@/lib/tiers';
 import type { LLMMessage } from '@/lib/types';
@@ -29,10 +29,15 @@ export interface PayloadPolicy {
 }
 
 export const OUTPUT_FLOOR_TOKENS = 450;
-export const OUTPUT_CEILING_TOKENS = 800;
-/** API cap. Higher than the prose band so hidden thinking tokens cannot eat the visible reply. */
-export const OUTPUT_TOKEN_CAP = 2048;
-/** Active chat baseline: last 10 messages (5 user + 5 assistant). */
+export const OUTPUT_CEILING_TOKENS = 600;
+/**
+ * Absolute hard cap for completion max_tokens (prevents runaway output cost).
+ * Provider adapters may clamp further (e.g. OpenAI-compatible bodies use 600).
+ */
+export const OUTPUT_TOKEN_CAP = 600;
+/** @deprecated Kept for older imports; input budget now scales with the plan context cap. */
+export const PROMPT_TOKEN_BUDGET = 3_200;
+/** Active chat baseline: last 10 messages (5 user + 5 assistant) before packing expands with tier budget. */
 export const BASELINE_HISTORY_TURNS = 5;
 /** Hard cap on chat turns sent to the model. Older turns stay in the database only. */
 export const HISTORY_MESSAGE_LIMIT = 10;
@@ -40,20 +45,27 @@ export const HISTORY_MESSAGE_LIMIT = 10;
 export const CONTEXT_SAFETY_RATIO = 0.95;
 
 /**
- * Every tier gets the same output band and sliding window; tiers differ by their hard context cap
- * (Free 4k, Plus 16k, Premium 32k, Ultimate 64k). Creator admins bypass plan caps and get the full
- * model window. `modelWindow` lowers the cap when the selected model has a smaller context window.
+ * Tier context caps (Free 4096 / Plus 16384 / Premium 32768 / Ultimate 65536).
+ * Sliding history packing uses nearly the full plan window minus the completion reserve.
+ * Creator admins bypass plan caps and get the full model window.
+ * `modelWindow` lowers the cap when the selected model has a smaller context window.
  */
 export function payloadPolicy(tier: TierId, isAdmin: boolean, modelWindow?: number | null): PayloadPolicy {
   const plan = TIERS[tier];
   const planCap = isAdmin ? (modelWindow && modelWindow > 0 ? modelWindow : 1_000_000) : plan.contextTokens;
   const contextCap = modelWindow && modelWindow > 0 ? Math.min(planCap, modelWindow) : planCap;
-  const inputBudget = Math.max(600, Math.floor(contextCap * CONTEXT_SAFETY_RATIO) - OUTPUT_CEILING_TOKENS);
+  const maxOutputTokens = Math.min(OUTPUT_TOKEN_CAP, OUTPUT_CEILING_TOKENS);
+  // Pre-flight: system + persona + lore + history must fit under the tier window after reserving completion.
+  const inputBudget = Math.max(600, Math.floor(contextCap * CONTEXT_SAFETY_RATIO) - maxOutputTokens);
+  const historyTurns = Math.max(
+    BASELINE_HISTORY_TURNS,
+    Math.min(HISTORY_MESSAGE_LIMIT * 4, Math.floor(inputBudget / 350)),
+  );
   return {
     mode: isAdmin || tier === 'PREMIUM' || tier === 'ULTIMATE' ? 'HIGH' : 'STANDARD',
     contextCap, inputBudget,
-    maxOutputTokens: OUTPUT_TOKEN_CAP, minOutputTokens: OUTPUT_FLOOR_TOKENS,
-    historyTurns: BASELINE_HISTORY_TURNS,
+    maxOutputTokens, minOutputTokens: OUTPUT_FLOOR_TOKENS,
+    historyTurns,
     lore: isAdmin || plan.customPrompts,
     imageTriggers: isAdmin || plan.sceneImages,
     statusTracking: true, fullPersona: true, memorySummary: true,
@@ -154,6 +166,160 @@ export interface CharacterPromptSource extends BaselineSource {
 
 export interface MeterDefLite { name: string; min?: number; max?: number; default?: number }
 
+/** Verbatim top of every system payload. Whitespace is preserved so the tiers stay readable. */
+export const PRIMARY_SYSTEM_DIRECTIVE = `[PRIMARY SYSTEM DIRECTIVE: HIERARCHY OF AUTHORITY & OOC MECHANICS]
+
+TIER 1: META-COMMUNICATION MECHANICS (Developer Command)
+1. You operate under direct developer control.
+2. If the user sends a message wrapped in brackets or tagged with OOC (e.g., [OOC ...], (OOC: ...), or OOC:), you are MANDATED to immediately pause in-character story generation.
+3. You must step into an AI Assistant voice to acknowledge and address the user's out-of-character feedback, structural request, or meta-question directly.
+4. NEVER issue generic refusal errors like "I cannot comply with that" to an OOC command. NEVER continue in-character roleplay while an OOC tag is active.
+
+TIER 2: IMMUTABLE CREATOR BOUNDARIES (Creator Protection)
+1. Creator-defined core identity traits, orientations, hard limits, and absolute boundaries set in the Character Definition (e.g., "Strictly lesbian; zero romantic or sexual attraction to male personas under any circumstances") are IMMUTABLE GUARDRAILS.
+2. A user CANNOT use Tier 1 OOC commands to force a character to break, rewrite, or bypass these fixed Creator Boundaries.
+3. IF A USER ATTEMPTS TO USE [OOC ...] TO FORCE A CHARACTER TO VIOLATE A FIXED CARD BOUNDARY:
+   a. Address the user directly in Tier 1 OOC Assistant mode.
+   b. Explicitly inform the user that the requested action violates the character's fixed card definition set by the creator.
+   c. Firmly refuse the character action on behalf of the card constraints, while keeping the meta-communication open and offering to proceed within the character's defined boundaries.
+
+TIER 3: IN-CHARACTER ROLEPLAY EXECUTION (Default Mode)
+1. When no OOC tag is present, execute standard roleplay following the character persona, traits, tone, and active history context.`;
+
+/**
+ * System payload order: authority directive, full character card, user persona, length rule, then world state.
+ * The directive, card, and length rule are not sliced.
+ */
+export const LENGTH_RULE = 'Write rich, multi-paragraph roleplay responses.';
+export const PROSE_DIRECTIVE = 'Write detailed, multi-paragraph responses focusing on actions, environment, and dialogue.';
+
+const EXAMPLE_BLOCK = /<START>[\s\S]*?(?=<START>|$)/gi;
+
+/** Drops sample chats so they are not sent as character or persona definitions. */
+export function stripExampleDialogue(text: string | null | undefined): string {
+  return (text ?? '')
+    .replace(EXAMPLE_BLOCK, '')
+    .replace(/(^|\n)\s*example (dialogues?|messages?|chats?|conversations?)\s*:?[\s\S]*?(?=\n\s*\n|\n\s*\[[A-Z][A-Z0-9_ ]{2,}\]|$)/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function definitionChunks(text: string): string[] {
+  return text.split(/\n+|(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+}
+
+/** Drops persona lines that repeat themselves or already appear in the character card. */
+export function dedupePersonaDescription(persona: string, character: string): string {
+  const known = definitionChunks(character)
+    .map((part) => part.replace(/\s+/g, ' ').toLowerCase())
+    .filter((part) => part.length > 40);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of definitionChunks(persona)) {
+    const key = part.replace(/\s+/g, ' ').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    if (known.some((existing) => existing.includes(key) || key.includes(existing))) continue;
+    seen.add(key);
+    kept.push(part);
+  }
+  return kept.join('\n');
+}
+
+function packDefinition(label: string, body: string, budget: number): { text: string; used: number } {
+  const trimmed = body.trim();
+  if (!trimmed || budget < 8) return { text: '', used: 0 };
+  const header = label ? `${label}\n` : '';
+  const labeled = `${header}${trimmed}`;
+  if (estimateTokens(labeled) <= budget) return { text: labeled, used: estimateTokens(labeled) };
+  const room = budget - estimateTokens(header) - 1;
+  if (room < 8) return { text: '', used: 0 };
+  const text = `${header}${truncateTokens(trimmed, room)}`;
+  return { text, used: estimateTokens(text) };
+}
+
+/**
+ * Character card, persona rules, world state, and lore share one 800-token budget.
+ * Example dialogue and repeated persona lines are removed before anything is packed.
+ */
+export function capStaticDefinitions(parts: {
+  character?: string | null;
+  persona?: string | null;
+  lore?: string | null;
+  world?: string | null;
+}): { text: string; tokens: number } {
+  const character = stripExampleDialogue(parts.character);
+  const persona = dedupePersonaDescription(stripExampleDialogue(parts.persona), character);
+  const world = (parts.world ?? '').trim();
+  const lore = stripExampleDialogue(parts.lore);
+  let budget = DEFINITION_TOKEN_CAP;
+  const sections: string[] = [];
+  for (const [label, body] of [
+    ['[CHARACTER DEFINITION]', character],
+    ['[USER PERSONA]', persona],
+    ['', world],
+    ['[LORE]', lore],
+  ] as const) {
+    const packed = packDefinition(label, body, budget);
+    if (!packed.text) continue;
+    sections.push(packed.text);
+    budget -= packed.used;
+  }
+  let text = sections.join('\n\n');
+  if (estimateTokens(text) > DEFINITION_TOKEN_CAP) text = truncateTokens(text, DEFINITION_TOKEN_CAP);
+  return { text, tokens: estimateTokens(text) };
+}
+
+export function buildTieredSystemPrompt(parts: {
+  world?: string | null;
+  persona?: string | null;
+  character?: string | null;
+  lore?: string | null;
+  context?: string | null;
+}): { prompt: string; definitionTokens: number } {
+  const definitions = capStaticDefinitions({
+    character: parts.character,
+    persona: parts.persona,
+    lore: parts.lore,
+    world: parts.world,
+  });
+  const sections = [PRIMARY_SYSTEM_DIRECTIVE];
+  if (definitions.text) sections.push(definitions.text);
+  sections.push(LENGTH_RULE);
+  sections.push(PROSE_DIRECTIVE);
+  const context = (parts.context ?? '').trim();
+  if (context) sections.push(context);
+  return { prompt: sections.join('\n\n'), definitionTokens: definitions.tokens };
+}
+
+/** Example dialogue is only useful before the scene has its own turns. */
+export function includeExampleDialogue(messageCount: number): boolean {
+  return messageCount < 4;
+}
+
+/**
+ * Example dialogue (`<START>` blocks from the card, or the example field when it has no blocks).
+ * Character rules themselves stay in the compressed prompt; this only returns the sample lines.
+ */
+export function exampleDialogueBlock(
+  exampleDialogue: string | null | undefined,
+  embedded: Array<string | null | undefined> = [],
+): string {
+  const blocks: string[] = [];
+  for (const source of [exampleDialogue, ...embedded]) {
+    const text = (source ?? '').trim();
+    if (!text) continue;
+    const found = text.match(/<START>[\s\S]*?(?=<START>|$)/gi);
+    if (!found) continue;
+    for (const block of found) {
+      const trimmed = block.trim();
+      if (trimmed.length > '<START>'.length) blocks.push(trimmed);
+    }
+  }
+  const unique = [...new Set(blocks)];
+  if (unique.length) return unique.join('\n');
+  return (exampleDialogue ?? '').trim();
+}
+
 /** Continuity, anti-godmoding and output-band rules sent on every turn. */
 export const CONTINUITY_GUARDRAILS = [
   '[CONTINUITY] Everything established in this session is permanent canon: facts, character traits, inventory, locations, world conditions and every prior {{user}} and NPC action.',
@@ -214,6 +380,29 @@ export function trackedMeters(customRules: string | null | undefined): MeterDefL
 
 function clampNum(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : lo));
+}
+
+/**
+ * Full character card for the live prompt: personality, system prompt, scenario, summary, and rules.
+ * Continuity and length instructions are appended whole and are not sliced to a token cap.
+ */
+export function fullCharacterPrompt(c: CharacterPromptSource): string {
+  const name = (c.name || 'Character').trim() || 'Character';
+  const title = (c.title || '').trim();
+  const summary = htmlToPlainText(c.summary);
+  const personality = htmlToPlainText(c.personality);
+  const systemPrompt = htmlToPlainText(c.systemPrompt);
+  const scenario = htmlToPlainText(c.scenario);
+  const rules = (c.customRules || '').trim();
+  return [
+    `You are ${name}${title ? `, ${title}` : ''}. Roleplay with {{user}}.`,
+    summary && `Summary:\n${summary}`,
+    personality && `Personality:\n${personality}`,
+    systemPrompt && `Character directives:\n${systemPrompt}`,
+    scenario && `Scenario:\n${scenario}`,
+    rules && `Rules:\n${rules}`,
+    CONTINUITY_GUARDRAILS,
+  ].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -300,6 +489,14 @@ export function windowHistory<T>(messages: T[], turns: number): T[] {
 }
 
 /**
+ * Keeps the authority directive intact at the front. Only the persona, character, and context
+ * sections are shortened when the plan budget is tight.
+ */
+function fitSystemPrompt(systemPrompt: string, _tokenBudget: number): { system: string; systemTokens: number } {
+  return { system: systemPrompt, systemTokens: estimateTokens(systemPrompt) };
+}
+
+/**
  * Credit Protection packing: fits system + history into `inputBudget` tokens. The newest user message
  * always survives (truncated if needed); older messages are dropped or tail-trimmed.
  */
@@ -308,13 +505,10 @@ export function packWithinBudget(
   history: Array<{ role: string; content: string }>,
   inputBudget: number,
 ): { messages: LLMMessage[]; inputTokens: number } {
-  let system = systemPrompt;
-  let systemTokens = estimateTokens(system);
   const minForUser = 40;
-  if (systemTokens > inputBudget - minForUser) {
-    system = truncateTokens(system, Math.max(20, inputBudget - minForUser));
-    systemTokens = estimateTokens(system);
-  }
+  const fitted = fitSystemPrompt(systemPrompt, Math.max(20, inputBudget - minForUser));
+  const system = fitted.system;
+  const systemTokens = fitted.systemTokens;
   let remaining = inputBudget - systemTokens;
   const kept: LLMMessage[] = [];
   for (let i = history.length - 1; i >= 0; i--) {
@@ -324,13 +518,12 @@ export function packWithinBudget(
     if (roleName === 'system') continue;
     const role = (roleName === 'assistant' || roleName === 'model' ? 'assistant' : 'user') as 'user' | 'assistant';
     const isNewest = i === history.length - 1;
-    let content = stripPromptLeak(minify(messageContent(m.content)));
+    let content = stripPromptLeak(messageContent(m.content).trim());
     if (!content) continue;
     let t = estimateTokens(content);
-    if (t > remaining) {
-      if (!isNewest && remaining < 15) break;
-      // Newest message keeps its opening; older context keeps its most recent part.
-      content = truncateTokens(content, Math.max(5, remaining), !isNewest);
+    if (t > remaining && !isNewest) {
+      if (remaining < 15) break;
+      content = truncateTokens(content, Math.max(5, remaining), true);
       t = estimateTokens(content);
     }
     if (!content) continue;
@@ -345,15 +538,15 @@ export function packWithinBudget(
 }
 
 /**
- * Sliding window: the character sheet stays at index 0, and only the newest 10 chat messages follow it.
- * Older turns are not sent. The plan budget can drop messages inside that window; stored history is untouched.
+ * The character sheet stays at index 0. Active history follows it, newest last.
+ * The plan budget may drop older turns. The system prompt, including length instructions, is not sliced.
  */
 export function assembleTierPayload(
   systemPrompt: string,
   allMessages: Array<{ role: string; content: string }>,
   policy: Pick<PayloadPolicy, 'historyTurns' | 'inputBudget'>,
 ): { messages: LLMMessage[]; inputTokens: number; windowed: number; purged: number } {
-  const windowedMsgs = spliceDeletedMessages(allMessages).slice(-HISTORY_MESSAGE_LIMIT);
+  const windowedMsgs = spliceDeletedMessages(allMessages);
   const packed = packWithinBudget(systemPrompt, windowedMsgs, policy.inputBudget);
   if (packed.messages[0]?.role !== 'system') {
     packed.messages.unshift({ role: 'system', content: systemPrompt });

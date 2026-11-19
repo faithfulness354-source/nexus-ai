@@ -6,6 +6,7 @@ import {
   subscribeStarPaymentsReady,
   subscribeStarProfileUrl,
 } from '@/lib/subscribestar';
+import { ensureCreditRpcs } from '@/lib/ensure-credit-rpc';
 import { TIERS, type AccessStatus, type TierFeature, type TierId } from '@/lib/tiers';
 import type { User } from '@prisma/client';
 
@@ -47,7 +48,7 @@ export interface Viewer {
   tier: TierId;
 }
 
-/** Loads the signed-in user from the DB, or null when signed out. */
+/** Loads the signed-in user from the DB, or null when signed out. Never trusts client-reported tier. */
 export async function getViewer(): Promise<Viewer | null> {
   const session = await auth();
   const id = session?.user?.id;
@@ -78,6 +79,12 @@ export function can(viewer: Viewer, feature: TierFeature): boolean {
   return viewer.isAdmin || TIERS[viewer.tier][feature];
 }
 
+/** Server-side daily text credit limit for this viewer (Ultimate soft fair-use included). */
+export function textCreditLimit(viewer: Viewer): number | null {
+  if (viewer.isAdmin) return null;
+  return TIERS[viewer.tier].dailyCredits;
+}
+
 export function contextBudget(viewer: Viewer, modelWindow: number): number {
   return viewer.isAdmin ? modelWindow : Math.min(modelWindow, TIERS[viewer.tier].contextTokens);
 }
@@ -90,9 +97,11 @@ export function paymentsConfigured(): boolean {
 
 export function accessStatus(viewer: Viewer | null): AccessStatus {
   const tier = viewer?.tier ?? 'FREE';
-  const daily = viewer?.isAdmin ? null : TIERS[tier].dailyCredits;
+  const plan = TIERS[tier];
+  // Silent fair-use (Ultimate) and admins report unlimited text credits in the UI.
+  const daily = viewer?.isAdmin || plan.fairUseSilent ? null : plan.dailyCredits;
   const used = viewer && viewer.user.creditsDay === utcDay() ? viewer.user.creditsUsed : 0;
-  const imgDaily = viewer?.isAdmin ? null : TIERS[tier].dailyImageCredits;
+  const imgDaily = viewer?.isAdmin ? null : plan.dailyImageCredits;
   const imgUsed = viewer && viewer.user.imageCreditsDay === utcDay() ? viewer.user.imageCreditsUsed : 0;
   return {
     authenticated: !!viewer,
@@ -103,16 +112,16 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
     avatarUrl: viewer?.user.image?.trim() || null,
     tier,
     dailyCredits: daily,
-    creditsUsed: used,
+    creditsUsed: daily === null ? 0 : used,
     creditsRemaining: daily === null ? null : Math.max(0, daily - used),
     dailyImageCredits: imgDaily,
     imageCreditsUsed: imgUsed,
     imageCreditsRemaining: imgDaily === null ? null : Math.max(0, imgDaily - imgUsed),
-    contextTokens: viewer?.isAdmin ? null : TIERS[tier].contextTokens,
+    contextTokens: viewer?.isAdmin ? null : plan.contextTokens,
     resetsAt: nextUtcMidnight(),
     subscriptionStatus: viewer?.user.subscriptionStatus ?? null,
     currentPeriodEnd: viewer?.user.currentPeriodEnd?.toISOString() ?? null,
-    hasSubscription: !!(viewer as any)?.user?.subscribeStarId && ['active', 'past_due'].includes((viewer?.user.subscriptionStatus) ?? ''),
+    hasSubscription: !!(viewer as any)?.user?.subscribeStarId && ['active', 'past_due', 'canceling'].includes((viewer?.user.subscriptionStatus) ?? ''),
     paymentsConfigured: paymentsConfigured(),
     subscribeStarProfileUrl: subscribeStarProfileUrl(),
     subscribeStarLinked: !!(viewer as any)?.user?.subscribeStarId,
@@ -129,16 +138,77 @@ export function accessStatus(viewer: Viewer | null): AccessStatus {
   };
 }
 
+async function consumeTextViaRpc(userId: string, day: string, limit: number | null): Promise<boolean | null> {
+  try {
+    await ensureCreditRpcs();
+    const rows = await prisma.$queryRawUnsafe<Array<{ nexus: boolean } | { consume_daily_credit: boolean }>>(
+      `SELECT nexus.consume_daily_credit($1, $2, $3) AS ok`,
+      userId,
+      day,
+      limit,
+    );
+    const row = rows[0] as { ok?: boolean } | undefined;
+    if (typeof row?.ok === 'boolean') return row.ok;
+    return null;
+  } catch (err) {
+    console.warn('[credits] RPC consume failed, falling back to Prisma', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+async function refundTextViaRpc(userId: string, day: string): Promise<boolean> {
+  try {
+    await ensureCreditRpcs();
+    await prisma.$executeRawUnsafe(`SELECT nexus.refund_daily_credit($1, $2)`, userId, day);
+    return true;
+  } catch (err) {
+    console.warn('[credits] RPC refund failed, falling back to Prisma', err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+async function consumeImageViaRpc(userId: string, day: string, limit: number): Promise<boolean | null> {
+  try {
+    await ensureCreditRpcs();
+    const rows = await prisma.$queryRawUnsafe<Array<{ ok: boolean }>>(
+      `SELECT nexus.consume_image_credit($1, $2, $3) AS ok`,
+      userId,
+      day,
+      limit,
+    );
+    if (typeof rows[0]?.ok === 'boolean') return rows[0].ok;
+    return null;
+  } catch (err) {
+    console.warn('[credits] image RPC consume failed, falling back to Prisma', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+async function refundImageViaRpc(userId: string, day: string): Promise<boolean> {
+  try {
+    await ensureCreditRpcs();
+    await prisma.$executeRawUnsafe(`SELECT nexus.refund_image_credit($1, $2)`, userId, day);
+    return true;
+  } catch (err) {
+    console.warn('[credits] image RPC refund failed, falling back to Prisma', err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 /**
- * Atomically consumes one credit for today. Admins and unlimited tiers always succeed.
- * Returns false when the daily allowance is used up.
+ * Atomically consumes one text credit for today (1 credit = 1 message).
+ * Admins bypass. Ultimate uses a silent soft fair-use cap of 10,000/day.
+ * Prefers the Supabase/Postgres RPC; falls back to conditional updateMany.
  */
 export async function consumeCredit(viewer: Viewer): Promise<boolean> {
   if (viewer.isAdmin) return true;
-  const limit = TIERS[viewer.tier].dailyCredits;
+  const limit = textCreditLimit(viewer);
   const today = utcDay();
   const id = viewer.user.id;
-  // New day: reset the counter to 1 (only if it hasn't been reset concurrently).
+
+  const viaRpc = await consumeTextViaRpc(id, today, limit);
+  if (viaRpc !== null) return viaRpc;
+
   const reset = await prisma.user.updateMany({ where: { id, creditsDay: { not: today } }, data: { creditsDay: today, creditsUsed: 1 } });
   if (reset.count > 0) return true;
   if (limit === null) {
@@ -149,15 +219,17 @@ export async function consumeCredit(viewer: Viewer): Promise<boolean> {
   return inc.count > 0;
 }
 
-/** Gives back a credit when generation failed before producing anything. */
+/** Gives back a credit when generation failed before producing a usable reply. */
 export async function refundCredit(viewer: Viewer): Promise<void> {
   if (viewer.isAdmin) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, creditsDay: utcDay(), creditsUsed: { gt: 0 } }, data: { creditsUsed: { decrement: 1 } } });
+  const today = utcDay();
+  if (await refundTextViaRpc(viewer.user.id, today)) return;
+  await prisma.user.updateMany({ where: { id: viewer.user.id, creditsDay: today, creditsUsed: { gt: 0 } }, data: { creditsUsed: { decrement: 1 } } });
 }
 
 /**
- * Atomically consumes one image/scene credit for today (Ultimate: 100/day). Admins always succeed.
- * Returns false when the tier has no image allowance or it is used up.
+ * Atomically consumes one image/scene credit for today (Ultimate: 100/day hard cap).
+ * Admins always succeed. Returns false when the tier has no image allowance or it is used up.
  */
 export async function consumeImageCredit(viewer: Viewer): Promise<boolean> {
   if (viewer.isAdmin) return true;
@@ -165,6 +237,10 @@ export async function consumeImageCredit(viewer: Viewer): Promise<boolean> {
   if (limit <= 0) return false;
   const today = utcDay();
   const id = viewer.user.id;
+
+  const viaRpc = await consumeImageViaRpc(id, today, limit);
+  if (viaRpc !== null) return viaRpc;
+
   const reset = await prisma.user.updateMany({ where: { id, imageCreditsDay: { not: today } }, data: { imageCreditsDay: today, imageCreditsUsed: 1 } });
   if (reset.count > 0) return true;
   const inc = await prisma.user.updateMany({ where: { id, imageCreditsDay: today, imageCreditsUsed: { lt: limit } }, data: { imageCreditsUsed: { increment: 1 } } });
@@ -173,7 +249,9 @@ export async function consumeImageCredit(viewer: Viewer): Promise<boolean> {
 
 export async function refundImageCredit(viewer: Viewer): Promise<void> {
   if (viewer.isAdmin) return;
-  await prisma.user.updateMany({ where: { id: viewer.user.id, imageCreditsDay: utcDay(), imageCreditsUsed: { gt: 0 } }, data: { imageCreditsUsed: { decrement: 1 } } });
+  const today = utcDay();
+  if (await refundImageViaRpc(viewer.user.id, today)) return;
+  await prisma.user.updateMany({ where: { id: viewer.user.id, imageCreditsDay: today, imageCreditsUsed: { gt: 0 } }, data: { imageCreditsUsed: { decrement: 1 } } });
 }
 
 /** A chat session is accessible to its owner; legacy chats without an owner only to admins. */
@@ -205,9 +283,25 @@ export function canToggleNsfw(viewer: Viewer | null): boolean {
 export const NSFW_UPGRADE_MESSAGE = '18+ NSFW content and scenarios unlock with the Premium or Ultimate plan. Please upgrade your subscription to unlock.';
 
 export const json = (body: unknown, status = 200) => Response.json(body, { status });
-export const nsfwLocked = () => json({ error: NSFW_UPGRADE_MESSAGE, code: 'NSFW_LOCKED' }, 403);
+export const nsfwLocked = () => json({ error: NSFW_UPGRADE_MESSAGE, code: 'NSFW_LOCKED', feature: 'nsfw' }, 403);
 export const unauthorized = () => json({ error: 'Please sign in to continue.', code: 'UNAUTHENTICATED' }, 401);
 export const forbidden = (msg = 'Not allowed') => json({ error: msg, code: 'FORBIDDEN' }, 403);
+
+/** 402 Payment Required — feature needs a higher plan. */
+export function upgradeRequired(feature: TierFeature, message: string) {
+  return json({ error: message, code: 'UPGRADE_REQUIRED', feature }, 402);
+}
+
+/** 429 Too Many Requests — daily credit / fair-use cap reached (resets at next UTC midnight). */
+export function dailyLimitReached(kind: 'credits' | 'imageCredits', message: string, tier: TierId) {
+  return json({
+    error: message,
+    code: kind === 'credits' ? 'OUT_OF_CREDITS' : 'OUT_OF_IMAGE_CREDITS',
+    feature: kind === 'imageCredits' ? 'sceneImages' : undefined,
+    tier,
+    resetsAt: nextUtcMidnight(),
+  }, 429);
+}
 
 /** Signed-in viewer who may access chat `sessionId`, or the error Response to return. */
 export async function requireSessionAccess(sessionId: string): Promise<Viewer | Response> {
