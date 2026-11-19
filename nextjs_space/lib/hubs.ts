@@ -16,6 +16,9 @@ export interface PersonaData {
   visualTraits: string;
   appearance?: import('@/lib/persona-appearance').Appearance | string | null;
   avatarSnapshot?: string | null;
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+  visualAnalyzedFor?: string | null;
   personality: string;
   backstory: string;
   speech: string;

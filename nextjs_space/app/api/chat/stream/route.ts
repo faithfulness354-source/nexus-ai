@@ -18,6 +18,14 @@ import { unpackList } from '@/lib/hub-server';
 import { compilePerceivedAppearance } from '@/lib/persona-appearance';
 import { loadImage } from '@/lib/avatar-snapshot';
 import { messageContent, sanitizeChatHistory, spliceDeletedMessages, usableImages, type ProviderImage } from '@/lib/llm/messages';
+import {
+  extractMessageImageUrl,
+  needsLiveVlmLook,
+  personaAppearanceInjection,
+  recentTurnsMentionAttireOrNpc,
+  VISUAL_PERCEPTION_RULE,
+} from '@/lib/vision/chat-perception';
+import { resolveVlmChatTarget } from '@/lib/vision/vlm';
 import { listActiveMessages, nextMessageIndex } from '@/lib/llm/active-messages';
 import { characterGreeting } from '@/lib/greeting';
 import { stripPromptLeak } from '@/lib/prompt-leak';
@@ -48,7 +56,14 @@ export async function POST(request: NextRequest) {
   let sessionId = '';
   try {
     const body = await request.json();
-    const { sessionId: incomingSessionId, content: rawContent, model: overrideModel, personaId: requestedPersonaId } = body ?? {};
+    const {
+      sessionId: incomingSessionId,
+      content: rawContent,
+      model: overrideModel,
+      personaId: requestedPersonaId,
+      imageUrl: bodyImageUrl,
+      image: bodyImage,
+    } = body ?? {};
     sessionId = String(incomingSessionId ?? '');
 
     if (!sessionId || !rawContent) {
@@ -152,9 +167,9 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'application/json', 'X-User-Message-Id': savedUserMessage.id },
       });
     }
-    const provider = target.provider;
-    const useModel = target.model;
-    const providerConfig = target.config;
+    let provider = target.provider;
+    let useModel = target.model;
+    let providerConfig = target.config;
 
     // Character, persona, lore, and world state share an 800-token cap. Example dialogue is omitted.
     const meters = trackedMeters(character?.customRules);
@@ -173,27 +188,73 @@ export async function POST(request: NextRequest) {
     const lastMessageAt = storedMessages.at(-1)?.createdAt;
     // A persona switch or edit bumps the session after the last stored message. The next turn reloads identity and keeps history.
     const personaRefresh = !openingTurn && !!lastMessageAt && session.updatedAt > lastMessageAt;
+
+    // Rule A: live image → VLM only on attachment, first encounter, or inspection when cache is stale.
+    const attachedImageUrl = extractMessageImageUrl(
+      String(rawContent ?? ''),
+      typeof bodyImageUrl === 'string' ? bodyImageUrl : (typeof bodyImage === 'string' ? bodyImage : null),
+    );
+    const liveVlm = needsLiveVlmLook({
+      historyLength: priorCount + 1,
+      userMessage: String(rawContent ?? ''),
+      attachedImageUrl,
+      persona: persona ?? null,
+    });
+
     let personaImages: ProviderImage[] = [];
-    if (persona?.avatar) {
-      try {
-        const portrait = await loadImage(persona.avatar);
-        if (portrait) personaImages = usableImages([{ mimeType: portrait.mime, data: portrait.data }]);
-      } catch { /* a missing portrait stays text-only and must not reject the turn */ }
+    let useVlmTurn = false;
+    if (liveVlm) {
+      const imageSource = attachedImageUrl || persona?.avatar || '';
+      if (imageSource) {
+        try {
+          const portrait = await loadImage(imageSource);
+          if (portrait) {
+            personaImages = usableImages([{ mimeType: portrait.mime, data: portrait.data }]);
+          }
+        } catch { /* missing portrait stays text-only */ }
+      }
+      if (personaImages.length) {
+        const vlmTarget = await resolveVlmChatTarget();
+        if (vlmTarget) {
+          provider = vlmTarget.provider;
+          useModel = vlmTarget.model;
+          providerConfig = vlmTarget.config;
+          useVlmTurn = true;
+        } else {
+          // No OpenRouter key: keep the fast text model and drop the image payload.
+          personaImages = [];
+        }
+      }
     }
+
+    const recentTexts = [
+      ...storedMessages.slice(-2).map((m) => messageContent(m.content)),
+      String(rawContent ?? ''),
+    ];
+    const injectFullVisual = recentTurnsMentionAttireOrNpc(recentTexts) || openingTurn || personaRefresh;
+
     const personaParts: string[] = [];
     if (persona) {
-      personaParts.push(compilePerceivedAppearance(persona));
+      if (useVlmTurn) {
+        // Live image is attached; keep a short text cue so NovelAI fallbacks still know identity.
+        personaParts.push(compilePerceivedAppearance(persona, { preferAnchor: true }));
+      } else {
+        const cached = personaAppearanceInjection(persona, injectFullVisual ? 'full' : 'anchor');
+        if (cached) personaParts.push(cached);
+        else personaParts.push(compilePerceivedAppearance(persona, { preferAnchor: !injectFullVisual }));
+      }
       const notes = formatPersona(persona);
       personaParts.push([
         `The user plays {{user}} (${personaAnchor(persona)}).`,
         'You can see their appearance and you know their traits and background.',
-        personaImages.length ? 'Their latest message includes a portrait. That image is what {{user}} looks like right now.' : '',
+        useVlmTurn ? 'Their latest message includes a portrait image. That image is what {{user}} looks like right now — react to exact proportions, clothing fit, exposure, and physiological cues you see.' : '',
         'Let those details change what you notice, how you address them, and how you react.',
         'Never speak, decide, or act for them.',
         notes || '',
       ].filter(Boolean).join(' '));
       if (personaRefresh) personaParts.push(`Persona update: {{user}} is now ${personaAnchor(persona)}. Continue this same conversation and do not restart the scene.`);
     }
+    personaParts.push(VISUAL_PERCEPTION_RULE);
     const greeting = character ? characterGreeting(character, userName) : '';
     if (openingTurn && greeting) {
       contextParts.push(`Opening line already shown to {{user}}. Do not repeat it:\n${greeting}`);
@@ -268,8 +329,9 @@ export async function POST(request: NextRequest) {
     );
     const inputTokens = turnUsage.sent_tokens;
 
-    // Persist the resolved provider/model so the session stays in sync
-    if (useModel !== session.model || provider !== session.provider) {
+    // Persist the resolved provider/model so the session stays in sync.
+    // One-off VLM turns must not overwrite the session's fast text model.
+    if (!useVlmTurn && (useModel !== session.model || provider !== session.provider)) {
       await prisma.chatSession.update({
         where: { id: sessionId },
         data: { model: useModel, provider },

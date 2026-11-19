@@ -132,20 +132,25 @@ export function compilePerceivedAppearance(persona: {
   visualTraits?: string | null;
   appearance?: unknown;
   avatarSnapshot?: string | null;
-}): string {
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+}, opts?: { preferAnchor?: boolean }): string {
   const appearance = parseAppearance(persona.appearance);
   const head = phrase('Face', HEAD_KEYS, appearance);
   const body = phrase('Body', BODY_KEYS, appearance);
   const outfit = phrase('Outfit', ATTIRE_KEYS, appearance);
+  const vlmBlock = opts?.preferAnchor
+    ? (persona.visualAnchor?.trim() || persona.avatarSnapshot?.trim() || '')
+    : (persona.visualDescription?.trim() || persona.visualAnchor?.trim() || persona.avatarSnapshot?.trim() || '');
   const facts = [
     [persona.name?.trim() || '{{user}}', persona.pronouns?.trim()].filter(Boolean).join(', '),
+    vlmBlock ? `VLM: ${vlmBlock}` : '',
     head,
     !head && persona.physical?.trim() ? persona.physical.trim() : '',
     body,
     !body && persona.visualTraits?.trim() ? persona.visualTraits.trim() : '',
     outfit,
     !outfit && persona.attire?.trim() ? persona.attire.trim() : '',
-    persona.avatarSnapshot?.trim() ? `Portrait: ${persona.avatarSnapshot.trim()}` : '',
   ].filter(Boolean).join(' ');
 
   const header = '[PERCEIVED VISUAL APPEARANCE & PHYSICALITY OF {{user}}]';

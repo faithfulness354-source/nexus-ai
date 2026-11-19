@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import type { Persona } from '@prisma/client';
 import { parseAppearance } from '@/lib/persona-appearance';
 import { describeAvatar } from '@/lib/avatar-snapshot';
+import { analyzePersonaImage } from '@/lib/vision/vlm';
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
 
@@ -33,20 +34,64 @@ export function personaInput(body: any) {
   };
 }
 
-/** Keeps a stored portrait reading, and takes a new one only when the avatar URL changes. */
+type VisualPrevious = {
+  avatarSnapshot?: string | null;
+  avatarSnapshotFor?: string | null;
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+  visualAnalyzedFor?: string | null;
+};
+
+/**
+ * Keeps cached VLM visual fields when the avatar URL is unchanged.
+ * On avatar change, runs OpenRouter VLM analysis (with timeout safety) and
+ * falls back to the legacy short Gemini snapshot when VLM returns empty.
+ */
 export async function withAvatarSnapshot<T extends { avatar: string | null }>(
   data: T,
-  previous?: { avatarSnapshot?: string | null; avatarSnapshotFor?: string | null },
+  previous?: VisualPrevious,
 ) {
-  if (!data.avatar) return { ...data, avatarSnapshot: '', avatarSnapshotFor: '' };
-  if (previous?.avatarSnapshotFor === data.avatar && previous.avatarSnapshot) {
-    return { ...data, avatarSnapshot: previous.avatarSnapshot, avatarSnapshotFor: data.avatar };
+  if (!data.avatar) {
+    return {
+      ...data,
+      avatarSnapshot: '',
+      avatarSnapshotFor: '',
+      visualDescription: null as string | null,
+      visualAnchor: null as string | null,
+      visualAnalyzedFor: '',
+    };
   }
-  const avatarSnapshot = await describeAvatar(data.avatar);
+
+  const sameAvatar = previous?.visualAnalyzedFor === data.avatar
+    || previous?.avatarSnapshotFor === data.avatar;
+  if (
+    sameAvatar
+    && (previous?.visualDescription || previous?.visualAnchor || previous?.avatarSnapshot)
+  ) {
+    return {
+      ...data,
+      avatarSnapshot: previous?.avatarSnapshot || previous?.visualAnchor || '',
+      avatarSnapshotFor: data.avatar,
+      visualDescription: previous?.visualDescription ?? null,
+      visualAnchor: previous?.visualAnchor ?? null,
+      visualAnalyzedFor: previous?.visualAnalyzedFor || data.avatar,
+    };
+  }
+
+  const analysis = await analyzePersonaImage(data.avatar);
+  let avatarSnapshot = analysis.visualAnchor || analysis.visualDescription;
+  if (!avatarSnapshot) {
+    // Soft fallback: short legacy snapshot if OpenRouter VLM is unavailable/timed out.
+    avatarSnapshot = await describeAvatar(data.avatar);
+  }
+
   return {
     ...data,
-    avatarSnapshot,
+    avatarSnapshot: avatarSnapshot || '',
     avatarSnapshotFor: avatarSnapshot ? data.avatar : '',
+    visualDescription: analysis.visualDescription || null,
+    visualAnchor: analysis.visualAnchor || (avatarSnapshot ? avatarSnapshot.slice(0, 120) : null),
+    visualAnalyzedFor: (analysis.visualDescription || analysis.visualAnchor || avatarSnapshot) ? data.avatar : '',
   };
 }
 
