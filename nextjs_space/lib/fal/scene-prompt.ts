@@ -13,6 +13,7 @@ Rules:
 - Describe appearance, attire, pose, expression, setting, lighting, and camera framing.
 - Strip all dialogue, OOC notes, stage directions in brackets, HTML, and UI chrome.
 - Never invent underage subjects; every person is an adult (18+).
+- Flat chest, short stature, or petite/slim build alone do NOT mean underage — keep adult facial maturity and adult presentation.
 - Do not include watermarks, logos, captions, speech bubbles, or readable text in the scene.
 - Keep the prompt under 220 words.
 - End by reinforcing this exact style clause: ${SCENE_STYLE_ANCHOR}`;

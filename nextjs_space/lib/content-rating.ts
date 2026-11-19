@@ -3,6 +3,7 @@
  *
  * NSFW is ONLY:
  *  1) Visual nudity — exposed bare breasts/nipples, genitalia, or bare buttocks
+ *     (including when shown in mirrors/reflections)
  *  2) Explicit sexual text — sexually explicit dialogue, bios, greetings, scenarios
  *
  * SFW explicitly ALLOWS clothed suggestive fashion: high-slit dresses/nightgowns,
@@ -68,6 +69,7 @@ const VISUAL_NUDITY_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b(bare\s+buttocks?|bare\s+ass(?:es)?|exposed\s+buttocks?|ass\s+out|butt\s+crack)\b/i, label: 'bare buttocks' },
   { re: /\b(explicit\s+pelvic\s+outline|pelvic\s+outline|camel\s*toe|bulge\s+outline)\b/i, label: 'explicit pelvic outline' },
   { re: /\b(no\s+panties|without\s+underwear|crotchless|nipple\s+pasties?\s+only)\b/i, label: 'exposed intimate areas' },
+  { re: /\b(?:reflection|mirror)\b[^.]{0,80}\b(nipples?|genitalia|genitals?|bare\s+breasts?|bare\s+buttocks?|nude|naked)\b/i, label: 'nudity in reflection' },
 ];
 
 /** Sexually explicit prose (dialogue, bios, greetings, scenarios). */

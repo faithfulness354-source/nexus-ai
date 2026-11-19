@@ -26,6 +26,13 @@ Rules for visual_description (max ~150 tokens):
 3. Explicit & physiological details if present: state of undress, visible anatomy, blushing locations (cheeks/chest/thighs), sweat, arousal cues.
 4. Distinctive features: hair style/color, eye color, ears/tails, scars, accessories.
 
+Age / maturity language (mandatory):
+- NEVER label someone childlike, underage, prepubescent, or minor based solely on a flat chest, small bust, short height/stature, or slim/petite/skinny build.
+- Adult-presenting characters with flat chests, short stature, or petite builds are adults — describe them as adult when facial maturity and overall presentation read as adult.
+- Reserve child/underage wording only when multiple visual cues converge (face + body + overall presentation).
+
+SFW fashion note: high-slit dresses/nightgowns, bare hips, bikini-style armor, and non-nude sheer/translucent garments are clothed attire — do not call them nude unless nipples, genitalia, or bare buttocks are actually visible (including in reflections).
+
 Rules for visual_anchor (max ~20 tokens):
 A dense continuity tag summarizing silhouette, outfit/exposure, and 1-2 distinctive cues. No filler.`;
 

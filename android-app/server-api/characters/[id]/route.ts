@@ -12,6 +12,7 @@ import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
+import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 
 function parseStoredTags(value: unknown): string[] {
@@ -127,6 +128,42 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
           matched: prohibited.matched,
         });
         return moderationBlockedResponse(prohibited);
+      }
+
+      const avatarUrl = body?.avatar !== undefined ? body.avatar : existing.avatar;
+      const imageBlock = await gateAvatarImage({
+        imageUrl: avatarUrl,
+        wantsNsfw: !!nsfwUpdate,
+      });
+      if (imageBlock) {
+        if (imageBlock.kind === 'underage') {
+          await logModerationFlag({
+            userId: viewer.user.id,
+            route: '/api/characters/[id]',
+            category: 'minors',
+            matched: 'vlm_underage_multi_signal',
+          });
+        }
+        return avatarGateResponse(imageBlock);
+      }
+    } else if (body?.avatar !== undefined && body.avatar) {
+      // Avatar-only updates still run the VLM underage / SFW-nudity gate.
+      const existing = await prisma.character.findUnique({ where: { id }, select: { nsfw: true } });
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      const imageBlock = await gateAvatarImage({
+        imageUrl: body.avatar,
+        wantsNsfw: existing.nsfw === true,
+      });
+      if (imageBlock) {
+        if (imageBlock.kind === 'underage') {
+          await logModerationFlag({
+            userId: viewer.user.id,
+            route: '/api/characters/[id]',
+            category: 'minors',
+            matched: 'vlm_underage_multi_signal',
+          });
+        }
+        return avatarGateResponse(imageBlock);
       }
     }
 

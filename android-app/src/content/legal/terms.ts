@@ -22,6 +22,7 @@ export const terms: LegalPolicy = {
           '**SFW** — non-sexual cards where the character is clothed. High-slit dresses/nightgowns, bare hips, bikini-style armor, and sheer/semi-translucent fabrics are allowed on SFW when nipples, genitalia, bare buttocks, and explicit pelvic outlines are not visible and the text is non-sexual.',
         ] },
         { kind: 'p', text: 'Saving or publishing SFW-marked content that violates the SFW rules is blocked. You will see: “This falls under NSFW content and cannot be applied to SFW fields.” You may switch the card to NSFW if you meet the age and plan requirements, or edit the content to comply with SFW. Full detail is in [[Prohibited Content|/prohibited-content]].' },
+        { kind: 'p', text: 'Image moderation does not treat a flat chest, small bust, short height/stature, or slim/petite build alone as underage or childlike. Only multiple converging visual cues (facial maturity, body maturity, and overall presentation) can flag a depiction as underage. Adult-presenting characters with those build traits remain allowed when marked 18+ adult.' },
       ],
     },
     {

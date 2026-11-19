@@ -482,6 +482,13 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
             onClick: () => { void switchToNsfwAndSave(); },
           },
         });
+      } else if (err?.code === 'UNDERAGE_IMAGE_BLOCKED') {
+        toast.error(err?.message ?? 'Image blocked: underage / childlike depiction.', {
+          description: Array.isArray(err?.reasons) && err.reasons[0]
+            ? String(err.reasons[0])
+            : 'Flat chest, short stature, or petite build alone are not enough to flag underage.',
+          duration: 14_000,
+        });
       } else {
         toast.error(err?.message ?? 'Failed to save');
       }

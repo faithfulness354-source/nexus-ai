@@ -12,6 +12,7 @@ import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
 import { refreshCharacterVisual } from '@/lib/vision/vlm';
+import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
 import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
 
@@ -133,6 +134,20 @@ export async function POST(request: NextRequest) {
         matched: prohibited.matched,
       });
       return moderationBlockedResponse(prohibited);
+    }
+
+    // VLM image gate before any Prisma/Supabase write (multi-signal underage + SFW nudity).
+    const imageBlock = await gateAvatarImage({ imageUrl: body?.avatar, wantsNsfw: nsfwCard });
+    if (imageBlock) {
+      if (imageBlock.kind === 'underage') {
+        await logModerationFlag({
+          userId: viewer.user.id,
+          route: '/api/characters',
+          category: 'minors',
+          matched: 'vlm_underage_multi_signal',
+        });
+      }
+      return avatarGateResponse(imageBlock);
     }
 
     const character = await prisma.character.create({

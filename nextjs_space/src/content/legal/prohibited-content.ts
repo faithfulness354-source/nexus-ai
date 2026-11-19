@@ -36,6 +36,7 @@ export const prohibitedContent: LegalPolicy = {
           'Extreme real-world gore / snuff content',
           'Content that facilitates illegal acts (trafficking, real-world violence for hire, etc.)',
         ] },
+        { kind: 'p', text: '**Underage / childlike image detection (multi-signal):** Images are not flagged as childlike or underage based solely on a flat chest, small bust, short height/stature, or a slim/petite/skinny build. Flagging requires multiple visual cues converging across facial maturity/proportions, body maturity, and overall presentation. Adult-presenting characters with flat chests, short stature, or petite builds are allowed when facial presentation and overall depiction read as adult and the card is marked 18+ adult.' },
       ],
     },
     {

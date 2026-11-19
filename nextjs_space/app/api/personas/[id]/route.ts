@@ -4,6 +4,8 @@ import { getViewer, unauthorized, json } from '@/lib/access';
 import { personaInput, normalizePersonaBindings, withAvatarSnapshot, personaDto } from '@/lib/persona-server';
 import { deletePersonaFromCloud, syncPersonaToCloud } from '@/lib/supabase/sync';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
+import { logModerationFlag } from '@/lib/trust-safety';
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const viewer = await getViewer();
@@ -14,8 +16,19 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const userId = viewer.user.id;
     const existing = await prisma.persona.findFirst({ where: { id, userId } });
     if (!existing) return json({ error: 'Persona not found' }, 404);
-    const data = await withAvatarSnapshot(personaInput(await request.json().catch(() => ({}))), existing);
-    if (!data.name) return json({ error: 'Display name is required' }, 400);
+    const input = personaInput(await request.json().catch(() => ({})));
+    if (!input.name) return json({ error: 'Display name is required' }, 400);
+    const imageBlock = await gateAvatarImage({ imageUrl: input.avatar, wantsNsfw: true });
+    if (imageBlock?.kind === 'underage') {
+      await logModerationFlag({
+        userId,
+        route: '/api/personas/[id]',
+        category: 'minors',
+        matched: 'vlm_underage_multi_signal',
+      });
+      return avatarGateResponse(imageBlock);
+    }
+    const data = await withAvatarSnapshot(input, existing);
     const persona = await prisma.persona.update({ where: { id }, data });
     await normalizePersonaBindings(userId, persona);
     const saved = await prisma.persona.findUnique({ where: { id } });

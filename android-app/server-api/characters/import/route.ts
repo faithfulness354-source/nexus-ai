@@ -6,6 +6,7 @@ import { ImportError, ImportResult, importFromUrl, parseCardBytes, storeAvatar }
 import { getViewer, unauthorized, can, canViewNsfw, nsfwLocked } from '@/lib/access';
 import { rateCharacterContent, sfwViolationResponse } from '@/lib/content-rating';
 import { moderateGenerationText, logModerationFlag, moderationBlockedResponse } from '@/lib/trust-safety';
+import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
 
 const MAX_UPLOAD = 15 * 1024 * 1024;
 
@@ -58,6 +59,22 @@ export async function POST(request: NextRequest) {
       console.error('Avatar upload failed during import:', err);
       return null;
     });
+
+    const imageBlock = await gateAvatarImage({
+      imageUrl: avatar || card.avatarUrl,
+      wantsNsfw: nsfwCard,
+    });
+    if (imageBlock) {
+      if (imageBlock.kind === 'underage') {
+        await logModerationFlag({
+          userId: viewer.user.id,
+          route: '/api/characters/import',
+          category: 'minors',
+          matched: 'vlm_underage_multi_signal',
+        });
+      }
+      return avatarGateResponse(imageBlock);
+    }
 
     const character = await prisma.character.create({
       data: {

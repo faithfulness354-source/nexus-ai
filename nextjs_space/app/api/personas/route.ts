@@ -5,6 +5,8 @@ import { personaInput, normalizePersonaBindings, withAvatarSnapshot, personaDto 
 import { syncPersonaToCloud } from '@/lib/supabase/sync';
 import { pullCloudLibrary } from '@/lib/supabase/apply';
 import { ensureVisualColumns } from '@/lib/ensure-visual-columns';
+import { gateAvatarImage, avatarGateResponse } from '@/lib/vision/image-moderation';
+import { logModerationFlag } from '@/lib/trust-safety';
 
 export async function GET(request: Request) {
   const viewer = await getViewer();
@@ -33,8 +35,19 @@ export async function POST(request: Request) {
       const { id: _id, createdAt: _c, updatedAt: _u, userId: _uid, ...rest } = src;
       data = { ...rest, name: `${src.name} (copy)`.slice(0, 60), isDefault: false, boundCharacterIds: '[]' };
     } else {
-      data = await withAvatarSnapshot(personaInput(body));
-      if (!data.name) return json({ error: 'Display name is required' }, 400);
+      const input = personaInput(body);
+      if (!input.name) return json({ error: 'Display name is required' }, 400);
+      const imageBlock = await gateAvatarImage({ imageUrl: input.avatar, wantsNsfw: true });
+      if (imageBlock?.kind === 'underage') {
+        await logModerationFlag({
+          userId,
+          route: '/api/personas',
+          category: 'minors',
+          matched: 'vlm_underage_multi_signal',
+        });
+        return avatarGateResponse(imageBlock);
+      }
+      data = await withAvatarSnapshot(input);
     }
     const isFirst = (await prisma.persona.count({ where: { userId } })) === 0;
     const persona = await prisma.persona.create({ data: { ...data, userId, isDefault: isFirst || !!data.isDefault } });
