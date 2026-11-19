@@ -16,6 +16,8 @@ out/
 logs/
 *.log
 .cursor/
+!.cursor/rules/
+!.cursor/rules/**
 
 _splash-tools/
 *.zip
