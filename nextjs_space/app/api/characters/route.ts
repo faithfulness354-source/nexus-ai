@@ -10,6 +10,7 @@ import { pullCloudLibrary } from '@/lib/supabase/apply';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { ensureDefaultCards } from '@/lib/ensure-default-cards';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
+import { refreshCharacterVisual } from '@/lib/vision/vlm';
 
 function plainExcerpt(value: string, limit = 280) {
   const text = value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -136,6 +137,7 @@ export async function POST(request: NextRequest) {
         moderated: false,
       },
     });
+    void refreshCharacterVisual(character.id, character.avatar);
     try {
       await syncCharacterToCloud(character, viewer.user);
     } catch (error) {

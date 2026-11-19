@@ -179,10 +179,32 @@ export function openAIChatBody(params: {
   presencePenalty?: number;
   images?: ProviderImage[];
 }): Record<string, unknown> {
-  const messages = normalizeProviderMessages(sanitizeChatHistory(params.messages)).map((message) => ({
-    role: message.role,
-    content: String(messageContent(message.content)),
-  }));
+  const messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> =
+    normalizeProviderMessages(sanitizeChatHistory(params.messages)).map((message) => ({
+      role: message.role,
+      content: String(messageContent(message.content)),
+    }));
+
+  // Attach vision payloads to the latest user turn only (OpenRouter / OpenAI-compatible VLMs).
+  const images = usableImages(params.images);
+  if (images.length) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role !== 'user') continue;
+      const text = typeof messages[i].content === 'string' ? messages[i].content : '';
+      messages[i] = {
+        role: 'user',
+        content: [
+          { type: 'text', text: text || 'Describe what you see and react in character.' },
+          ...images.map((image) => ({
+            type: 'image_url',
+            image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+          })),
+        ],
+      };
+      break;
+    }
+  }
+
   const body: Record<string, unknown> = {
     model: params.model,
     messages,

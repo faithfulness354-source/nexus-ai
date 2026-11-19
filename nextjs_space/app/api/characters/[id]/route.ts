@@ -9,6 +9,7 @@ import { normalizeAudioUrl } from '@/lib/audio-url';
 import { canViewCharacter, parseVisibility } from '@/lib/card-visibility';
 import { deleteCharacterFromCloud, syncCharacterToCloud } from '@/lib/supabase/sync';
 import { cardFirstMessage, savedFirstMessage, savedStaticField } from '@/lib/opening';
+import { refreshCharacterVisual } from '@/lib/vision/vlm';
 
 function parseStoredTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((tag) => String(tag).trim().replace(/^#+/, '')).filter(Boolean);
@@ -113,6 +114,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         moderated: viewer.isCreatorAdmin && typeof body?.moderated === 'boolean' ? body.moderated : undefined,
       },
     });
+    if (body?.avatar !== undefined) void refreshCharacterVisual(character.id, character.avatar);
     revalidatePath(`/characters/${id}`);
     revalidatePath(`/characters/${id}/chat`);
     revalidatePath(`/characters/${id}/edit`);

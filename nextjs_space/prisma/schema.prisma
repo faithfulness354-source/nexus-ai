@@ -33,6 +33,11 @@ model Character {
   tags            String
   avatar          String?
   banner          String?
+  /// Dense VLM anatomical/attire breakdown for the character portrait (optional).
+  visualDescription String?     @db.Text
+  /// Compressed 15–20 token visual tag for the character portrait (optional).
+  visualAnchor      String?     @db.Text
+  visualAnalyzedFor String      @default("")
   /// Local track under /audio (public/audio) or a direct audio URL. Editable by the card creator or an admin.
   audioUrl        String        @default("")
   creator         String        @default("Anonymous")
@@ -233,6 +238,12 @@ model Persona {
   avatarSnapshot    String   @default("")
   /// Avatar URL that avatarSnapshot describes.
   avatarSnapshotFor String   @default("")
+  /// Dense VLM anatomical/attire breakdown (≤150 tokens). Regenerated when the avatar URL changes.
+  visualDescription String?  @db.Text
+  /// Compressed 15–20 token visual tag for low-cost background turns.
+  visualAnchor      String?  @db.Text
+  /// Avatar URL that visualDescription / visualAnchor describe.
+  visualAnalyzedFor String   @default("")
   personality       String   @default("") 
   backstory         String   @default("") 
   speech            String   @default("") 

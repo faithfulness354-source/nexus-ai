@@ -140,6 +140,9 @@ export async function syncPersonaToCloud(persona: {
   appearance?: string | null;
   avatarSnapshot?: string | null;
   avatarSnapshotFor?: string | null;
+  visualDescription?: string | null;
+  visualAnchor?: string | null;
+  visualAnalyzedFor?: string | null;
   personality?: string | null;
   backstory?: string | null;
   speech?: string | null;
@@ -162,6 +165,9 @@ export async function syncPersonaToCloud(persona: {
       appearance: persona.appearance || '{}',
       avatar_snapshot: persona.avatarSnapshot ?? '',
       avatar_snapshot_for: persona.avatarSnapshotFor ?? '',
+      visual_description: persona.visualDescription ?? null,
+      visual_anchor: persona.visualAnchor ?? null,
+      visual_analyzed_for: persona.visualAnalyzedFor ?? '',
       personality: persona.personality ?? '',
       backstory: persona.backstory ?? '',
       speech: persona.speech ?? '',
@@ -287,6 +293,9 @@ export async function pushLocalAccount(owner: Owner): Promise<void> {
         appearance: persona.appearance || '{}',
         avatar_snapshot: persona.avatarSnapshot ?? '',
         avatar_snapshot_for: persona.avatarSnapshotFor ?? '',
+        visual_description: persona.visualDescription ?? null,
+        visual_anchor: persona.visualAnchor ?? null,
+        visual_analyzed_for: persona.visualAnalyzedFor ?? '',
         personality: persona.personality ?? '',
         backstory: persona.backstory ?? '',
         speech: persona.speech ?? '',

@@ -176,6 +176,9 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
       appearance: text(record.appearance, '{}'),
       avatarSnapshot: text(record.avatar_snapshot),
       avatarSnapshotFor: text(record.avatar_snapshot_for),
+      visualDescription: text(record.visual_description) || null,
+      visualAnchor: text(record.visual_anchor) || null,
+      visualAnalyzedFor: text(record.visual_analyzed_for),
       personality: text(record.personality),
       backstory: text(record.backstory),
       speech: text(record.speech),
@@ -193,6 +196,9 @@ export async function applyRemoteRecord(owner: Owner, table: string, record: Row
         && existing.appearance === data.appearance
         && existing.avatarSnapshot === data.avatarSnapshot
         && existing.avatarSnapshotFor === data.avatarSnapshotFor
+        && (existing.visualDescription ?? null) === data.visualDescription
+        && (existing.visualAnchor ?? null) === data.visualAnchor
+        && existing.visualAnalyzedFor === data.visualAnalyzedFor
         && existing.personality === data.personality
         && existing.backstory === data.backstory
         && existing.speech === data.speech
