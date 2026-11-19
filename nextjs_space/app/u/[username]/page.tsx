@@ -2,7 +2,13 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getViewer, canEditCharacter } from '@/lib/access';
 import { findUserByUsername, profileStats, profileBadges, pinIds } from '@/lib/profile-server';
-import { applyBadgePrefs, DEFAULT_BANNER_NAME_SIZE, DEFAULT_PROFILE_STYLE } from '@/lib/profile';
+import {
+  applyBadgePrefs,
+  DEFAULT_BANNER_NAME_SIZE,
+  DEFAULT_PROFILE_STYLE,
+  type BadgePrefs,
+  type ProfileBadge,
+} from '@/lib/profile';
 import { readProfileExtras } from '@/lib/profile-style';
 import { characterBrowseImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
@@ -51,11 +57,12 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
   const showNsfw = await adultCardsEnabled(viewer).catch(() => false);
   const includeNsfw = showNsfw;
 
+  const emptyBadgePrefs: BadgePrefs = { order: [], hidden: [] };
   const extras = await readProfileExtras(user.id).catch(() => null);
   const safeExtras = extras ?? {
     profileSongUrl: '',
     profileStyle: { ...DEFAULT_PROFILE_STYLE },
-    badgePrefs: { order: [] as string[], hidden: [] as string[] },
+    badgePrefs: emptyBadgePrefs,
     bannerNameSize: DEFAULT_BANNER_NAME_SIZE,
     bannerNameColor: '',
     bannerNameGlow: false,
@@ -122,7 +129,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
     .map((id) => creations.find((c) => c.id === id))
     .filter((c): c is NonNullable<typeof c> => !!c);
 
-  let badges = [];
+  let badges: ProfileBadge[] = [];
   try {
     badges = applyBadgePrefs(profileBadges(user, stats), safeExtras.badgePrefs);
   } catch (err) {
@@ -149,7 +156,7 @@ export default async function PublicProfilePage({ params }: { params: Promise<{ 
             badges,
             stats,
             profileSongUrl: safeExtras.profileSongUrl,
-            profileStyle: safeExtras.profileStyle as any,
+            profileStyle: safeExtras.profileStyle,
             bannerNameSize: safeExtras.bannerNameSize,
             bannerNameColor: safeExtras.bannerNameColor,
             bannerNameGlow: safeExtras.bannerNameGlow,
