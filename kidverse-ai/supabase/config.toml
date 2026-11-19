@@ -1,0 +1,5 @@
+# KidVerse AI — local Supabase project config (minimal)
+project_id = "kidverse-ai"
+
+[functions.realm-turn]
+verify_jwt = true
