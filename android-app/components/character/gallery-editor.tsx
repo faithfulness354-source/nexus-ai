@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, Trash2, Star, UserCircle2, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { imageForCard } from '@/lib/upload-client';
+import { uploadImage } from '@/lib/upload-client';
 import type { GalleryImage } from '@/lib/types';
+import { CardCoverImage } from '@/components/gallery/card-cover-image';
 
 interface Props {
   value: GalleryImage[];
@@ -22,7 +23,7 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
   const latest = useRef(value);
-  latest.current = value;
+  useEffect(() => { latest.current = value; }, [value]);
 
   async function handleFiles(files: FileList | null) {
     const list = Array.from(files ?? []);
@@ -30,7 +31,7 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
     setUploading((n) => n + list.length);
     for (const file of list) {
       try {
-        const up = await imageForCard(file, 'card');
+        const up = await uploadImage(file);
         const base = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
         const label = latest.current.length === 0 ? (characterName || base) : base;
         const next = [...latest.current, { id: newId(), label, url: up.url, cloud_storage_path: up.cloud_storage_path, isPublic: up.isPublic }];
@@ -61,8 +62,8 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {value.map((g, i) => (
           <div key={g.id} className="rounded-xl bg-background ring-1 ring-border overflow-hidden">
-            <div className="relative aspect-[3/4] bg-muted">
-              <img src={g.url} alt={g.label || `${characterName} reference ${i + 1}`} className="absolute inset-0 h-full w-full object-cover" />
+            <div className="relative aspect-square bg-muted">
+              <CardCoverImage src={g.url} alt={g.label || `${characterName} reference ${i + 1}`} className="absolute inset-0 h-full w-full" />
               {i === 0 && (
                 <span className="absolute left-2 top-2 rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">Primary</span>
               )}
@@ -93,7 +94,7 @@ export function GalleryEditor({ value, onChange, characterName, onUseAsAvatar }:
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={uploading > 0}
-          className="aspect-[3/4] rounded-xl border-2 border-dashed border-border hover:border-primary/60 hover:bg-primary/5 transition-colors flex flex-col items-center justify-center gap-2 text-muted-foreground disabled:opacity-60"
+          className="aspect-square rounded-xl border-2 border-dashed border-border hover:border-primary/60 hover:bg-primary/5 transition-colors flex flex-col items-center justify-center gap-2 text-muted-foreground disabled:opacity-60"
         >
           {uploading > 0 ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <ImagePlus className="h-6 w-6" />}
           <span className="text-xs font-medium">{uploading > 0 ? `Uploading ${uploading}…` : 'Add images'}</span>

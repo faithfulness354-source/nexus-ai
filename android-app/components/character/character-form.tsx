@@ -27,6 +27,7 @@ import { RichContent } from '@/components/editor/rich-content';
 import { escapeHtml, looksLikeHtml, textToHtml } from '@/lib/rich-text';
 import { CARD_VISIBILITIES, visibilityBadgeClass, visibilityLabel, type CardVisibility } from '@/lib/card-visibility';
 import { rateCharacterContent, SFW_VIOLATION_MESSAGE } from '@/lib/content-rating';
+import { CardCoverImage } from '@/components/gallery/card-cover-image';
 
 interface CharacterFormProps {
   initialData?: any;
@@ -386,7 +387,8 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
     if (!file) return;
     setAvatarUploading(true);
     try {
-      const up = await uploadImage(file, 'avatar');
+      // Preserve aspect ratio: client resize/compress only — no centre-crop.
+      const up = await uploadImage(file);
       updateField('avatar', up.url);
       updateField('banner', up.url);
       toast.success('Main card image saved');
@@ -418,6 +420,7 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
         code: body?.code,
         canSwitchToNsfw: body?.canSwitchToNsfw === true,
         reasons: body?.reasons,
+        signals: body?.signals,
       });
       throw err;
     }
@@ -628,24 +631,67 @@ export function CharacterForm({ initialData, characterId, mode }: CharacterFormP
           <div className="space-y-4">
             <div>
               <Label htmlFor="main-card-image">Main Card Image</Label>
-              <button
-                id="main-card-image"
-                type="button"
-                onClick={() => avatarInput.current?.click()}
-                className="group relative mt-2 flex h-44 w-44 items-center justify-center overflow-hidden rounded-xl bg-secondary ring-1 ring-white/10"
-                aria-label="Upload main card image"
-              >
-                {form.avatar ? (
-                  <img key={form.avatar} src={mediaVersionUrl(form.avatar)} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <ImageIcon className="h-8 w-8 text-muted-foreground" />
-                )}
-                <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
-                  {avatarUploading ? <Loader2 className="h-6 w-6 animate-spin" /> : 'Upload'}
-                </span>
-              </button>
+              <div className="mt-2 flex flex-wrap items-start gap-4">
+                <button
+                  id="main-card-image"
+                  type="button"
+                  onClick={() => avatarInput.current?.click()}
+                  className="group relative flex h-44 w-44 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-secondary ring-1 ring-white/10"
+                  aria-label="Upload main card image"
+                >
+                  {form.avatar ? (
+                    <CardCoverImage
+                      src={mediaVersionUrl(form.avatar)}
+                      alt=""
+                      imgKey={form.avatar}
+                      className="absolute inset-0 h-full w-full"
+                    />
+                  ) : (
+                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                  )}
+                  <span className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
+                    {avatarUploading ? <Loader2 className="h-6 w-6 animate-spin" /> : 'Upload'}
+                  </span>
+                  {avatarUploading && (
+                    <span className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
+                      <Loader2 className="h-6 w-6 animate-spin text-white" />
+                    </span>
+                  )}
+                </button>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-xs font-semibold text-foreground">Live card preview</p>
+                  <div className="w-full max-w-[220px] overflow-hidden rounded-2xl bg-card shadow-lg shadow-black/30 ring-1 ring-white/5">
+                    <div className="relative aspect-square bg-secondary">
+                      {form.avatar ? (
+                        <CardCoverImage
+                          src={mediaVersionUrl(form.avatar)}
+                          alt={`${form.name || 'Character'} card preview`}
+                          imgKey={`preview-${form.avatar}`}
+                          className="absolute inset-0 h-full w-full"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40">
+                          <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="px-3 py-2.5">
+                      <p className="truncate font-display text-[15px] font-bold leading-tight">{form.name || 'Unnamed'}</p>
+                      {form.title?.trim() ? (
+                        <p className="mt-0.5 truncate text-[11px] italic text-muted-foreground">{form.title}</p>
+                      ) : (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">Title shows here</p>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {avatarUploading
+                      ? 'Resizing and uploading…'
+                      : 'Images are auto-resized (max 1200px, under 2MB) and fit inside the square card without cropping.'}
+                  </p>
+                </div>
+              </div>
               <input ref={avatarInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => handleAvatarFile(e.target.files?.[0])} />
-              <p className="mt-1 text-[11px] text-muted-foreground">{avatarUploading ? 'Uploading…' : 'Choose a picture from this device. It is saved as this card’s image.'}</p>
             </div>
             <div className="space-y-3 min-w-0">
               <div>

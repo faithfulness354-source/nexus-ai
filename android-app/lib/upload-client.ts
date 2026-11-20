@@ -1,7 +1,7 @@
 'use client';
 
 import { cropToAspect, CROP_PRESETS, type CropPreset } from './image-crop';
-import { apiOrigin } from './cloud-bridge';
+import { prepareImageForUpload } from './image-prepare';
 
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -25,7 +25,7 @@ function httpUrl(value: unknown): URL | null {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
   if (!raw || raw.startsWith('file:') || /^[a-zA-Z]:[\\/]/.test(raw)) return null;
-  const base = apiOrigin();
+  const base = typeof window !== 'undefined' ? window.location.origin : 'https://nexus-ai-navy-xi.vercel.app';
   try {
     const url = new URL(raw, base);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
@@ -38,88 +38,113 @@ function httpUrl(value: unknown): URL | null {
 function publicImageUrl(value: unknown): string {
   if (typeof value !== 'string') return '';
   const raw = value.trim();
-  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('..') && !raw.includes('\\')) {
-    const origin = apiOrigin();
-    return origin ? `${origin}${raw}` : raw;
-  }
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('..') && !raw.includes('\\')) return raw;
   return httpUrl(raw)?.toString() ?? '';
 }
 
-function sniffedImage(value: string): string {
-  if (value.startsWith('data:image/')) return value;
-  const comma = value.indexOf(',');
-  const head = comma >= 0 ? value.slice(comma + 1, comma + 8) : '';
-  const mime = head.startsWith('iVBOR') ? 'image/png'
-    : head.startsWith('/9j/') ? 'image/jpeg'
-    : head.startsWith('UklGR') ? 'image/webp'
-    : head.startsWith('R0lGO') ? 'image/gif'
-    : '';
-  return mime ? `data:${mime};base64,${value.slice(comma + 1)}` : '';
+const UPLOAD_TIMEOUT_MS = 15_000;
+
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), UPLOAD_TIMEOUT_MS);
+  return fetch(input, { ...init, signal: ctrl.signal }).catch((err: unknown) => {
+    if (err instanceof DOMException && err.name === 'AbortError') throw new Error('Upload timed out. Try again.');
+    throw err;
+  }).finally(() => clearTimeout(timer));
 }
 
-/** Reads a device file without parsing its path as a URL. */
-export function readDeviceImage(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const raw = typeof reader.result === 'string' ? reader.result : '';
-      const image = sniffedImage(raw);
-      if (image) resolve(image);
-      else reject(new Error('Could not read that image'));
-    };
-    reader.onerror = () => reject(new Error('Could not read that image'));
-    reader.readAsDataURL(file);
-  });
+/** Bytes on the wire. Never a base64 string. */
+async function asUploadBlob(file: File): Promise<Blob> {
+  const bytes = await file.arrayBuffer();
+  return new Blob([bytes], { type: file.type || 'application/octet-stream' });
 }
 
 async function uploadDirect(file: File): Promise<{ url: string; cloud_storage_path: string; isPublic: boolean }> {
+  const blob = await asUploadBlob(file);
   const body = new FormData();
-  body.append('file', file, file.name || 'image.png');
-  const res = await fetch('/api/upload/presigned', { method: 'POST', body });
+  body.append('file', blob, file.name || 'image.png');
+  const res = await fetchWithTimeout('/api/upload/presigned', { method: 'POST', body });
   const data = await res.json().catch(() => ({}));
   const url = publicImageUrl(data?.url);
   if (!res.ok || !url) throw new Error(typeof data?.error === 'string' ? data.error : 'Upload failed');
   return { url, cloud_storage_path: String(data?.cloud_storage_path ?? ''), isPublic: true };
 }
 
+async function createUploadUrl(file: File): Promise<any> {
+  const res = await fetchWithTimeout('/api/upload/presigned', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name || 'image.png', contentType: file.type || 'image/png' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Sign in to upload images');
+  }
+  if (!res.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Could not create upload URL');
+  }
+  return data;
+}
+
+async function putSignedFile(uploadUrl: string, file: File): Promise<void> {
+  const blob = await asUploadBlob(file);
+  const body = new FormData();
+  body.append('cacheControl', '3600');
+  body.append('', blob, file.name || 'image.png');
+  const put = await fetchWithTimeout(uploadUrl, { method: 'PUT', headers: { 'x-upsert': 'true' }, body });
+  if (!put.ok) throw new Error('Could not store the image');
+}
+
 /**
- * Uploads an image to the shared server and returns its public URL.
- * A local file is saved even when the upload address is missing or not a URL.
+ * Uploads an image and returns its public URL.
+ * Always client-prepares (max 1200px edge, under ~2MB, aspect preserved) before upload.
+ * Pass `crop` only when a forced centre-crop is required (e.g. round profile avatars).
+ * A local file is saved even when the cloud upload address is missing or not a URL.
  */
 export async function uploadImage(input: File, crop?: CropPreset): Promise<{ url: string; cloud_storage_path: string; isPublic: boolean }> {
-  if (!(input instanceof Blob)) throw new Error('Choose an image file');
   const contentType = imageType(input);
   if (!contentType) throw new Error(`${input.name || 'That file'} is not an image`);
   if (input.size > MAX_IMAGE_BYTES) throw new Error(`${input.name || 'That file'} is larger than 20 MB`);
-  const file = crop ? await cropToAspect(input, CROP_PRESETS[crop]) : input;
-  const typed = file.type === contentType ? file : new File([file], file.name || 'image.png', { type: contentType });
+  const prepared = await prepareImageForUpload(input);
+  const file = crop ? await cropToAspect(prepared, CROP_PRESETS[crop]) : prepared;
+  const typed = new File([file], file.name || 'image.png', { type: file.type || contentType });
 
   try {
-    const res = await fetch('/api/upload/presigned', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileName: typed.name || 'image.png', contentType }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) throw new Error(typeof data?.error === 'string' ? data.error : 'Sign in to upload images');
-    if (!res.ok) return uploadDirect(typed);
-    const target = httpUrl(data?.uploadUrl);
+    const data = await createUploadUrl(typed);
     const savedUrl = publicImageUrl(data?.url);
-    if (!target) return savedUrl ? { url: savedUrl, cloud_storage_path: String(data?.cloud_storage_path ?? ''), isPublic: true } : uploadDirect(typed);
+    const target = httpUrl(data?.uploadUrl);
+    if (data?.provider === 'supabase') {
+      if (!target) throw new Error('Could not create upload URL');
+      await putSignedFile(target.toString(), typed);
+      if (!savedUrl) throw new Error('Upload did not return an image address');
+      return { url: savedUrl, cloud_storage_path: String(data?.cloud_storage_path ?? ''), isPublic: true };
+    }
+    if (!target) {
+      if (savedUrl) return { url: savedUrl, cloud_storage_path: String(data?.cloud_storage_path ?? ''), isPublic: true };
+      return uploadDirect(typed);
+    }
     const signed = target.searchParams.get('X-Amz-SignedHeaders') ?? '';
     const headers: Record<string, string> = { 'Content-Type': typed.type || contentType };
     if (signed.includes('content-disposition')) headers['Content-Disposition'] = 'attachment';
-    const put = await fetch(target.toString(), { method: 'PUT', headers, body: typed });
+    const put = await fetchWithTimeout(target.toString(), { method: 'PUT', headers, body: await asUploadBlob(typed) });
     if (!put.ok) return uploadDirect(typed);
     if (!savedUrl) throw new Error('Upload did not return an image address');
     return { url: savedUrl, cloud_storage_path: String(data?.cloud_storage_path ?? ''), isPublic: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : '';
-    if (message === 'Sign in to upload images' || message === 'Upload did not return an image address') throw err;
+    if (
+      message === 'Sign in to upload images'
+      || message === 'Upload did not return an image address'
+      || message === 'Could not create upload URL'
+      || message === 'Could not store the image'
+      || message === 'Upload timed out. Try again.'
+    ) throw err instanceof Error ? err : new Error('Could not create upload URL');
     try {
       return await uploadDirect(typed);
-    } catch {
-      return { url: await readDeviceImage(typed), cloud_storage_path: '', isPublic: true };
+    } catch (directErr) {
+      const directMessage = directErr instanceof Error ? directErr.message : '';
+      if (directMessage === 'Could not create upload URL' || directMessage === 'Sign in to upload images') throw directErr;
+      throw new Error(directMessage || 'Could not create upload URL');
     }
   }
 }
@@ -214,16 +239,43 @@ export async function uploadProfileAudio(file: File): Promise<{ url: string }> {
   return { url };
 }
 
-/** Uses the photo already on the device. A web address is not required. */
-export async function imageForCard(file: File, crop?: CropPreset): Promise<{ url: string; cloud_storage_path: string; isPublic: boolean }> {
-  if (!(file instanceof Blob)) throw new Error('Choose an image file');
-  let prepared: Blob = file;
-  if (crop) {
-    try {
-      prepared = await cropToAspect(file, CROP_PRESETS[crop]);
-    } catch {
-      prepared = file;
-    }
+/** Uploads an MP4 or WebM backdrop. Clips longer than 10 seconds are refused. */
+export async function uploadProfileVideo(file: File): Promise<{ url: string }> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const contentType = file.type === 'video/webm' || ext === 'webm' ? 'video/webm' : file.type === 'video/mp4' || ext === 'mp4' ? 'video/mp4' : '';
+  if (!contentType) throw new Error('Use an MP4 or WebM file');
+  if (file.size > MAX_IMAGE_BYTES) throw new Error('That video is larger than 20 MB');
+  const duration = await new Promise<number>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    const timer = setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Upload timed out. Try again.'));
+    }, UPLOAD_TIMEOUT_MS);
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      const length = video.duration;
+      URL.revokeObjectURL(objectUrl);
+      resolve(length);
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not read that video'));
+    };
+    video.src = objectUrl;
+  });
+  if (!Number.isFinite(duration) || duration > 10.5) throw new Error('Background videos must be 10 seconds or shorter');
+  const typed = new File([file], file.name || 'loop.mp4', { type: contentType });
+  const data = await createUploadUrl(typed);
+  const savedUrl = publicImageUrl(data?.url);
+  const target = httpUrl(data?.uploadUrl);
+  if (!target || !savedUrl) throw new Error('Could not create upload URL');
+  if (data?.provider === 'supabase') await putSignedFile(target.toString(), typed);
+  else {
+    const put = await fetchWithTimeout(target.toString(), { method: 'PUT', headers: { 'Content-Type': contentType }, body: await asUploadBlob(typed) });
+    if (!put.ok) throw new Error('Could not store the image');
   }
-  return { url: await readDeviceImage(prepared), cloud_storage_path: '', isPublic: true };
+  return { url: savedUrl };
 }

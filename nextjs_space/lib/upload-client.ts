@@ -1,6 +1,7 @@
 'use client';
 
 import { cropToAspect, CROP_PRESETS, type CropPreset } from './image-crop';
+import { prepareImageForUpload } from './image-prepare';
 
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -96,15 +97,17 @@ async function putSignedFile(uploadUrl: string, file: File): Promise<void> {
 
 /**
  * Uploads an image and returns its public URL.
- * Pass `crop` to auto centre-crop + downscale it to a card aspect before upload.
+ * Always client-prepares (max 1200px edge, under ~2MB, aspect preserved) before upload.
+ * Pass `crop` only when a forced centre-crop is required (e.g. round profile avatars).
  * A local file is saved even when the cloud upload address is missing or not a URL.
  */
 export async function uploadImage(input: File, crop?: CropPreset): Promise<{ url: string; cloud_storage_path: string; isPublic: boolean }> {
   const contentType = imageType(input);
   if (!contentType) throw new Error(`${input.name || 'That file'} is not an image`);
   if (input.size > MAX_IMAGE_BYTES) throw new Error(`${input.name || 'That file'} is larger than 20 MB`);
-  const file = crop ? await cropToAspect(input, CROP_PRESETS[crop]) : input;
-  const typed = file.type === contentType ? file : new File([file], file.name || 'image.png', { type: contentType });
+  const prepared = await prepareImageForUpload(input);
+  const file = crop ? await cropToAspect(prepared, CROP_PRESETS[crop]) : prepared;
+  const typed = new File([file], file.name || 'image.png', { type: file.type || contentType });
 
   try {
     const data = await createUploadUrl(typed);

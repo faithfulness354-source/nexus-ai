@@ -38,7 +38,7 @@ interface CharacterCardProps {
   /** Owner or admin view of a card visitors without NSFW access cannot see. */
   hiddenFromPublic?: boolean;
   coverBlur?: number;
-  /** CSS object-position for portrait covers. Defaults to top-center. */
+  /** @deprecated Focal overrides are unused — covers always auto-fit with contain. */
   coverFocus?: string;
   frameStyle?: CSSProperties;
   className?: string;
@@ -56,7 +56,7 @@ export function cardAudioTrack(item?: { audioUrl?: string | null; audio_url?: st
   return /^(https?:|\/)/i.test(song) ? song : '';
 }
 
-export function CharacterCard({ id, name, title, summary, scenario, creator, tags, avatar, banner, updatedAt, nsfw, chatCount = 0, canEdit = false, showVisibility = false, visibility, moderated, onTagClick, audioUrl, audio_url, themeSong, song_id, hiddenFromPublic = false, coverBlur = 0, coverFocus = '50% 0%', frameStyle, className, glitch = false }: CharacterCardProps) {
+export function CharacterCard({ id, name, title, summary, scenario, creator, tags, avatar, banner, updatedAt, nsfw, chatCount = 0, canEdit = false, showVisibility = false, visibility, moderated, onTagClick, audioUrl, audio_url, themeSong, song_id, hiddenFromPublic = false, coverBlur = 0, frameStyle, className, glitch = false }: CharacterCardProps) {
   const [imageError, setImageError] = useState(false);
   const raw = String(avatar || banner || '').trim();
   const savedStamp = updatedAt instanceof Date ? updatedAt.toISOString() : updatedAt ? String(updatedAt) : '';
@@ -78,7 +78,6 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
             src={cover}
             alt={`${name} card image`}
             imgKey={`${raw}-${version}`}
-            focus={coverFocus}
             blurPx={coverBlur}
             className="absolute inset-0 h-full w-full"
             onError={() => setImageError(true)}
