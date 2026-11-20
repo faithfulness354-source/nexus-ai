@@ -5,6 +5,7 @@ import type { Session } from 'next-auth';
 import { AccessProvider } from '@/components/billing/access-provider';
 import { CloudSync } from '@/components/supabase/cloud-sync';
 import { MobileKeyboardInset } from '@/components/mobile-keyboard-inset';
+import { MediaRouteCleanup } from '@/components/media-route-cleanup';
 
 const SESSION_PATH = '/api/auth/session';
 /** Collapses the mount burst from NextAuth's broadcast listener into one request. */
@@ -72,6 +73,7 @@ export function Providers({ children, session }: { children: React.ReactNode; se
       <AccessProvider>
         <CloudSync />
         <MobileKeyboardInset />
+        <MediaRouteCleanup />
         {children}
       </AccessProvider>
     </SessionProvider>

@@ -1,0 +1,11 @@
+﻿{
+    "mode":  "img2img",
+    "saved":  "C:\\Users\\faith\\Downloads\\nexus_roleplay\\local-assistant\\public\\generations\\juggernaut-style-test-20261109-124239.png",
+    "backend":  "comfyui",
+    "style_preset":  "3d digital character art, unreal engine 5 render, highly detailed character illustration, glossy latex textures, dramatic neon rim lighting, cinematic composition, smooth volumetric shading",
+    "size":  1193990,
+    "denoise":  0.42,
+    "ms":  59586,
+    "checkpoint":  "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors",
+    "prompt":  "heroic blonde woman in glossy pink and black armored bodysuit, white cape, low angle poster, 3d digital character art, unreal engine 5 render, highly detailed character illustration, glossy latex textures, dramatic neon rim lighting, cinematic composition, smooth volumetric shading"
+}

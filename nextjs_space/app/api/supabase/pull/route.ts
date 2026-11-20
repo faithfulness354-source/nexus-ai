@@ -10,6 +10,8 @@ export async function GET() {
   if (!isSupabaseConfigured()) return NextResponse.json({ configured: false });
   const viewer = await getViewer();
   if (!viewer?.user.email) return NextResponse.json({ configured: true, authenticated: false }, { status: 401 });
-  void pullCloudAccount(viewer.user);
+  void pullCloudAccount(viewer.user).catch((error: unknown) => {
+    console.error('Cloud pull failed', error instanceof Error ? error.message : '');
+  });
   return NextResponse.json({ configured: true, authenticated: true });
 }

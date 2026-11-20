@@ -68,9 +68,9 @@ export async function POST(request: NextRequest) {
       data: { sessionId: session.id, forbiddenWords: '[]' },
     });
 
-    await ensureGreeting(session.id, character, personaId);
+    const greeting = await ensureGreeting(session.id, undefined, personaId);
 
-    return NextResponse.json(session, { status: 201 });
+    return NextResponse.json({ ...session, messages: greeting ? [greeting] : [] }, { status: 201 });
   } catch (err: any) {
     console.error('POST /api/sessions error:', err);
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 });

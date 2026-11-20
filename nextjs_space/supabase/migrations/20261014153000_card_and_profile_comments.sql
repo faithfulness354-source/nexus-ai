@@ -40,5 +40,9 @@ create policy "Allow public read access for profile_comments"
   on public.profile_comments for select
   using (true);
 
+alter table public.card_comments add column if not exists flagged boolean not null default false;
+alter table public.profile_comments add column if not exists flagged boolean not null default false;
+alter table public.profile_comments add column if not exists pinned boolean not null default false;
+
 grant select on public.card_comments to anon, authenticated;
 grant select on public.profile_comments to anon, authenticated;

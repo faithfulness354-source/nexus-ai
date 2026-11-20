@@ -9,7 +9,7 @@ type Props = { onComplete?: () => void };
 
 export function StartupSplash({ onComplete }: Props) {
   const [open, setOpen] = useState(true);
-  const [shown, setShown] = useState(true);
+  const [shown, setShown] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const done = useRef(false);
   const started = useRef(false);
@@ -45,17 +45,43 @@ export function StartupSplash({ onComplete }: Props) {
       if (!started.current) return;
       finish();
     };
+    const native = document.documentElement.getAttribute('data-native-app') === '1';
+    let triedSound = false;
+    const withSound = () => {
+      if (triedSound) return;
+      triedSound = true;
+      video.defaultMuted = false;
+      video.muted = false;
+      video.volume = 1;
+      if (video.paused) {
+        video.muted = true;
+        void video.play().catch(() => {});
+      }
+    };
     const markStarted = () => {
       if (done.current) return;
       started.current = true;
+      video.classList.add('nexus-splash-live');
       setShown(true);
+      withSound();
     };
     const startPlayback = () => {
       if (done.current) return;
-      video.muted = false;
+      video.controls = false;
+      video.removeAttribute('controls');
       video.volume = 1;
+      if (native) {
+        video.muted = true;
+        void video.play().then(markStarted).catch((err) => {
+          if (done.current || started.current) return;
+          console.warn('Splash video play blocked, keeping the splash up:', err);
+        });
+        return;
+      }
+      video.defaultMuted = false;
+      video.muted = false;
       void video.play().then(markStarted).catch(() => {
-        if (done.current) return;
+        if (done.current || started.current) return;
         video.muted = true;
         void video.play().then(markStarted).catch((err) => {
           console.warn('Splash video play blocked, keeping the splash up:', err);
@@ -82,8 +108,9 @@ export function StartupSplash({ onComplete }: Props) {
       if (!event.persisted) return;
       done.current = false;
       started.current = false;
+      video.classList.remove('nexus-splash-live');
       setOpen(true);
-      setShown(true);
+      setShown(false);
       video.src = SRC;
       try { video.currentTime = 0; } catch { /* The file may still be loading. */ }
       startPlayback();
@@ -156,11 +183,13 @@ export function StartupSplash({ onComplete }: Props) {
         ref={videoRef}
         src={SRC}
         autoPlay
-        muted
         controls={false}
         playsInline
         preload="auto"
-        onPlaying={() => setShown(true)}
+        onPlaying={() => {
+          videoRef.current?.classList.add('nexus-splash-live');
+          setShown(true);
+        }}
         onEnded={finish}
         onError={onVideoError}
         style={{
@@ -173,7 +202,7 @@ export function StartupSplash({ onComplete }: Props) {
           objectFit: 'cover',
           objectPosition: 'center',
           backgroundColor: EDGE,
-          opacity: shown ? 1 : 0,
+          opacity: shown ? undefined : 0,
           pointerEvents: 'none',
         }}
       />

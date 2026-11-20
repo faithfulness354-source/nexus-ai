@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { fetchLocal, trimSlash } from '@/lib/local-fetch';
+import { DEFAULT_OLLAMA_MODEL, UNRESTRICTED_SYSTEM_PROMPT } from '@/lib/system-prompt';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,8 @@ type ChatBody = {
 
 /**
  * Proxies chat to a local Ollama or OpenAI-compatible server.
- * Returns the model text as-is — no truncation, filtering, or rewrite.
+ * Always injects an unrestricted system instruction; returns model text as-is
+ * with no truncation, filtering, or rewrite.
  */
 export async function POST(request: NextRequest) {
   let body: ChatBody;
@@ -28,8 +30,7 @@ export async function POST(request: NextRequest) {
 
   const prompt = typeof body.prompt === 'string' ? body.prompt : '';
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const model = (body.model ?? '').trim();
-  if (!model) return Response.json({ error: 'model is required' }, { status: 400 });
+  const model = (body.model ?? '').trim() || DEFAULT_OLLAMA_MODEL;
   if (!prompt && messages.length === 0) {
     return Response.json({ error: 'prompt or messages is required' }, { status: 400 });
   }
@@ -51,8 +52,16 @@ export async function POST(request: NextRequest) {
 function flattenPrompt(prompt: string, messages: Array<{ role: string; content: string }>): string {
   if (prompt.trim()) return prompt;
   return messages
+    .filter((m) => m.role !== 'system')
     .map((m) => `${m.role}: ${m.content}`)
     .join('\n\n');
+}
+
+function withUnrestrictedSystem(
+  messages: Array<{ role: string; content: string }>,
+): Array<{ role: string; content: string }> {
+  const rest = messages.filter((m) => m.role !== 'system');
+  return [{ role: 'system', content: UNRESTRICTED_SYSTEM_PROMPT }, ...rest];
 }
 
 async function ollamaGenerate(
@@ -65,8 +74,14 @@ async function ollamaGenerate(
   const base = trimSlash(body.ollamaBaseUrl || 'http://localhost:11434');
   const payload = {
     model,
+    system: UNRESTRICTED_SYSTEM_PROMPT,
     prompt: flattenPrompt(prompt, messages),
     stream: wantStream,
+    options: {
+      // Keep generation deterministic enough for creative RP without sampler refusals.
+      temperature: 0.9,
+      top_p: 0.95,
+    },
   };
   const res = await fetchLocal(`${base}/api/generate`, {
     method: 'POST',
@@ -145,10 +160,9 @@ async function openAiCompat(
   wantStream: boolean,
 ) {
   const base = trimSlash(body.openaiCompatBaseUrl || 'http://localhost:1234/v1');
-  const chatMessages =
-    messages.length > 0
-      ? messages
-      : [{ role: 'user', content: prompt }];
+  const chatMessages = withUnrestrictedSystem(
+    messages.length > 0 ? messages : [{ role: 'user', content: prompt }],
+  );
 
   const res = await fetchLocal(`${base}/chat/completions`, {
     method: 'POST',
@@ -157,6 +171,8 @@ async function openAiCompat(
       model,
       messages: chatMessages,
       stream: wantStream,
+      temperature: 0.9,
+      top_p: 0.95,
     }),
   });
   if (!res.ok) {

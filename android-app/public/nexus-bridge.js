@@ -9,10 +9,6 @@
   window.__NEXUS_API_ORIGIN = origin;
 
   function liveOrigin() {
-    try {
-      var host = location.hostname || '';
-      if (host === 'nexus-ai-navy-xi.vercel.app' || /\.vercel\.app$/.test(host)) return location.origin;
-    } catch (e) {}
     return LIVE_ORIGIN;
   }
 

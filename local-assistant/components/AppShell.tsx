@@ -6,6 +6,11 @@ import { Settings } from './Settings';
 import { Sidebar } from './Sidebar';
 import { loadConversations, loadSettings, newId, saveConversations, saveSettings } from '@/lib/settings-client';
 import type { ChatMessage, Conversation, InputMode, LocalSettings } from '@/lib/types';
+import {
+  VENICE_MAX_RETRIES,
+  VENICE_REQUEST_TIMEOUT_MS,
+  VENICE_RETRY_BASE_DELAY_MS,
+} from '@/lib/venice-config';
 
 export function AppShell() {
   const [settings, setSettings] = useState<LocalSettings | null>(null);
@@ -16,6 +21,8 @@ export function AppShell() {
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  /** Optional source for ComfyUI/A1111 img2img. */
+  const [sourceImage, setSourceImage] = useState<string | null>(null);
 
   useEffect(() => {
     const loadedSettings = loadSettings();
@@ -93,7 +100,11 @@ export function AppShell() {
 
     try {
       if (mode === 'image') {
-        await runImage(conversationId, prompt, settings);
+        // Only an explicitly attached source triggers img2img. Never reuse last chat image
+        // (that bled into Forge as init_images / FaceID tensors and looped the same output).
+        const initImage = sourceImage || null;
+        await runImage(conversationId, prompt, settings, initImage);
+        setSourceImage(null);
       } else {
         await runChat(conversationId, prompt, settings, [...conversation.messages, userMessage]);
       }
@@ -180,48 +191,106 @@ export function AppShell() {
     }
   }
 
-  async function runImage(conversationId: string, prompt: string, localSettings: LocalSettings) {
+  async function runImage(
+    conversationId: string,
+    prompt: string,
+    localSettings: LocalSettings,
+    initImageDataUrl?: string | null,
+  ) {
     const assistantId = newId();
+    const usingImg2Img = Boolean(initImageDataUrl);
     updateMessages(conversationId, (messages) => [
       ...messages,
-      { id: assistantId, role: 'assistant', content: 'Generating image locally…', createdAt: Date.now() },
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: usingImg2Img
+          ? `Running image+style via ${localSettings.imageBackend}…`
+          : `Generating image via ${localSettings.imageBackend}…`,
+        createdAt: Date.now(),
+      },
     ]);
 
-    const res = await fetch('/api/generate-image', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        negative_prompt: localSettings.negativePrompt,
-        steps: localSettings.steps,
-        cfg_scale: localSettings.cfgScale,
-        width: localSettings.width,
-        height: localSettings.height,
-        sampler_name: localSettings.samplerName,
-        backend: localSettings.imageBackend,
-        a1111BaseUrl: localSettings.a1111BaseUrl,
-        comfyBaseUrl: localSettings.comfyBaseUrl,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || typeof data?.image !== 'string') {
+    // Venice cloud generations — no local Forge timeout/cache; still allow a couple of retries.
+    const IMAGE_TIMEOUT_MS = VENICE_REQUEST_TIMEOUT_MS;
+    const IMAGE_RETRIES = VENICE_MAX_RETRIES;
+    const imageBackend = localSettings.imageBackend || 'venice';
+    let res: Response | null = null;
+    let data: { image?: string; mimeType?: string; mode?: string; error?: string; retryable?: boolean } = {};
+    let lastError = 'Image generation failed';
+
+    for (let attempt = 0; attempt <= IMAGE_RETRIES; attempt += 1) {
+      try {
+        res = await fetch('/api/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            negative_prompt: localSettings.negativePrompt,
+            steps: localSettings.steps,
+            cfg_scale: localSettings.cfgScale,
+            width: localSettings.width,
+            height: localSettings.height,
+            model: localSettings.veniceImageModel || undefined,
+            mode: usingImg2Img ? 'img2img' : 'txt2img',
+            // Omit init_image on txt2img so Venice cannot inherit prior base64.
+            ...(usingImg2Img && initImageDataUrl ? { init_image: initImageDataUrl } : {}),
+            backend: imageBackend,
+            a1111BaseUrl: localSettings.a1111BaseUrl || 'http://127.0.0.1:7860',
+            comfyBaseUrl: localSettings.comfyBaseUrl,
+          }),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+        });
+        data = await res.json().catch(() => ({}));
+        if (res.ok && typeof data?.image === 'string') break;
+
+        lastError = data?.error || `Image failed (${res.status})`;
+        const retryable =
+          data?.retryable === true || res.status === 503 || res.status === 504 || res.status >= 500;
+        if (!retryable || attempt === IMAGE_RETRIES) {
+          updateMessages(conversationId, (messages) =>
+            messages.map((message) =>
+              message.id === assistantId ? { ...message, content: '', error: lastError } : message,
+            ),
+          );
+          return;
+        }
+        await new Promise((r) => setTimeout(r, VENICE_RETRY_BASE_DELAY_MS * (attempt + 1)));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Network error';
+        lastError = /aborted|timeout/i.test(message)
+          ? `Image request timed out after ${IMAGE_TIMEOUT_MS / 1000}s. Try again.`
+          : `Image request failed: ${message}`;
+        if (attempt === IMAGE_RETRIES) {
+          updateMessages(conversationId, (messages) =>
+            messages.map((message) =>
+              message.id === assistantId ? { ...message, content: '', error: lastError } : message,
+            ),
+          );
+          return;
+        }
+        await new Promise((r) => setTimeout(r, VENICE_RETRY_BASE_DELAY_MS * (attempt + 1)));
+      }
+    }
+
+    if (!res?.ok || typeof data?.image !== 'string') {
       updateMessages(conversationId, (messages) =>
         messages.map((message) =>
-          message.id === assistantId
-            ? { ...message, content: '', error: data?.error || `Image failed (${res.status})` }
-            : message,
+          message.id === assistantId ? { ...message, content: '', error: lastError } : message,
         ),
       );
       return;
     }
 
     const mime = typeof data.mimeType === 'string' ? data.mimeType : 'image/png';
+    const modeLabel = data?.mode === 'img2img' ? 'img2img' : 'txt2img';
     updateMessages(conversationId, (messages) =>
       messages.map((message) =>
         message.id === assistantId
           ? {
               ...message,
-              content: 'Image ready.',
+              content: `Image ready (${modeLabel} · ${localSettings.imageBackend}).`,
               imageDataUrl: `data:${mime};base64,${data.image}`,
             }
           : message,
@@ -284,8 +353,10 @@ export function AppShell() {
           mode={mode}
           busy={busy}
           draft={draft}
+          sourceImage={sourceImage}
           onDraftChange={setDraft}
           onModeChange={setMode}
+          onSourceImageChange={setSourceImage}
           onSubmit={() => void submit()}
         />
       </main>

@@ -37,7 +37,11 @@ export function Settings({
         const list = Array.isArray(data?.models) ? data.models : [];
         setModels(list);
         if (list.length && !list.includes(settings.model)) {
-          onChange({ ...settings, model: list[0] });
+          const preferred =
+            list.find((name: string) => name === 'fluffy/l3-8b-stheno-v3.2' || name.startsWith('fluffy/l3-8b-stheno-v3.2:')) ||
+            list.find((name: string) => /stheno/i.test(name)) ||
+            list[0];
+          onChange({ ...settings, model: preferred });
         }
       } catch (err: unknown) {
         if (!cancel) setModelError(err instanceof Error ? err.message : 'Could not list models');
@@ -128,9 +132,23 @@ export function Settings({
                 value={settings.imageBackend}
                 onChange={(event) => patch('imageBackend', event.target.value as LocalSettings['imageBackend'])}
               >
-                <option value="a1111">Automatic1111 / Forge</option>
-                <option value="comfyui">ComfyUI</option>
+                <option value="venice">Venice.ai (cloud)</option>
+                <option value="a1111">Automatic1111 / Forge (local)</option>
+                <option value="comfyui">ComfyUI (local)</option>
               </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-mist-300">Venice image model</span>
+              <input
+                className="w-full rounded-lg border border-white/10 bg-ink-800 px-3 py-2 font-mono text-xs"
+                value={settings.veniceImageModel || ''}
+                onChange={(event) => patch('veniceImageModel', event.target.value)}
+                placeholder="venice-sd35"
+              />
+              <p className="mt-1 text-[11px] text-mist-500">
+                Uses server <span className="font-mono">VENICE_API_KEY</span> →{' '}
+                <span className="font-mono">https://api.venice.ai/api/v1/image/generate</span>
+              </p>
             </label>
             <label className="block text-sm">
               <span className="mb-1 block text-mist-300">A1111 / Forge base URL</span>
@@ -214,20 +232,44 @@ export function Settings({
                 placeholder="Euler a"
               />
             </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-mist-300">img2img denoise (locked)</span>
+              <input
+                type="range"
+                min={0.05}
+                max={1}
+                step={0.05}
+                className="w-full opacity-60"
+                value={0.38}
+                disabled
+                readOnly
+              />
+              <p className="mt-1 text-[11px] text-mist-500">
+                Default image backend is Venice cloud. Local Forge FaceID denoise{' '}
+                <span className="font-mono">0.38</span> only applies when backend is Forge.
+              </p>
+            </label>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:bg-white/5"
-                onClick={() => onChange({ ...settings, width: 512, height: 768 })}
+                onClick={() => onChange({ ...settings, width: 1024, height: 1024 })}
               >
-                512×768
+                1024×1024
               </button>
               <button
                 type="button"
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:bg-white/5"
-                onClick={() => onChange({ ...settings, width: 832, height: 1216, samplerName: 'DPM++ 2M Karras' })}
+                onClick={() => onChange({ ...settings, width: 768, height: 1280 })}
               >
-                SDXL 832×1216
+                768×1280
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:bg-white/5"
+                onClick={() => onChange({ ...settings, width: 1280, height: 720 })}
+              >
+                1280×720
               </button>
             </div>
           </section>

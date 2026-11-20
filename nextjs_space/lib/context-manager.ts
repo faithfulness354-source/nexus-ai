@@ -1,5 +1,34 @@
-import { estimateTokens } from './tokens';
+import { estimateTokens, DEFINITION_TOKEN_CAP } from './tokens';
 import { LLMMessage } from './types';
+import { isDeletedMessage, messageContent, spliceDeletedMessages } from './llm/messages';
+
+export interface TurnTokens {
+  sent_tokens: number;
+  recent_history_tokens: number;
+  definition_tokens: number;
+}
+
+/** Drops soft-deleted turns, then recounts the tokens that will actually be sent. */
+export function recountTurnTokens(
+  history: Array<{ role?: string; content?: unknown; deleted?: unknown }>,
+  definitionTokens: number,
+): TurnTokens & { messages: Array<{ role: string; content: string }> } {
+  const live = spliceDeletedMessages(history)
+    .filter((message) => !isDeletedMessage(message))
+    .map((message) => ({
+      role: String(message.role ?? 'user'),
+      content: messageContent(message.content).trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+  const recent_history_tokens = live.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+  const definition_tokens = Math.min(DEFINITION_TOKEN_CAP, Math.max(0, Math.floor(definitionTokens) || 0));
+  return {
+    sent_tokens: definition_tokens + recent_history_tokens,
+    recent_history_tokens,
+    definition_tokens,
+    messages: live,
+  };
+}
 
 export interface TurnTokens {
   /** definition_tokens + recent_history_tokens (what the model is billed/capped against). */
@@ -74,7 +103,7 @@ export function buildContext(
 
   let totalHistoryTokens = 0;
   let trimmed = false;
-  const safeMessages = messages ?? [];
+  const safeMessages = spliceDeletedMessages(messages ?? []).filter((message) => !isDeletedMessage(message) && messageContent(message.content).trim());
 
   // Walk from newest to oldest, include as many as fit
   const included: LLMMessage[] = [];

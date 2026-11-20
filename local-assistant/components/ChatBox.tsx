@@ -11,19 +11,24 @@ export function ChatBox({
   mode,
   busy,
   draft,
+  sourceImage,
   onDraftChange,
   onModeChange,
+  onSourceImageChange,
   onSubmit,
 }: {
   messages: ChatMessage[];
   mode: InputMode;
   busy: boolean;
   draft: string;
+  sourceImage: string | null;
   onDraftChange: (value: string) => void;
   onModeChange: (mode: InputMode) => void;
+  onSourceImageChange: (value: string | null) => void;
   onSubmit: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -77,7 +82,7 @@ export function ChatBox({
 
       <form onSubmit={handleSubmit} className="border-t border-white/10 bg-ink-900/80 px-4 py-4 backdrop-blur sm:px-8">
         <div className="mx-auto flex max-w-3xl flex-col gap-3">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => onModeChange('text')}
@@ -92,7 +97,54 @@ export function ChatBox({
             >
               Image mode
             </button>
+            {mode === 'image' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="rounded-full bg-ink-800 px-3 py-1 text-xs font-medium text-mist-300 hover:bg-ink-700"
+                  disabled={busy}
+                >
+                  {sourceImage ? 'Change source (img2img)' : 'Add source (img2img)'}
+                </button>
+                {sourceImage && (
+                  <button
+                    type="button"
+                    onClick={() => onSourceImageChange(null)}
+                    className="rounded-full bg-ink-800 px-3 py-1 text-xs font-medium text-mist-300 hover:bg-ink-700"
+                    disabled={busy}
+                  >
+                    Clear source
+                  </button>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      if (typeof reader.result === 'string') onSourceImageChange(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </>
+            )}
           </div>
+          {mode === 'image' && sourceImage && (
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink-800/60 p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={sourceImage} alt="img2img source" className="h-14 w-14 rounded-lg object-cover" />
+              <p className="text-xs text-mist-400">
+                Source attached — Forge will run img2img with FaceID. Clear the source to generate a fresh txt2img from the prompt alone.
+              </p>
+            </div>
+          )}
           <div className="flex gap-2">
             <textarea
               value={draft}
@@ -104,7 +156,13 @@ export function ChatBox({
                 }
               }}
               rows={3}
-              placeholder={mode === 'image' ? 'Describe the image to generate locally…' : 'Message your local model…'}
+              placeholder={
+                mode === 'image'
+                  ? sourceImage
+                    ? 'Describe how to transform the source image…'
+                    : 'Describe the image to generate (or add a source for img2img)…'
+                  : 'Message your local model…'
+              }
               className="min-h-[5.5rem] flex-1 resize-y rounded-xl border border-white/10 bg-ink-800 px-3 py-2 text-sm outline-none ring-accent/40 focus:ring-2"
               disabled={busy}
             />
@@ -113,7 +171,7 @@ export function ChatBox({
               disabled={busy || !draft.trim()}
               className="self-end rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-ink-950 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {busy ? 'Working…' : mode === 'image' ? 'Generate' : 'Send'}
+              {busy ? 'Working…' : mode === 'image' ? (sourceImage ? 'img2img' : 'Generate') : 'Send'}
             </button>
           </div>
         </div>

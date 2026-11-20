@@ -9,6 +9,7 @@ import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private static final String PRODUCTION_URL = "https://nexus-ai-navy-xi.vercel.app";
     private static final String SPLASH_GUARD = "(function(){"
             + "var id='nexus-splash-guard';"
             + "if(!document.documentElement)return;"
@@ -36,8 +37,12 @@ public class MainActivity extends BridgeActivity {
         WebView webView = getBridge().getWebView();
         webView.setBackgroundColor(Color.BLACK);
         WebSettings settings = webView.getSettings();
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        String current = webView.getUrl();
+        if (current == null || !current.startsWith(PRODUCTION_URL)) {
+            webView.loadUrl(PRODUCTION_URL);
+        }
         var prefs = getSharedPreferences("nexus", MODE_PRIVATE);
         if (prefs.getInt("assetCache", 0) < 10) {
             webView.clearCache(true);

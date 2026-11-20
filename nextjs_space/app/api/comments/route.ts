@@ -5,7 +5,7 @@ import { getViewer, unauthorized, json, forbidden } from '@/lib/access';
 import { canViewCharacter } from '@/lib/card-visibility';
 import { characterImpliesNsfw } from '@/lib/nsfw-notice';
 import { adultCardsEnabled } from '@/lib/nsfw-account';
-import { addCardComment, addProfileComment, cleanComment, deleteCardComment, deleteProfileComment, listCardComments, listProfileComments, type CommentKind } from '@/lib/comments';
+import { addCardComment, addProfileComment, cleanComment, deleteCardComment, deleteProfileComment, listCardComments, listProfileComments, pinProfileComment, reportComment, type CommentKind } from '@/lib/comments';
 
 function kindOf(value: unknown): CommentKind | null {
   return value === 'card' || value === 'profile' ? value : null;
@@ -82,7 +82,7 @@ export async function DELETE(request: NextRequest) {
     if (kind === 'card') {
       const visible = await visibleCard(targetId);
       if (!visible) return json({ error: 'Not found' }, 404);
-      const removed = await deleteCardComment(commentId, viewer, visible.character.ownerId);
+      const removed = await deleteCardComment(commentId, viewer, visible.character.ownerId, targetId);
       if (!removed) return forbidden('You can only delete your own comment.');
       return json({ comments: await listCardComments(targetId, viewer, visible.character.ownerId), signedIn: true });
     }
@@ -92,5 +92,37 @@ export async function DELETE(request: NextRequest) {
   } catch (err) {
     console.error('DELETE /api/comments error:', err instanceof Error ? err.message : 'unknown');
     return json({ error: 'Could not delete that comment' }, 500);
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const viewer = await getViewer();
+    if (!viewer) return unauthorized();
+    const body = await request.json().catch(() => ({}));
+    const kind = kindOf(body?.type);
+    const targetId = String(body?.targetId ?? '').trim();
+    const commentId = String(body?.id ?? '').trim();
+    const action = body?.action === 'report' || body?.action === 'pin' || body?.action === 'unpin' ? body.action : null;
+    if (!kind || !targetId || !commentId || !action) return json({ error: 'Missing comment action' }, 400);
+    if (action === 'pin' || action === 'unpin') {
+      if (kind !== 'profile') return json({ error: 'Only guestbook notes can be pinned.' }, 400);
+      const problem = await pinProfileComment(commentId, targetId, viewer, action === 'pin');
+      if (problem) return json({ error: problem }, 400);
+      return json({ comments: await listProfileComments(targetId, viewer), signedIn: true });
+    }
+    if (kind === 'card') {
+      const visible = await visibleCard(targetId);
+      if (!visible) return json({ error: 'Not found' }, 404);
+    }
+    const reported = await reportComment(kind, commentId, targetId, viewer);
+    if (!reported) return json({ error: 'That comment cannot be reported.' }, 400);
+    const comments = kind === 'card'
+      ? await listCardComments(targetId, viewer, (await prisma.character.findUnique({ where: { id: targetId }, select: { ownerId: true } }))?.ownerId ?? null)
+      : await listProfileComments(targetId, viewer);
+    return json({ comments, signedIn: true });
+  } catch (err) {
+    console.error('PATCH /api/comments error:', err instanceof Error ? err.message : 'unknown');
+    return json({ error: 'Could not update that comment' }, 500);
   }
 }

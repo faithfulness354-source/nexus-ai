@@ -13,6 +13,8 @@ export async function GET() {
   if (!viewer?.user.email) return NextResponse.json({ configured: true, authenticated: false }, { status: 401 });
   const session = await mintCloudSession(viewer.user.email, viewer.user.id);
   if (!session) return NextResponse.json({ configured: true, authenticated: false }, { status: 503 });
-  void pushLocalAccount(viewer.user);
+  void pushLocalAccount(viewer.user).catch((error: unknown) => {
+    console.error('Cloud push failed', error instanceof Error ? error.message : '');
+  });
   return NextResponse.json({ configured: true, authenticated: true, ...session });
 }

@@ -18,10 +18,15 @@ export async function POST(request: NextRequest) {
   if (!TABLES.has(table) || !record || typeof record !== 'object') {
     return NextResponse.json({ error: 'Nothing to apply' }, { status: 400 });
   }
-  if (body?.deleted === true) {
-    await removeRemoteRecord(viewer.user, table, record as Record<string, unknown>);
+  try {
+    if (body?.deleted === true) {
+      await removeRemoteRecord(viewer.user, table, record as Record<string, unknown>);
+      return NextResponse.json({ ok: true });
+    }
+    await applyRemoteRecord(viewer.user, table, record as Record<string, unknown>);
     return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/supabase/apply error:', error instanceof Error ? error.message : '');
+    return NextResponse.json({ error: 'Could not apply the cloud update' }, { status: 500 });
   }
-  await applyRemoteRecord(viewer.user, table, record as Record<string, unknown>);
-  return NextResponse.json({ ok: true });
 }

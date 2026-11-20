@@ -404,7 +404,7 @@ export function ProfileHub() {
             <Input id="pf-song" value={p.profileSongUrl} placeholder="https://example.com/theme.mp3" onChange={(e) => set({ profileSongUrl: e.target.value })} />
             <input
               type="file"
-              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm,.flac"
               disabled={songUploading}
               aria-label="Choose profile song file"
               className="block w-full cursor-pointer text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold"
@@ -424,7 +424,8 @@ export function ProfileHub() {
                 onClick={() => {
                   const node = songAudio.current;
                   if (!node || !p.profileSongUrl) return;
-                  if (node.paused) node.play().then(() => setSongPlaying(true)).catch(() => setSongPlaying(false));
+                  if (node.getAttribute('src') !== p.profileSongUrl) node.src = p.profileSongUrl;
+                  if (node.paused) node.play().then(() => setSongPlaying(true)).catch(() => { setSongPlaying(false); toast.error('That song could not be played.'); });
                   else { node.pause(); setSongPlaying(false); }
                 }}
               >
@@ -432,7 +433,7 @@ export function ProfileHub() {
               </button>
               <p className="text-sm font-semibold">{songUploading ? `Attaching ${songName || 'song'}…` : songName ? `Attached: ${songName}` : p.profileSongUrl ? 'Song attached' : 'No song attached yet. Choose a file, or paste a link.'}</p>
             </div>
-            <audio ref={songAudio} src={p.profileSongUrl || undefined} preload="metadata" onEnded={() => setSongPlaying(false)} />
+            <audio ref={songAudio} preload="none" onEnded={() => setSongPlaying(false)} />
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">Autoplay on your public page. Visitors can mute it.</p>
               <Switch checked={p.profileStyle.songAutoplay} onCheckedChange={(songAutoplay) => set({ profileStyle: { ...p.profileStyle, songAutoplay } })} aria-label="Autoplay profile song" />

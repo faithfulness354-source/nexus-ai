@@ -1,5 +1,8 @@
+/** Live Supabase project. The phone and the site sync here, not to a local database. */
+export const LIVE_SUPABASE_URL = 'https://tlzfucupzqtihszptunx.supabase.co';
+
 export function supabaseUrl(): string {
-  return (process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+  return LIVE_SUPABASE_URL;
 }
 
 export function supabaseAnonKey(): string {

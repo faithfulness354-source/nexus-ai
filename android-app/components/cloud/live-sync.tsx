@@ -15,15 +15,19 @@ export function LiveSync() {
     let seen = '';
 
     async function tick() {
-      const response = await fetch('/api/cloud/revision', { cache: 'no-store' });
-      if (!response.ok || cancel) return;
-      const body = await response.json().catch(() => null);
-      const revision = typeof body?.revision === 'string' ? body.revision : '';
-      if (!revision || revision === 'signed-out') return;
-      if (seen && seen !== revision) {
-        window.dispatchEvent(new CustomEvent('nexus:cloud-revision'));
+      try {
+        const response = await fetch('/api/cloud/revision', { cache: 'no-store' });
+        if (!response.ok || cancel) return;
+        const body = await response.json().catch(() => null);
+        const revision = typeof body?.revision === 'string' ? body.revision : '';
+        if (!revision || revision === 'signed-out') return;
+        if (seen && seen !== revision) {
+          window.dispatchEvent(new CustomEvent('nexus:cloud-revision'));
+        }
+        seen = revision;
+      } catch (error) {
+        console.log(`Cloud revision check failed: ${error}`);
       }
-      seen = revision;
     }
 
     void tick();

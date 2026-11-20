@@ -3,7 +3,9 @@ setlocal EnableExtensions
 
 rem === Edit these if your installs live elsewhere ===
 set "ASSISTANT_DIR=%~dp0"
-set "WEBUI_DIR=C:\sd-webui"
+set "WEBUI_DIR=C:\sd-webui-forge"
+set "FORGE_DIR=%WEBUI_DIR%"
+set "COMFY_DIR=%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Installs\Nexus AI\ComfyUI"
 set "ASSISTANT_URL=http://localhost:3010"
 
 echo.
@@ -18,20 +20,30 @@ if errorlevel 1 (
   start "Ollama" cmd /k ollama serve
 )
 
-echo Starting Image Generator...
-if exist "%WEBUI_DIR%\webui-user.bat" (
-  start "A1111 / Forge" cmd /k "cd /d "%WEBUI_DIR%" && webui-user.bat"
-) else (
-  echo   [warn] webui-user.bat not found at "%WEBUI_DIR%"
-  echo          Update WEBUI_DIR in start-local.bat when Automatic1111 / Forge is installed.
-)
-
-echo Starting Assistant UI...
+echo Ensuring Stable Diffusion Forge on :7860 (--api --medvram-sdxl)...
 cd /d "%ASSISTANT_DIR%"
 if not exist "node_modules\" (
   echo   Installing npm dependencies...
   call npm.cmd install
 )
+rem Starts Forge in the background if needed, then blocks until :7860 API is ready.
+call npm.cmd run forge:ensure
+if errorlevel 1 (
+  echo   [warn] Forge not ready yet — image gen may fail until http://127.0.0.1:7860 answers.
+  echo   You can retry with start-forge.bat
+) else (
+  echo   Forge API ready at http://127.0.0.1:7860
+)
+
+echo Starting ComfyUI on port 8188 (optional fallback)...
+if exist "%COMFY_DIR%\main.py" (
+  start "ComfyUI :8188" cmd /k "cd /d "%ASSISTANT_DIR%" && start-comfy.bat"
+) else (
+  echo   [warn] ComfyUI not found at "%COMFY_DIR%"
+)
+
+echo Starting Assistant UI...
+cd /d "%ASSISTANT_DIR%"
 start "Local Assistant" cmd /k "cd /d "%ASSISTANT_DIR%" && npm.cmd run dev"
 
 echo Waiting for the UI...
@@ -52,6 +64,7 @@ if errorlevel 1 (
 
 echo.
 echo Opened %ASSISTANT_URL%
-echo Keep the Ollama / WebUI / Assistant windows running while you use the app.
+echo Image backend defaults to Forge at http://127.0.0.1:7860/sdapi/v1/img2img
+echo Keep Ollama / Forge / Assistant running while you use the app.
 echo.
 endlocal
