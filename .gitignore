@@ -19,6 +19,8 @@ logs/
 # Watchdog cooldown / baseline (local + runner state)
 **/data/watchdog-sms-cooldown.json
 **/data/watchdog-baseline.json
+**/data/watchdog-heal-log.jsonl
+watchdog-escalation.md
 
 # Ignore Cursor local state, but keep shared project rules in git.
 .cursor/*

@@ -81,7 +81,8 @@ jobs:
           echo "Waiting ${SECONDS_WAIT}s for Vercel/production to serve the new revision…"
           sleep "${SECONDS_WAIT}"
 
-      - name: Run watchdog (active API + DB probes)
+      - name: Run watchdog (Tier-1 self-heal + Tier-2 escalate)
+        id: watchdog
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
@@ -111,5 +112,23 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
-          echo "Probing live Discover catalog + health/live + Supabase REST + database…"
+          echo "Two-tier watchdog: probe → self-heal transient errors → escalate persistent failures…"
+          set +e
           npx tsx --require dotenv/config src/scripts/nexus-healthcheck.ts "${ARGS[@]}"
+          CODE=$?
+          set -e
+          if [ -f ../watchdog-escalation.md ]; then
+            echo "Tier-2 escalation file present."
+          fi
+          exit "${CODE}"
+
+      - name: Upload Tier-2 escalation artifact
+        if: always() && hashFiles('watchdog-escalation.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchdog-escalation
+          path: |
+            watchdog-escalation.md
+            nextjs_space/data/watchdog-heal-log.jsonl
+          if-no-files-found: ignore
+          retention-days: 14

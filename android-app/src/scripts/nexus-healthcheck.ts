@@ -1,8 +1,12 @@
 /**
- * Nexus AI watchdog health & sanity check.
+ * Nexus AI watchdog — two-tier self-healing monitor.
  *
- * Actively probes live Discover/catalog + core Supabase-backed API routes and the
- * database — not homepage HTML or Vercel build status alone.
+ * Tier 1 (autonomous): on transient HTTP 404/500/502/503/504 or timeout, retry with
+ * backoff, re-warm the route, verify Supabase connectivity, and re-probe. Log heals.
+ *
+ * Tier 2 (escalation): if the failure persists (or JSON is malformed), do NOT mutate
+ * source or push blind commits. Write watchdog-escalation.md + a ready-to-paste Cursor
+ * prompt, and SMS-alert for critical failures.
  *
  * Non-destructive: SELECT / GET only. Never truncates, deletes, or alters card rows.
  *
@@ -25,7 +29,7 @@ import {
   smsConfigured,
 } from '../lib/notify-sms';
 
-type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip';
+type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'healed';
 
 type CheckResult = {
   id: string;
@@ -42,13 +46,37 @@ type Baseline = {
   updatedAt?: string;
 };
 
+type HealIncident = {
+  timestamp: string;
+  endpoint: string;
+  checkId: string;
+  initialError: string;
+  initialStatus: string | number;
+  recoveryActions: string[];
+  verifiedResult: string;
+};
+
+type EscalationRecord = {
+  timestamp: string;
+  endpoint: string;
+  checkId: string;
+  statusCode: string | number;
+  responseBody: string;
+  detail: string;
+  suspectedFiles: string[];
+  recoveryAttempted: string[];
+};
+
 type Report = {
   ok: boolean;
   critical: boolean;
   time: string;
   baseUrl: string | null;
   checks: CheckResult[];
+  heals?: HealIncident[];
+  escalations?: EscalationRecord[];
   sms?: { sent: boolean; skipped: boolean; reason: string };
+  cursorPrompt?: string;
 };
 
 type JsonExpect =
@@ -64,9 +92,51 @@ type ProbeSpec = {
   /** Extra pass/fail logic after HTTP 200 + JSON parse. */
   validate?: (body: unknown, res: Response) => { ok: boolean; detail: string; meta?: Record<string, unknown> };
   timeoutMs?: number;
+  /** When true, Tier-1 self-heal runs on transient failures. Default true for live APIs. */
+  selfHeal?: boolean;
 };
 
 const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
+const SELF_HEAL_ATTEMPTS = 3;
+const SELF_HEAL_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
+const TRANSIENT_HTTP = new Set([404, 500, 502, 503, 504]);
+
+const SUSPECTED_FILES: Record<string, string[]> = {
+  discover_api: [
+    'nextjs_space/app/api/characters/route.ts',
+    'nextjs_space/src/proxy.ts',
+    'nextjs_space/lib/access.ts',
+    'nextjs_space/prisma/schema.prisma',
+  ],
+  discover_zero_cards: [
+    'nextjs_space/app/api/characters/route.ts',
+    'nextjs_space/prisma/schema.prisma',
+  ],
+  api_health: [
+    'nextjs_space/app/api/health/route.ts',
+    'nextjs_space/lib/db.ts',
+    'nextjs_space/prisma/schema.prisma',
+  ],
+  api_live: [
+    'nextjs_space/app/api/live/route.ts',
+  ],
+  profile_path: [
+    'nextjs_space/app/api/health/route.ts',
+    'nextjs_space/app/api/profile/route.ts',
+  ],
+  profile_page: [
+    'nextjs_space/app/u/[username]/page.tsx',
+    'nextjs_space/lib/access.ts',
+  ],
+  supabase_rest: [
+    'nextjs_space/.env / Vercel env (NEXT_PUBLIC_SUPABASE_URL, anon key)',
+    'nextjs_space/lib/supabase*.ts',
+  ],
+  database: [
+    'nextjs_space/prisma/schema.prisma',
+    'DATABASE_URL / DIRECT_URL secrets',
+  ],
+};
 
 function appRoot(): string {
   const here = process.cwd();
@@ -76,17 +146,36 @@ function appRoot(): string {
   return here;
 }
 
+function repoRoot(): string {
+  const root = appRoot();
+  const parent = path.dirname(root);
+  if (path.basename(root) === 'nextjs_space' && fs.existsSync(path.join(parent, '.git'))) {
+    return parent;
+  }
+  if (fs.existsSync(path.join(root, '.git'))) return root;
+  return parent;
+}
+
 function parseArgs(argv: string[]) {
   return {
     json: argv.includes('--json'),
     dryRun: argv.includes('--dry-run'),
     smsTest: argv.includes('--sms-test'),
     updateBaseline: argv.includes('--update-baseline'),
+    noHeal: argv.includes('--no-heal'),
   };
 }
 
 function baselinePath(): string {
   return path.join(process.cwd(), 'data', 'watchdog-baseline.json');
+}
+
+function healLogPath(): string {
+  return path.join(process.cwd(), 'data', 'watchdog-heal-log.jsonl');
+}
+
+function escalationPath(): string {
+  return path.join(repoRoot(), 'watchdog-escalation.md');
 }
 
 async function readBaseline(): Promise<Baseline> {
@@ -143,6 +232,10 @@ async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }
   return { value, ms: Date.now() - started };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function clipPayload(value: unknown, limit = 280): string {
   try {
     const raw = typeof value === 'string' ? value : JSON.stringify(value);
@@ -193,6 +286,23 @@ function jsonShapeOk(body: unknown, expect: JsonExpect): { ok: boolean; reason: 
   return { ok: true, reason: 'json' };
 }
 
+function metaStatus(result: CheckResult): string | number {
+  const s = result.meta?.status;
+  if (typeof s === 'number' || typeof s === 'string') return s;
+  return 'unknown';
+}
+
+/** Tier-1 candidates: transient gateway/runtime errors worth autonomous recovery. */
+function isTransientProbeFailure(result: CheckResult): boolean {
+  if (result.status !== 'fail') return false;
+  const status = metaStatus(result);
+  if (status === 'timeout' || status === 'network_error') return true;
+  if (typeof status === 'number' && TRANSIENT_HTTP.has(status)) return true;
+  // Cold/truncated responses sometimes look like malformed JSON — allow one heal cycle.
+  if (/malformed JSON/i.test(result.detail)) return true;
+  return false;
+}
+
 /**
  * Probe one live API path. Critical failure on HTTP 500, timeout, or malformed JSON
  * when HTTP 200 was required. Always logs status + path + error payload in detail/meta.
@@ -203,7 +313,7 @@ async function probeEndpoint(baseUrl: string, spec: ProbeSpec): Promise<CheckRes
   const timeoutMs = spec.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const headers = {
     Accept: 'application/json',
-    'User-Agent': 'NexusWatchdog/2.0',
+    'User-Agent': 'NexusWatchdog/3.0',
   };
 
   try {
@@ -306,9 +416,257 @@ async function probeEndpoint(baseUrl: string, spec: ProbeSpec): Promise<CheckRes
   }
 }
 
+/** Safe runtime recovery: cache-bust GET to wake a cold Next.js route. */
+async function rewarmRoute(baseUrl: string, routePath: string): Promise<string> {
+  const pathWithQuery = routePath.startsWith('/') ? routePath : `/${routePath}`;
+  const sep = pathWithQuery.includes('?') ? '&' : '?';
+  const url = `${baseUrl}${pathWithQuery}${sep}_watchdog_warm=${Date.now()}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        'User-Agent': 'NexusWatchdog/3.0-rewarm',
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(25_000),
+    });
+    await res.text().catch(() => '');
+    return `rewarm ${pathWithQuery} → HTTP ${res.status}`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `rewarm ${pathWithQuery} failed: ${message.slice(0, 120)}`;
+  }
+}
+
+async function verifySupabaseConnectivity(): Promise<{ ok: boolean; action: string }> {
+  const origin = supabaseProjectUrl();
+  const anon = supabaseAnonKey();
+  if (!origin || !anon) {
+    return { ok: true, action: 'supabase skip (URL/anon unset)' };
+  }
+  try {
+    const res = await fetch(`${origin}/rest/v1/`, {
+      method: 'GET',
+      headers: {
+        apikey: anon,
+        Authorization: `Bearer ${anon}`,
+        Accept: 'application/json',
+        'User-Agent': 'NexusWatchdog/3.0-heal',
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    await res.text().catch(() => '');
+    const ok = res.status < 500;
+    return {
+      ok,
+      action: `supabase REST HTTP ${res.status}${ok ? '' : ' (still unhealthy)'}`,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, action: `supabase REST failed: ${message.slice(0, 120)}` };
+  }
+}
+
+async function appendHealLog(incident: HealIncident): Promise<void> {
+  await fsp.mkdir(path.dirname(healLogPath()), { recursive: true });
+  await fsp.appendFile(healLogPath(), `${JSON.stringify(incident)}\n`, 'utf8');
+}
+
+function suspectedFilesFor(checkId: string, endpoint: string): string[] {
+  const mapped = SUSPECTED_FILES[checkId];
+  if (mapped?.length) return mapped;
+  if (endpoint.includes('/api/characters')) return SUSPECTED_FILES.discover_api;
+  if (endpoint.includes('/api/health')) return SUSPECTED_FILES.api_health;
+  if (endpoint.includes('/api/live')) return SUSPECTED_FILES.api_live;
+  return [
+    'nextjs_space/app/api/**',
+    'nextjs_space/src/proxy.ts',
+    'nextjs_space/lib/access.ts',
+  ];
+}
+
+function buildCursorPrompt(escalations: EscalationRecord[]): string {
+  const blocks = escalations.map((e, i) => {
+    return `### Failure ${i + 1}: \`${e.checkId}\`
+- **Endpoint:** \`${e.endpoint}\`
+- **Status:** \`${e.statusCode}\`
+- **Detail:** ${e.detail}
+- **Response body:** \`\`\`
+${e.responseBody || '(empty)'}
+\`\`\`
+- **Recovery already attempted:** ${e.recoveryAttempted.join('; ') || '(none)'}
+- **Suspected files:** ${e.suspectedFiles.map((f) => `\`${f}\``).join(', ')}`;
+  }).join('\n\n');
+
+  return `Fix these persistent Nexus AI production API failures. Do NOT guess — inspect the live error payloads and the suspected files, then patch only what is broken. Do not push blind commits; verify with \`npm run build\` in \`nextjs_space\` and a live probe of the failing endpoints before committing.
+
+## Persistent watchdog failures (Tier 2 — self-heal exhausted)
+
+${blocks}
+
+## Acceptance criteria
+1. Each listed endpoint returns HTTP 200 with well-formed JSON (Discover = array of cards).
+2. \`npm run build\` in \`nextjs_space\` exits 0.
+3. Re-run: \`npm run watchdog:dry\` against production and confirm RESULT: OK.
+4. Commit and push only after local verification.`;
+}
+
+async function writeEscalationFile(
+  escalations: EscalationRecord[],
+  cursorPrompt: string,
+): Promise<string> {
+  const file = escalationPath();
+  const body = `# Nexus Watchdog Escalation
+
+**Generated:** ${new Date().toISOString()}
+**Policy:** Tier-2 persistent failure — **no autonomous source edits or blind pushes to main.**
+
+## Failures
+
+${escalations.map((e) => `### \`${e.checkId}\`
+| Field | Value |
+| --- | --- |
+| Timestamp | ${e.timestamp} |
+| Endpoint | \`${e.endpoint}\` |
+| Status code | \`${e.statusCode}\` |
+| Detail | ${e.detail.replace(/\|/g, '\\|')} |
+| Suspected files | ${e.suspectedFiles.map((f) => `\`${f}\``).join(', ')} |
+| Recovery attempted | ${e.recoveryAttempted.join('; ') || '(none)'} |
+
+**Response body:**
+
+\`\`\`json
+${e.responseBody || '(empty)'}
+\`\`\`
+`).join('\n')}
+
+## Ready-to-paste Cursor prompt
+
+\`\`\`
+${cursorPrompt}
+\`\`\`
+`;
+  await fsp.writeFile(file, body, 'utf8');
+  return file;
+}
+
+/**
+ * Tier 1 wrapper: probe → on transient failure, backoff + rewarm + supabase + re-probe.
+ * Returns healed (status=healed) or final fail for Tier 2 escalation.
+ */
+async function probeWithSelfHeal(
+  baseUrl: string,
+  spec: ProbeSpec,
+  opts: { enableHeal: boolean },
+): Promise<{ result: CheckResult; heal?: HealIncident; escalate?: EscalationRecord }> {
+  const first = await probeEndpoint(baseUrl, spec);
+  if (first.status === 'pass' || first.status === 'warn' || first.status === 'skip') {
+    return { result: first };
+  }
+
+  const allowHeal = opts.enableHeal && (spec.selfHeal !== false) && isTransientProbeFailure(first);
+  if (!allowHeal) {
+    if (first.status === 'fail' && first.critical) {
+      const endpoint = String(first.meta?.endpoint ?? spec.path);
+      return {
+        result: first,
+        escalate: {
+          timestamp: new Date().toISOString(),
+          endpoint,
+          checkId: spec.id,
+          statusCode: metaStatus(first),
+          responseBody: clipPayload(first.meta?.payload ?? first.detail, 1200),
+          detail: first.detail,
+          suspectedFiles: suspectedFilesFor(spec.id, endpoint),
+          recoveryAttempted: ['(self-heal skipped — non-transient or --no-heal)'],
+        },
+      };
+    }
+    return { result: first };
+  }
+
+  const endpoint = String(first.meta?.endpoint ?? spec.path);
+  const recoveryActions: string[] = [
+    `initial: ${first.detail}`,
+  ];
+  let last = first;
+
+  for (let attempt = 0; attempt < SELF_HEAL_ATTEMPTS; attempt++) {
+    const backoff = SELF_HEAL_BACKOFF_MS[Math.min(attempt, SELF_HEAL_BACKOFF_MS.length - 1)];
+    await sleep(backoff);
+    recoveryActions.push(`backoff ${backoff}ms (attempt ${attempt + 1}/${SELF_HEAL_ATTEMPTS})`);
+
+    // Re-warm health (DB path) then the failing route itself.
+    recoveryActions.push(await rewarmRoute(baseUrl, '/api/health'));
+    recoveryActions.push(await rewarmRoute(baseUrl, '/api/live'));
+    recoveryActions.push(await rewarmRoute(baseUrl, spec.path));
+
+    const supabase = await verifySupabaseConnectivity();
+    recoveryActions.push(supabase.action);
+
+    last = await probeEndpoint(baseUrl, spec);
+    if (last.status === 'pass') {
+      const heal: HealIncident = {
+        timestamp: new Date().toISOString(),
+        endpoint,
+        checkId: spec.id,
+        initialError: first.detail,
+        initialStatus: metaStatus(first),
+        recoveryActions,
+        verifiedResult: `200 OK — ${last.detail}`,
+      };
+      await appendHealLog(heal).catch(() => undefined);
+      return {
+        result: {
+          ...last,
+          status: 'healed',
+          detail: `AUTO-HEALED after ${attempt + 1} attempt(s): was "${first.detail}" → now ${last.detail}`,
+          meta: {
+            ...last.meta,
+            healed: true,
+            initialStatus: metaStatus(first),
+            initialError: first.detail,
+            recoveryActions,
+          },
+        },
+        heal,
+      };
+    }
+    recoveryActions.push(`reprobe still failing: ${last.detail}`);
+  }
+
+  const escalate: EscalationRecord = {
+    timestamp: new Date().toISOString(),
+    endpoint,
+    checkId: spec.id,
+    statusCode: metaStatus(last),
+    responseBody: clipPayload(last.meta?.payload ?? last.detail, 1200),
+    detail: last.detail,
+    suspectedFiles: suspectedFilesFor(spec.id, endpoint),
+    recoveryAttempted: recoveryActions,
+  };
+
+  return {
+    result: {
+      ...last,
+      detail: `PERSISTENT after self-heal: ${last.detail}`,
+      meta: {
+        ...last.meta,
+        healed: false,
+        initialStatus: metaStatus(first),
+        initialError: first.detail,
+        recoveryActions,
+        escalated: true,
+      },
+    },
+    escalate,
+  };
+}
+
 async function checkDatabase(prisma: PrismaClient): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
-  // Empty / missing DATABASE_URL is a CI configuration gap, not a live outage.
   if (!process.env.DATABASE_URL?.trim()) {
     out.push({
       id: 'database',
@@ -426,10 +784,23 @@ async function checkCardCountDrop(counts: CheckResult): Promise<CheckResult> {
   };
 }
 
-async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
+async function checkLiveApis(
+  baseUrl: string,
+  opts: { enableHeal: boolean },
+): Promise<{ checks: CheckResult[]; heals: HealIncident[]; escalations: EscalationRecord[] }> {
   const out: CheckResult[] = [];
+  const heals: HealIncident[] = [];
+  const escalations: EscalationRecord[] = [];
 
-  const discover = await probeEndpoint(baseUrl, {
+  const pushProbe = async (spec: ProbeSpec) => {
+    const { result, heal, escalate } = await probeWithSelfHeal(baseUrl, spec, opts);
+    out.push(result);
+    if (heal) heals.push(heal);
+    if (escalate) escalations.push(escalate);
+    return result;
+  };
+
+  const discover = await pushProbe({
     id: 'discover_api',
     path: '/api/characters?nsfw=false',
     critical: true,
@@ -443,9 +814,8 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
       };
     },
   });
-  out.push(discover);
 
-  if (discover.status === 'pass') {
+  if (discover.status === 'pass' || discover.status === 'healed') {
     const visible = Number((discover.meta as { visible?: number } | undefined)?.visible ?? 0);
     out.push({
       id: 'discover_zero_cards',
@@ -460,6 +830,18 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
         payload: `visible=${visible}`,
       },
     });
+    if (visible === 0) {
+      escalations.push({
+        timestamp: new Date().toISOString(),
+        endpoint: '/api/characters?nsfw=false',
+        checkId: 'discover_zero_cards',
+        statusCode: 200,
+        responseBody: '[]',
+        detail: 'Discover returned an empty catalog array.',
+        suspectedFiles: suspectedFilesFor('discover_zero_cards', '/api/characters'),
+        recoveryAttempted: ['(catalog empty is a data/query bug — not a cold-start heal)'],
+      });
+    }
   } else if (discover.status === 'fail') {
     out.push({
       id: 'discover_zero_cards',
@@ -470,7 +852,7 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
     });
   }
 
-  out.push(await probeEndpoint(baseUrl, {
+  await pushProbe({
     id: 'api_health',
     path: '/api/health',
     critical: true,
@@ -486,9 +868,8 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
         meta: { health: obj },
       };
     },
-  }));
+  });
 
-  // Back-compat alias used by older reports / SMS fingerprints.
   const health = out.find((c) => c.id === 'api_health');
   if (health) {
     out.push({
@@ -498,7 +879,7 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
     });
   }
 
-  out.push(await probeEndpoint(baseUrl, {
+  await pushProbe({
     id: 'api_live',
     path: '/api/live',
     critical: true,
@@ -514,7 +895,7 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
         meta: { live: obj },
       };
     },
-  }));
+  });
 
   const probeUser = process.env.NEXUS_HEALTHCHECK_PROFILE_USER?.trim();
   if (probeUser) {
@@ -522,21 +903,81 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
       const profilePath = `/u/${encodeURIComponent(probeUser)}`;
       const { value: res, ms } = await timed(() =>
         fetch(`${baseUrl}${profilePath}`, {
-          headers: { 'User-Agent': 'NexusWatchdog/2.0' },
+          headers: { 'User-Agent': 'NexusWatchdog/3.0' },
           redirect: 'manual',
           signal: AbortSignal.timeout(25_000),
         }),
       );
       const text = await res.text().catch(() => '');
-      if (res.status >= 500) {
-        out.push({
-          id: 'profile_page',
-          status: 'fail',
-          critical: true,
-          detail: `HTTP ${res.status} on ${profilePath} — payload: ${clipPayload(text)}`,
-          ms,
-          meta: { endpoint: profilePath, status: res.status, payload: clipPayload(text) },
-        });
+      if (res.status >= 500 || TRANSIENT_HTTP.has(res.status)) {
+        // Tier-1: rewarm + retry profile HTML once or twice
+        const actions: string[] = [`initial HTTP ${res.status}`];
+        let finalStatus = res.status;
+        let finalText = text;
+        let healed = false;
+        if (opts.enableHeal) {
+          for (let i = 0; i < SELF_HEAL_ATTEMPTS; i++) {
+            const backoff = SELF_HEAL_BACKOFF_MS[Math.min(i, SELF_HEAL_BACKOFF_MS.length - 1)];
+            await sleep(backoff);
+            actions.push(`backoff ${backoff}ms`);
+            actions.push(await rewarmRoute(baseUrl, profilePath));
+            const retry = await fetch(`${baseUrl}${profilePath}`, {
+              headers: { 'User-Agent': 'NexusWatchdog/3.0' },
+              redirect: 'manual',
+              signal: AbortSignal.timeout(25_000),
+            });
+            finalText = await retry.text().catch(() => '');
+            finalStatus = retry.status;
+            if (finalStatus < 500 && finalStatus !== 404) {
+              healed = true;
+              break;
+            }
+            if (finalStatus === 404 && i === SELF_HEAL_ATTEMPTS - 1) break;
+            if (!TRANSIENT_HTTP.has(finalStatus) && finalStatus < 500) break;
+          }
+        }
+        if (healed) {
+          const heal: HealIncident = {
+            timestamp: new Date().toISOString(),
+            endpoint: profilePath,
+            checkId: 'profile_page',
+            initialError: `HTTP ${res.status}`,
+            initialStatus: res.status,
+            recoveryActions: actions,
+            verifiedResult: `HTTP ${finalStatus}`,
+          };
+          heals.push(heal);
+          await appendHealLog(heal).catch(() => undefined);
+          out.push({
+            id: 'profile_page',
+            status: 'healed',
+            critical: false,
+            detail: `AUTO-HEALED profile page: was HTTP ${res.status} → now HTTP ${finalStatus}`,
+            ms,
+            meta: { endpoint: profilePath, status: finalStatus, healed: true },
+          });
+        } else if (finalStatus >= 500 || finalStatus === 404) {
+          out.push({
+            id: 'profile_page',
+            status: 'fail',
+            critical: finalStatus >= 500,
+            detail: `PERSISTENT HTTP ${finalStatus} on ${profilePath} — payload: ${clipPayload(finalText)}`,
+            ms,
+            meta: { endpoint: profilePath, status: finalStatus, payload: clipPayload(finalText) },
+          });
+          if (finalStatus >= 500) {
+            escalations.push({
+              timestamp: new Date().toISOString(),
+              endpoint: profilePath,
+              checkId: 'profile_page',
+              statusCode: finalStatus,
+              responseBody: clipPayload(finalText, 1200),
+              detail: `HTTP ${finalStatus} on profile page after self-heal`,
+              suspectedFiles: suspectedFilesFor('profile_page', profilePath),
+              recoveryAttempted: actions,
+            });
+          }
+        }
       } else {
         out.push({
           id: 'profile_page',
@@ -565,7 +1006,7 @@ async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
     }
   }
 
-  return out;
+  return { checks: out, heals, escalations };
 }
 
 async function checkSupabaseRest(): Promise<CheckResult> {
@@ -598,7 +1039,7 @@ async function checkSupabaseRest(): Promise<CheckResult> {
           apikey: anon,
           Authorization: `Bearer ${anon}`,
           Accept: 'application/json',
-          'User-Agent': 'NexusWatchdog/2.0',
+          'User-Agent': 'NexusWatchdog/3.0',
         },
         signal: AbortSignal.timeout(15_000),
       }),
@@ -615,7 +1056,6 @@ async function checkSupabaseRest(): Promise<CheckResult> {
         meta: { endpoint: `${origin}${endpoint}`, status: res.status, payload },
       };
     }
-    // PostgREST root often returns 200 HTML/JSON or 404 OpenAPI — treat 2xx/404 as reachable.
     if (res.status >= 200 && res.status < 500) {
       return {
         id: 'supabase_rest',
@@ -656,14 +1096,33 @@ function printHuman(report: Report): void {
   console.log(`Nexus watchdog @ ${report.time}`);
   console.log(`baseUrl=${report.baseUrl ?? '(none — DB / Supabase checks only)'}`);
   for (const check of report.checks) {
-    const mark = check.status === 'pass' ? 'PASS' : check.status === 'warn' ? 'WARN' : check.status === 'skip' ? 'SKIP' : 'FAIL';
+    const mark =
+      check.status === 'pass' ? 'PASS'
+        : check.status === 'healed' ? 'HEALED'
+          : check.status === 'warn' ? 'WARN'
+            : check.status === 'skip' ? 'SKIP'
+              : 'FAIL';
     const crit = check.critical && check.status === 'fail' ? ' [CRITICAL]' : '';
-    const metaStatus = check.meta && 'status' in check.meta ? ` status=${String(check.meta.status)}` : '';
+    const metaStatusStr = check.meta && 'status' in check.meta ? ` status=${String(check.meta.status)}` : '';
     const metaPath = check.meta && 'endpoint' in check.meta ? ` endpoint=${String(check.meta.endpoint)}` : '';
-    console.log(`  [${mark}]${crit} ${check.id}: ${check.detail}${check.ms != null ? ` (${check.ms}ms)` : ''}${metaPath}${metaStatus}`);
+    console.log(`  [${mark}]${crit} ${check.id}: ${check.detail}${check.ms != null ? ` (${check.ms}ms)` : ''}${metaPath}${metaStatusStr}`);
+  }
+  if (report.heals?.length) {
+    console.log(`  Auto-healed incidents: ${report.heals.length}`);
+    for (const h of report.heals) {
+      console.log(`    • ${h.timestamp} ${h.endpoint} initial=${h.initialStatus} → ${h.verifiedResult}`);
+    }
+  }
+  if (report.escalations?.length) {
+    console.log(`  Tier-2 escalations: ${report.escalations.length} (see ${escalationPath()})`);
   }
   if (report.sms) {
     console.log(`  SMS: sent=${report.sms.sent} skipped=${report.sms.skipped} reason=${report.sms.reason}`);
+  }
+  if (report.cursorPrompt) {
+    console.log('\n========== READY-TO-PASTE CURSOR PROMPT ==========');
+    console.log(report.cursorPrompt);
+    console.log('========== END CURSOR PROMPT ==========');
   }
   console.log(report.critical ? 'RESULT: CRITICAL' : report.ok ? 'RESULT: OK' : 'RESULT: DEGRADED');
 }
@@ -684,7 +1143,10 @@ async function main(): Promise<void> {
 
   const prisma = new PrismaClient();
   const checks: CheckResult[] = [];
+  const heals: HealIncident[] = [];
+  const escalations: EscalationRecord[] = [];
   const baseUrl = siteBaseUrl();
+  const enableHeal = !args.noHeal;
 
   try {
     const dbChecks = await checkDatabase(prisma);
@@ -706,7 +1168,10 @@ async function main(): Promise<void> {
     checks.push(await checkSupabaseRest());
 
     if (baseUrl) {
-      checks.push(...await checkLiveApis(baseUrl));
+      const live = await checkLiveApis(baseUrl, { enableHeal });
+      checks.push(...live.checks);
+      heals.push(...live.heals);
+      escalations.push(...live.escalations);
     } else {
       checks.push({
         id: 'discover_api',
@@ -737,13 +1202,43 @@ async function main(): Promise<void> {
     await prisma.$disconnect();
   }
 
+  // DB critical failures also escalate (no code mutation).
+  for (const c of checks) {
+    if (c.critical && c.status === 'fail' && !escalations.some((e) => e.checkId === c.id)) {
+      if (c.id === 'database' || c.id === 'card_count_drop' || c.id === 'supabase_rest') {
+        escalations.push({
+          timestamp: new Date().toISOString(),
+          endpoint: String(c.meta?.endpoint ?? c.id),
+          checkId: c.id,
+          statusCode: metaStatus(c),
+          responseBody: clipPayload(c.meta?.payload ?? c.detail, 1200),
+          detail: c.detail,
+          suspectedFiles: suspectedFilesFor(c.id, String(c.meta?.endpoint ?? '')),
+          recoveryAttempted: ['(DB/Supabase check — not an HTTP route heal)'],
+        });
+      }
+    }
+  }
+
   const alertable = checks.filter((c) => c.critical && c.status === 'fail');
+  const healthyStatuses: CheckStatus[] = ['pass', 'skip', 'warn', 'healed'];
+  let cursorPrompt: string | undefined;
+
+  if (escalations.length > 0) {
+    cursorPrompt = buildCursorPrompt(escalations);
+    const file = await writeEscalationFile(escalations, cursorPrompt);
+    console.log(`Wrote Tier-2 escalation: ${file}`);
+  }
+
   const report: Report = {
-    ok: checks.every((c) => c.status === 'pass' || c.status === 'skip' || c.status === 'warn'),
+    ok: checks.every((c) => healthyStatuses.includes(c.status)),
     critical: alertable.length > 0,
     time: new Date().toISOString(),
     baseUrl,
     checks,
+    heals: heals.length ? heals : undefined,
+    escalations: escalations.length ? escalations : undefined,
+    cursorPrompt,
   };
 
   if (report.critical && !args.dryRun) {
@@ -760,8 +1255,8 @@ async function main(): Promise<void> {
       .slice(0, 900);
     const sms = await sendCriticalSmsAlert({
       kind: 'healthcheck_critical',
-      summary,
-      detail: `checks=${alertable.map((c) => c.id).join(',')}`,
+      summary: `Tier2 escalate: ${summary}`,
+      detail: `checks=${alertable.map((c) => c.id).join(',')} escalation=${escalationPath()}`,
       fingerprint: `critical:${alertable.map((c) => c.id).sort().join('+')}`,
     });
     report.sms = { sent: sms.sent, skipped: sms.skipped, reason: sms.reason };
