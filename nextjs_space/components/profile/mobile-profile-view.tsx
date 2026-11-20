@@ -10,6 +10,8 @@ import { toast } from 'sonner';
 import { uploadProfileAudio } from '@/lib/upload-client';
 import type { ProfileCharacter, PublicProfileData } from '@/components/profile/public-profile';
 import { CommentThread } from '@/components/comments/comment-thread';
+import { CardCoverImage } from '@/components/gallery/card-cover-image';
+import { mediaVersionUrl } from '@/lib/media-src';
 
 const BADGE_STYLE: Record<ProfileBadge['id'], { icon: typeof Crown; cls: string }> = {
   ADMIN: { icon: Crown, cls: 'bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-amber-950' },
@@ -163,12 +165,24 @@ export function MobileProfileView({ profile, pinned, creations, canEditCard, own
 }
 
 function MobileCard({ item, canEdit }: { item: ProfileCharacter; canEdit: boolean }) {
-  const image = item.avatar || item.banner;
+  const [imageError, setImageError] = useState(false);
+  const raw = String(item.avatar || item.banner || '').trim();
+  const cover = !imageError && raw ? mediaVersionUrl(raw) : '';
   return (
     <article className="overflow-hidden rounded-2xl bg-card ring-1 ring-white/10">
       <Link href={`/characters/${item.id}`} className="block">
-        <div className="aspect-[4/3] bg-secondary">
-          {image ? <img src={image} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : null}
+        <div className="relative aspect-[3/4] bg-secondary">
+          {cover ? (
+            <CardCoverImage
+              src={cover}
+              alt={`${item.name} card image`}
+              imgKey={raw}
+              className="absolute inset-0 h-full w-full"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40" />
+          )}
         </div>
         <p className="truncate px-2.5 pt-2 text-sm font-semibold">{item.name}</p>
         <p className="truncate px-2.5 pb-2 text-xs text-muted-foreground">{item.title || 'Open card'}</p>

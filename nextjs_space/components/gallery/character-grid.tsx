@@ -28,9 +28,8 @@ export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdm
       <div className={GRID}>
         {Array.from({ length: 10 }).map((_, i) => (
           <div key={i} className="rounded-2xl bg-card overflow-hidden">
-            <Skeleton className="aspect-[16/10] rounded-none" />
+            <Skeleton className="aspect-[3/4] rounded-none" />
             <div className="p-3 space-y-2">
-              <Skeleton className="h-12 w-12 rounded-full -mt-8" />
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-3 w-full" />
               <Skeleton className="h-3 w-4/5" />

@@ -9,6 +9,8 @@ import { CharacterAudioPlayer } from '@/components/character/CharacterAudioPlaye
 import { mediaVersionUrl } from '@/lib/media-src';
 import { cn } from '@/lib/utils';
 import { BoxGlitchLayers } from '@/components/profile/box-glitch';
+import { CardCoverImage } from '@/components/gallery/card-cover-image';
+
 interface CharacterCardProps {
   id: string;
   name: string;
@@ -36,6 +38,8 @@ interface CharacterCardProps {
   /** Owner or admin view of a card visitors without NSFW access cannot see. */
   hiddenFromPublic?: boolean;
   coverBlur?: number;
+  /** CSS object-position for portrait covers. Defaults to top-center. */
+  coverFocus?: string;
   frameStyle?: CSSProperties;
   className?: string;
   glitch?: boolean;
@@ -52,12 +56,12 @@ export function cardAudioTrack(item?: { audioUrl?: string | null; audio_url?: st
   return /^(https?:|\/)/i.test(song) ? song : '';
 }
 
-export function CharacterCard({ id, name, title, summary, scenario, creator, tags, avatar, banner, updatedAt, nsfw, chatCount = 0, canEdit = false, showVisibility = false, visibility, moderated, onTagClick, audioUrl, audio_url, themeSong, song_id, hiddenFromPublic = false, coverBlur = 0, frameStyle, className, glitch = false }: CharacterCardProps) {
+export function CharacterCard({ id, name, title, summary, scenario, creator, tags, avatar, banner, updatedAt, nsfw, chatCount = 0, canEdit = false, showVisibility = false, visibility, moderated, onTagClick, audioUrl, audio_url, themeSong, song_id, hiddenFromPublic = false, coverBlur = 0, coverFocus = '50% 0%', frameStyle, className, glitch = false }: CharacterCardProps) {
   const [imageError, setImageError] = useState(false);
   const raw = String(avatar || banner || '').trim();
   const savedStamp = updatedAt instanceof Date ? updatedAt.toISOString() : updatedAt ? String(updatedAt) : '';
   const version = savedStamp || raw;
-  const cover = !imageError ? mediaVersionUrl(raw, version) : '';
+  const cover = !imageError && raw ? mediaVersionUrl(raw, version) : '';
   // Card preview is a short plain-text excerpt of the rich bio (HTML/Markdown stripped).
   const track = cardAudioTrack({ audioUrl, audio_url, themeSong, song_id });
   const blurb = htmlToPlainText(summary || scenario || '').replace(/[#*_`>]|!?\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
@@ -67,21 +71,22 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
       {glitch && <BoxGlitchLayers />}
       <Link href={`/characters/${id}`} className="absolute inset-0 z-10 touch-manipulation" aria-label={`View ${name}`} />
 
-      {/* Banner */}
-      <div className="relative aspect-[16/10] bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40 overflow-hidden">
-        {cover && (
-          <img
-            key={`${raw}-${version}`}
+      {/* Portrait-friendly frame; CardCoverImage adapts cover-top vs contain for wide sheets. */}
+      <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
+        {cover ? (
+          <CardCoverImage
             src={cover}
             alt={`${name} card image`}
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 h-full w-full object-cover object-center"
-            style={{ filter: coverBlur > 0 ? `blur(${coverBlur}px)` : undefined }}
+            imgKey={`${raw}-${version}`}
+            focus={coverFocus}
+            blurPx={coverBlur}
+            className="absolute inset-0 h-full w-full"
             onError={() => setImageError(true)}
           />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-card via-card/20 to-transparent" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-card via-card/15 to-transparent" />
         <span
           className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white"
           aria-label={`${chatCount} chats`}

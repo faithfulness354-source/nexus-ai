@@ -9,6 +9,8 @@ import { AppHeader } from '@/components/layout/app-header';
 import { RichContent } from '@/components/editor/rich-content';
 import { CommentThread } from '@/components/comments/comment-thread';
 import { withVisualColumnRetry } from '@/lib/ensure-visual-columns';
+import { CardCoverImage } from '@/components/gallery/card-cover-image';
+import { mediaVersionUrl } from '@/lib/media-src';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,15 +36,26 @@ export default async function CharacterDetailPage({ params }: { params: Promise<
   if ((character.nsfw || characterBrowseImpliesNsfw(character)) && !(await adultCardsEnabled(viewer).catch(() => false))) notFound();
   const canEdit = !!viewer && canEditCharacter(viewer, character);
   const tags = String(character.tags ?? '').split(',').map((tag) => tag.trim()).filter(Boolean);
-  const cover = character.banner || character.avatar;
+  const rawCover = String(character.banner || character.avatar || '').trim();
+  const cover = rawCover
+    ? mediaVersionUrl(rawCover, character.updatedAt?.toISOString?.() ?? character.updatedAt)
+    : '';
 
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
       <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-16">
         <article className="overflow-hidden rounded-2xl bg-card ring-1 ring-white/10">
-          <div className="relative aspect-[16/7] bg-secondary">
-            {cover ? <img src={cover} alt="" className="h-full w-full object-cover" /> : null}
+          <div className="relative aspect-[3/4] max-h-[28rem] bg-secondary sm:aspect-[16/10] sm:max-h-none">
+            {cover ? (
+              <CardCoverImage
+                src={cover}
+                alt={`${character.name} cover`}
+                className="absolute inset-0 h-full w-full"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-violet-900/60 via-slate-900 to-fuchsia-900/40" />
+            )}
           </div>
           <div className="space-y-3 p-5">
             <h1 className="font-display text-3xl font-bold">{character.name}</h1>
