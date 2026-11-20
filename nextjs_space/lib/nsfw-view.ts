@@ -41,6 +41,8 @@ export function subscribeNsfwView(listener: () => void) {
 export function useNsfwView(): boolean {
   const [on, setOn] = useState(false);
   useEffect(() => {
+    // Hydrate from storage once so Discover does not flash empty while access loads.
+    if (!enabled && readStoredNsfwView()) enabled = true;
     const read = () => setOn(enabled);
     read();
     return subscribeNsfwView(read);

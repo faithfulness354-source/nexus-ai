@@ -20,12 +20,38 @@ export function GalleryPage() {
   const [personas, setPersonas] = useState<Array<{ id: string; name: string; isDefault?: boolean }>>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [feedError, setFeedError] = useState('');
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [selectedTag, setSelectedTag] = useState('');
   const nsfwEnabled = useNsfwView();
   const [importOpen, setImportOpen] = useState(false);
   const { status: access } = useAccess();
+
+  function parseCharacterList(res: Response, data: unknown): { rows: any[]; error: string } {
+    const degraded = res.headers.get('X-Nexus-Characters-Degraded') === '1';
+    const headerErr = res.headers.get('X-Nexus-Characters-Error') || '';
+    if (Array.isArray(data)) {
+      return {
+        rows: data,
+        error: degraded && data.length === 0
+          ? (headerErr || 'Discover could not load characters from the database.')
+          : (degraded ? headerErr : ''),
+      };
+    }
+    if (data && typeof data === 'object') {
+      const obj = data as { characters?: unknown; error?: unknown; detail?: unknown };
+      const rows = Array.isArray(obj.characters) ? obj.characters : [];
+      const error = typeof obj.error === 'string' && obj.error
+        ? obj.error
+        : (typeof obj.detail === 'string' ? obj.detail : (headerErr || (!res.ok ? `Catalog request failed (${res.status})` : '')));
+      return { rows, error };
+    }
+    return {
+      rows: [],
+      error: !res.ok ? `Catalog request failed (${res.status})` : (headerErr || 'Character list response was invalid.'),
+    };
+  }
   // 'mine' = My Characters (owned by the viewer); deep-linkable via ?view=mine.
   // Tab stays 'all' until the URL is read so the server and client markup match.
   const [view, setView] = useState<'all' | 'mine'>('all');
@@ -75,21 +101,26 @@ export function GalleryPage() {
     mineParams.set('mine', 'true');
     if (refresh) mineParams.set('refresh', '1');
     try {
+      const errors: string[] = [];
       const jobs: Promise<void>[] = [
         fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' })
           .then(async (res) => {
-            const data = res.ok ? await res.json().catch(() => null) : null;
+            const data = await res.json().catch(() => null);
             if (seq !== loadSeq.current) return;
-            setCommunity(Array.isArray(data) ? data : []);
+            const parsed = parseCharacterList(res, data);
+            setCommunity(parsed.rows);
+            if (parsed.error) errors.push(parsed.error);
           }),
       ];
       if (signedIn) {
         jobs.push(
           fetch(`/api/characters?${mineParams.toString()}`, { cache: 'no-store' })
             .then(async (res) => {
-              const data = res.ok ? await res.json().catch(() => null) : null;
+              const data = await res.json().catch(() => null);
               if (seq !== loadSeq.current) return;
-              setLibrary(Array.isArray(data) ? data : []);
+              const parsed = parseCharacterList(res, data);
+              setLibrary(parsed.rows);
+              if (parsed.error && parsed.rows.length === 0) errors.push(`My cards: ${parsed.error}`);
             }),
           fetch(`/api/personas${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' })
             .then(async (res) => {
@@ -103,9 +134,11 @@ export function GalleryPage() {
         setPersonas([]);
       }
       await Promise.all(jobs);
-    } catch {
+      if (seq === loadSeq.current) setFeedError(errors.filter(Boolean)[0] || '');
+    } catch (err) {
       if (seq !== loadSeq.current) return;
       setCommunity([]);
+      setFeedError(err instanceof Error ? err.message : 'Could not reach the character catalog.');
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -212,6 +245,19 @@ export function GalleryPage() {
       </div>
 
       <div className="mx-auto max-w-7xl px-3 sm:px-6 pt-4 pb-16">
+        {feedError && (
+          <div className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <p className="font-semibold">Discover could not finish loading</p>
+            <p className="mt-1 break-words text-amber-100/80">{feedError}</p>
+            <button
+              type="button"
+              className="mt-2 text-xs font-semibold underline"
+              onClick={() => { void loadFeed(false, true); }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {access?.authenticated && (
           <div role="tablist" aria-label="Character view" className="mb-4 inline-flex rounded-full bg-card p-1 ring-1 ring-white/5 shadow-md shadow-black/20">
             {([['all', 'Browse Characters', Compass], ['mine', 'My Characters', UserRound]] as const).map(([v, label, Icon]) => (
@@ -287,6 +333,10 @@ export function GalleryPage() {
               onTagClick={setSelectedTag}
               viewerId={access?.userId}
               isAdmin={!!access?.isAdmin || !!access?.isCreatorAdmin}
+              emptyTitle={feedError ? 'Catalog unavailable' : 'No characters found'}
+              emptyHint={feedError
+                ? 'The server reported a catalog error. Retry, or check that published cards are Public and not moderated.'
+                : 'Try another search or tag — or publish a card as Public so it appears here.'}
             />
           </section>
         )}

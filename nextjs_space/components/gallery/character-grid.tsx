@@ -22,7 +22,8 @@ const GRID = 'grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-co
 
 export function CharacterGrid({ characters, loading, onTagClick, viewerId, isAdmin, emptyTitle, emptyHint }: CharacterGridProps) {
   const showNsfw = useNsfwView();
-  const visible = (characters ?? []).filter((character) => showNsfw || !character?.nsfw);
+  // API already gates NSFW by entitlement; keep a light client filter for preference toggles.
+  const visible = (characters ?? []).filter((character) => showNsfw || character?.nsfw !== true);
   if (loading) {
     return (
       <div className={GRID}>
