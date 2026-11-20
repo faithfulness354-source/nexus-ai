@@ -108,6 +108,17 @@ async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }
 
 async function checkDatabase(prisma: PrismaClient): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
+  // Empty / missing DATABASE_URL is a CI configuration gap, not a live outage.
+  // Fail soft so scheduled runs without secrets do not look like a production build break.
+  if (!process.env.DATABASE_URL?.trim()) {
+    out.push({
+      id: 'database',
+      status: 'skip',
+      critical: false,
+      detail: 'DATABASE_URL is unset — configure GitHub Actions / local secrets to enable DB checks.',
+    });
+    return out;
+  }
   try {
     const { ms } = await timed(() => prisma.$queryRaw`SELECT 1`);
     out.push({ id: 'database', status: 'pass', critical: true, detail: 'Database ping ok.', ms });
@@ -431,14 +442,14 @@ async function main(): Promise<void> {
       checks.push({
         id: 'discover_api',
         status: 'skip',
-        critical: true,
-        detail: 'Set NEXUS_HEALTHCHECK_BASE_URL or NEXT_PUBLIC_SITE_URL to probe HTTP endpoints.',
+        critical: false,
+        detail: 'Set NEXUS_HEALTHCHECK_BASE_URL or NEXT_PUBLIC_SITE_URL (GitHub secret / Vercel env) to probe HTTP endpoints.',
       });
       checks.push({
         id: 'profile_path',
         status: 'skip',
-        critical: true,
-        detail: 'HTTP base URL not configured.',
+        critical: false,
+        detail: 'HTTP base URL not configured — skipping live Discover/health probes.',
       });
     }
   } finally {

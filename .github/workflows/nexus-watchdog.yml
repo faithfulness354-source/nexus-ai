@@ -71,6 +71,10 @@ jobs:
           ALERT_SMS_COOLDOWN_FILE: ${{ runner.temp }}/nexus-watchdog-sms-cooldown.json
         run: |
           set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ] && [ -z "${NEXUS_HEALTHCHECK_BASE_URL:-}" ] && [ -z "${NEXT_PUBLIC_SITE_URL:-}" ]; then
+            echo "::warning::Watchdog secrets are not configured (DATABASE_URL / site URL). Skipping live probes — this is not a Vercel build failure."
+            echo "Add GitHub Actions secrets listed in docs/NEXUS_WATCHDOG.md to enable monitoring + SMS."
+          fi
           ARGS=(--json)
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.sms_test }}" = "true" ]; then
             npx tsx --require dotenv/config src/scripts/nexus-healthcheck.ts --sms-test

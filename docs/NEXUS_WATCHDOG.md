@@ -95,8 +95,27 @@ npm run watchdog:sms-test
 ## Cron / GitHub Actions
 
 - Workflow: `.github/workflows/nexus-watchdog.yml` (scheduled + manual `workflow_dispatch`).
-- Required Actions secrets: `DATABASE_URL`, `NEXUS_HEALTHCHECK_BASE_URL` (or `NEXT_PUBLIC_SITE_URL`), and Twilio/`ALERT_*` when you want live SMS.
+- When secrets are missing, checks **skip** (exit 0) instead of failing like a Vercel build break.
 - Cooldown file is ephemeral on Actions runners; fingerprint cooldown still limits bursts within a single job, and Twilio-side rate limits apply. For durable cooldown across runs, point `ALERT_SMS_COOLDOWN_FILE` at a persisted volume or use a longer `ALERT_SMS_COOLDOWN_MINUTES`.
+
+### Secrets to configure
+
+| Name | Where | Required for |
+| --- | --- | --- |
+| `DATABASE_URL` | **GitHub Actions** secrets (watchdog job) | DB ping + card counts |
+| `DIRECT_URL` | GitHub Actions (optional) | Prisma generate / direct DB |
+| `NEXUS_HEALTHCHECK_BASE_URL` | GitHub Actions | Live Discover/health HTTP probes |
+| `NEXT_PUBLIC_SITE_URL` | GitHub Actions **and** Vercel (app already uses it) | Fallback base URL for probes; public site links |
+| `NEXUS_HEALTHCHECK_PROFILE_USER` | GitHub Actions (optional) | `/u/{user}` probe |
+| `TWILIO_ACCOUNT_SID` | GitHub Actions | SMS via Twilio |
+| `TWILIO_AUTH_TOKEN` | GitHub Actions | SMS via Twilio |
+| `TWILIO_FROM_NUMBER` | GitHub Actions | SMS via Twilio |
+| `ALERT_TO_PHONE_NUMBER` | GitHub Actions | SMS destination |
+| `ALERT_SMS_WEBHOOK_URL` | GitHub Actions (optional alt to Twilio) | Webhook SMS |
+| `ALERT_SMS_COOLDOWN_MINUTES` | GitHub Actions (optional, default 60) | Dedup window |
+| `NEXT_PUBLIC_SUBSCRIBESTAR_PROFILE_URL` | **Vercel** (app build/runtime) | SubscribeStar outbound links — **not** required for watchdog |
+
+SMS/watchdog vars are **not** required in Vercel for `npm run build` / production Next.js. They belong in **GitHub Actions secrets** for the scheduled watchdog. Keep `NEXT_PUBLIC_SITE_URL` (and billing URLs) in Vercel as usual.
 
 Local cron example (every 15 minutes):
 
@@ -125,7 +144,7 @@ Each alert includes failure summary + UTC timestamp. Identical critical sets sha
 
 ## Related code
 
-- `src/scripts/nexus-healthcheck.ts` — checker
-- `src/lib/notify-sms.ts` — Twilio/webhook + cooldown
+- `src/scripts/nexus-healthcheck.ts` — checker (excluded from Next `tsc` / Vercel app typecheck)
+- `lib/notify-sms.ts` — Twilio/webhook + cooldown (`src/lib/notify-sms.ts` re-exports)
 - `lib/content-rating.ts` — SFW/NSFW rules (unchanged by watchdog)
 - `lib/vision/image-moderation.ts` — multi-signal underage gate (unchanged)
