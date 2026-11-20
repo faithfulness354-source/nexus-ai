@@ -92,9 +92,28 @@ npm run watchdog:dry
 npm run watchdog:sms-test
 ```
 
+## Active live probes (not homepage HTML)
+
+Each run hits the **database** plus these live routes when a base URL is configured:
+
+| Probe | Path | Critical when |
+| --- | --- | --- |
+| Discover catalog | `GET /api/characters?nsfw=false` | HTTP 500, timeout, non-200, or non-array JSON |
+| Empty catalog | (same response) | HTTP 200 with `[]` |
+| Health / DB path | `GET /api/health` | HTTP 500, timeout, malformed JSON, or `status: down` |
+| Live revision | `GET /api/live` | HTTP 500, timeout, or missing `ok: true` |
+| Supabase REST | `GET {SUPABASE_URL}/rest/v1/` | HTTP 500 / timeout when URL + anon key are set |
+| Profile page | `GET /u/{user}` | HTTP 500 / timeout (optional) |
+
+Failures log **HTTP status**, **endpoint path**, and a clipped **response payload** into the check detail + SMS summary.
+
 ## Cron / GitHub Actions
 
-- Workflow: `.github/workflows/nexus-watchdog.yml` (scheduled + manual `workflow_dispatch`).
+- Workflow: `.github/workflows/nexus-watchdog.yml`
+  - every **15 minutes**
+  - on every **push to `main`** (post-deploy settle ~45s, then probe)
+  - on successful **deployment_status** (Vercel Production)
+  - manual `workflow_dispatch`
 - When secrets are missing, checks **skip** (exit 0) instead of failing like a Vercel build break.
 - Cooldown file is ephemeral on Actions runners; fingerprint cooldown still limits bursts within a single job, and Twilio-side rate limits apply. For durable cooldown across runs, point `ALERT_SMS_COOLDOWN_FILE` at a persisted volume or use a longer `ALERT_SMS_COOLDOWN_MINUTES`.
 
@@ -104,8 +123,10 @@ npm run watchdog:sms-test
 | --- | --- | --- |
 | `DATABASE_URL` | **GitHub Actions** secrets (watchdog job) | DB ping + card counts |
 | `DIRECT_URL` | GitHub Actions (optional) | Prisma generate / direct DB |
-| `NEXUS_HEALTHCHECK_BASE_URL` | GitHub Actions | Live Discover/health HTTP probes |
+| `NEXUS_HEALTHCHECK_BASE_URL` | GitHub Actions | Live Discover/health/live HTTP probes |
 | `NEXT_PUBLIC_SITE_URL` | GitHub Actions **and** Vercel (app already uses it) | Fallback base URL for probes; public site links |
+| `NEXT_PUBLIC_SUPABASE_URL` | GitHub Actions (optional) | Direct Supabase REST reachability probe |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | GitHub Actions (optional) | Direct Supabase REST reachability probe |
 | `NEXUS_HEALTHCHECK_PROFILE_USER` | GitHub Actions (optional) | `/u/{user}` probe |
 | `TWILIO_ACCOUNT_SID` | GitHub Actions | SMS via Twilio |
 | `TWILIO_AUTH_TOKEN` | GitHub Actions | SMS via Twilio |
@@ -128,10 +149,13 @@ Local cron example (every 15 minutes):
 SMS is sent only when at least one **critical** check fails, including:
 
 - Database unreachable
-- Discover API 5xx / non-array payload
+- Discover catalog HTTP 500 / timeout / non-200 / malformed JSON
 - Discover returns **zero** cards
-- Health/profile data path 5xx or `status: down`
+- `/api/health` or `/api/live` HTTP 500 / timeout / bad JSON
+- Supabase REST HTTP 500 / timeout (when configured)
 - Unexpected public card count collapse vs baseline
+
+Alert text includes endpoint path, HTTP status (or `timeout`), and a clipped error payload.
 
 Each alert includes failure summary + UTC timestamp. Identical critical sets share a fingerprint and are suppressed for `ALERT_SMS_COOLDOWN_MINUTES` (default 60).
 

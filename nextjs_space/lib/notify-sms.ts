@@ -12,10 +12,9 @@
  *   ALERT_SMS_COOLDOWN_MINUTES (default 60)
  *   ALERT_SMS_WEBHOOK_URL (optional alternate POST webhook instead of Twilio)
  *
- * Server-only — keeps Node `fs` / Twilio helpers out of the Next client graph
- * so Vercel production builds are not pulled into browser bundles.
+ * Node/CLI helper (watchdog + server routes). Do not import from Client Components —
+ * it uses `fs` / Twilio and will break browser bundles.
  */
-import 'server-only';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';

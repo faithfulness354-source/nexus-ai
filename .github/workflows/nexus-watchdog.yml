@@ -4,6 +4,11 @@ on:
   schedule:
     # Every 15 minutes
     - cron: '*/15 * * * *'
+  # After every push to main (covers Vercel production deploys of Nexus AI).
+  push:
+    branches: [main]
+  # When GitHub receives a deployment status (e.g. Vercel production Ready).
+  deployment_status:
   workflow_dispatch:
     inputs:
       dry_run:
@@ -22,6 +27,10 @@ on:
         options:
           - 'false'
           - 'true'
+      settle_seconds:
+        description: 'Seconds to wait before probing (post-deploy settle)'
+        required: false
+        default: '45'
 
 concurrency:
   group: nexus-watchdog
@@ -29,9 +38,18 @@ concurrency:
 
 jobs:
   healthcheck:
-    name: Healthcheck + SMS on critical
+    name: Live API + DB health (Discover/catalog)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
+    # Only act on successful production-ish deployments; always run schedule/push/dispatch.
+    if: >
+      github.event_name != 'deployment_status' ||
+      (github.event.deployment_status.state == 'success' &&
+       (github.event.deployment.environment == 'Production' ||
+        github.event.deployment.environment == 'production' ||
+        github.event.deployment_status.environment == 'Production' ||
+        github.event.deployment_status.environment == 'production' ||
+        startsWith(github.event.deployment.environment || '', 'Production')))
     defaults:
       run:
         working-directory: nextjs_space
@@ -55,12 +73,22 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
-      - name: Run watchdog
+      - name: Post-deploy settle
+        if: github.event_name == 'push' || github.event_name == 'deployment_status'
+        run: |
+          set -euo pipefail
+          SECONDS_WAIT=45
+          echo "Waiting ${SECONDS_WAIT}s for Vercel/production to serve the new revision…"
+          sleep "${SECONDS_WAIT}"
+
+      - name: Run watchdog (active API + DB probes)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
           NEXUS_HEALTHCHECK_BASE_URL: ${{ secrets.NEXUS_HEALTHCHECK_BASE_URL }}
           NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           NEXUS_HEALTHCHECK_PROFILE_USER: ${{ secrets.NEXUS_HEALTHCHECK_PROFILE_USER }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
@@ -83,4 +111,5 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
+          echo "Probing live Discover catalog + health/live + Supabase REST + database…"
           npx tsx --require dotenv/config src/scripts/nexus-healthcheck.ts "${ARGS[@]}"

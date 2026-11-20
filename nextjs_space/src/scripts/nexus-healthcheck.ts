@@ -1,6 +1,9 @@
 /**
  * Nexus AI watchdog health & sanity check.
  *
+ * Actively probes live Discover/catalog + core Supabase-backed API routes and the
+ * database — not homepage HTML or Vercel build status alone.
+ *
  * Non-destructive: SELECT / GET only. Never truncates, deletes, or alters card rows.
  *
  * From nextjs_space:
@@ -48,13 +51,22 @@ type Report = {
   sms?: { sent: boolean; skipped: boolean; reason: string };
 };
 
-const CRITICAL_IDS = new Set([
-  'database',
-  'discover_api',
-  'discover_zero_cards',
-  'profile_path',
-  'card_count_drop',
-]);
+type JsonExpect =
+  | { kind: 'array' }
+  | { kind: 'object'; requireKeys?: string[] }
+  | { kind: 'any-json' };
+
+type ProbeSpec = {
+  id: string;
+  path: string;
+  critical: boolean;
+  expect: JsonExpect;
+  /** Extra pass/fail logic after HTTP 200 + JSON parse. */
+  validate?: (body: unknown, res: Response) => { ok: boolean; detail: string; meta?: Record<string, unknown> };
+  timeoutMs?: number;
+};
+
+const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
 
 function appRoot(): string {
   const here = process.cwd();
@@ -100,16 +112,203 @@ function siteBaseUrl(): string | null {
   return raw || null;
 }
 
+function supabaseProjectUrl(): string | null {
+  const raw = (
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+    || process.env.SUPABASE_URL
+    || ''
+  ).trim().replace(/\/$/, '');
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function supabaseAnonKey(): string {
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY
+    || process.env.SUPABASE_ANON_KEY
+    || ''
+  ).trim();
+}
+
 async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }> {
   const started = Date.now();
   const value = await run();
   return { value, ms: Date.now() - started };
 }
 
+function clipPayload(value: unknown, limit = 280): string {
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    if (!raw) return '';
+    return raw.length > limit ? `${raw.slice(0, limit)}…` : raw;
+  } catch {
+    return String(value).slice(0, limit);
+  }
+}
+
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = 'name' in err ? String((err as { name?: unknown }).name) : '';
+  const message = err instanceof Error ? err.message : String(err);
+  return name === 'AbortError' || name === 'TimeoutError' || /aborted|timeout/i.test(message);
+}
+
+async function readResponsePayload(res: Response): Promise<{ json: unknown | null; text: string }> {
+  const text = await res.text().catch(() => '');
+  if (!text) return { json: null, text: '' };
+  try {
+    return { json: JSON.parse(text) as unknown, text };
+  } catch {
+    return { json: null, text };
+  }
+}
+
+function jsonShapeOk(body: unknown, expect: JsonExpect): { ok: boolean; reason: string } {
+  if (expect.kind === 'array') {
+    return Array.isArray(body)
+      ? { ok: true, reason: 'array' }
+      : { ok: false, reason: 'expected JSON array' };
+  }
+  if (expect.kind === 'object') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return { ok: false, reason: 'expected JSON object' };
+    }
+    for (const key of expect.requireKeys ?? []) {
+      if (!(key in (body as Record<string, unknown>))) {
+        return { ok: false, reason: `missing key "${key}"` };
+      }
+    }
+    return { ok: true, reason: 'object' };
+  }
+  if (body === null || body === undefined) {
+    return { ok: false, reason: 'empty / non-JSON body' };
+  }
+  return { ok: true, reason: 'json' };
+}
+
+/**
+ * Probe one live API path. Critical failure on HTTP 500, timeout, or malformed JSON
+ * when HTTP 200 was required. Always logs status + path + error payload in detail/meta.
+ */
+async function probeEndpoint(baseUrl: string, spec: ProbeSpec): Promise<CheckResult> {
+  const pathWithQuery = spec.path.startsWith('/') ? spec.path : `/${spec.path}`;
+  const url = `${baseUrl}${pathWithQuery}`;
+  const timeoutMs = spec.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const headers = {
+    Accept: 'application/json',
+    'User-Agent': 'NexusWatchdog/2.0',
+  };
+
+  try {
+    const { value: res, ms } = await timed(() =>
+      fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) }),
+    );
+    const { json, text } = await readResponsePayload(res);
+    const payloadClip = clipPayload(json ?? text);
+    const baseMeta = {
+      endpoint: pathWithQuery,
+      url,
+      status: res.status,
+      payload: payloadClip || null,
+    };
+
+    if (res.status >= 500) {
+      return {
+        id: spec.id,
+        status: 'fail',
+        critical: true,
+        detail: `HTTP ${res.status} on ${pathWithQuery} — payload: ${payloadClip || '(empty)'}`,
+        ms,
+        meta: baseMeta,
+      };
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      return {
+        id: spec.id,
+        status: 'warn',
+        critical: false,
+        detail: `HTTP ${res.status} redirect on ${pathWithQuery} (auth/CDN wall) — payload: ${payloadClip || '(empty)'}`,
+        ms,
+        meta: baseMeta,
+      };
+    }
+
+    if (res.status !== 200) {
+      return {
+        id: spec.id,
+        status: 'fail',
+        critical: spec.critical,
+        detail: `HTTP ${res.status} on ${pathWithQuery} (expected 200) — payload: ${payloadClip || '(empty)'}`,
+        ms,
+        meta: baseMeta,
+      };
+    }
+
+    const shape = jsonShapeOk(json, spec.expect);
+    if (!shape.ok) {
+      return {
+        id: spec.id,
+        status: 'fail',
+        critical: true,
+        detail: `HTTP 200 on ${pathWithQuery} but malformed JSON (${shape.reason}) — payload: ${payloadClip || '(empty)'}`,
+        ms,
+        meta: { ...baseMeta, parseError: shape.reason },
+      };
+    }
+
+    if (spec.validate) {
+      const verdict = spec.validate(json, res);
+      return {
+        id: spec.id,
+        status: verdict.ok ? 'pass' : 'fail',
+        critical: spec.critical,
+        detail: verdict.ok
+          ? verdict.detail
+          : `HTTP 200 on ${pathWithQuery} failed validation: ${verdict.detail} — payload: ${payloadClip || '(empty)'}`,
+        ms,
+        meta: { ...baseMeta, ...(verdict.meta ?? {}) },
+      };
+    }
+
+    return {
+      id: spec.id,
+      status: 'pass',
+      critical: spec.critical,
+      detail: `HTTP 200 on ${pathWithQuery} — JSON ok.`,
+      ms,
+      meta: baseMeta,
+    };
+  } catch (err) {
+    const timeout = isTimeoutError(err);
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      id: spec.id,
+      status: 'fail',
+      critical: true,
+      detail: timeout
+        ? `TIMEOUT after ${timeoutMs}ms on ${pathWithQuery} — ${message}`
+        : `Request failed on ${pathWithQuery} — ${message}`,
+      meta: {
+        endpoint: pathWithQuery,
+        url,
+        status: timeout ? 'timeout' : 'network_error',
+        payload: message.slice(0, 280),
+      },
+    };
+  }
+}
+
 async function checkDatabase(prisma: PrismaClient): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
   // Empty / missing DATABASE_URL is a CI configuration gap, not a live outage.
-  // Fail soft so scheduled runs without secrets do not look like a production build break.
   if (!process.env.DATABASE_URL?.trim()) {
     out.push({
       id: 'database',
@@ -151,7 +350,6 @@ async function checkDatabase(prisma: PrismaClient): Promise<CheckResult[]> {
       meta: value,
     });
 
-    // Integrity: empty names only (non-destructive SELECT).
     const { value: badCount, ms: ms2 } = await timed(async () => {
       try {
         return await prisma.character.count({ where: { name: '' } });
@@ -198,7 +396,6 @@ async function checkCardCountDrop(counts: CheckResult): Promise<CheckResult> {
   }
   const current = meta.publicCards;
   const prior = baseline.publicCardCount;
-  // Critical if public catalog drops by ≥50% and by at least 5 cards.
   const dropped = prior - current;
   const ratio = prior > 0 ? current / prior : 1;
   const criticalDrop = prior >= 5 && dropped >= 5 && ratio <= 0.5;
@@ -229,157 +426,141 @@ async function checkCardCountDrop(counts: CheckResult): Promise<CheckResult> {
   };
 }
 
-async function checkHttp(baseUrl: string): Promise<CheckResult[]> {
+async function checkLiveApis(baseUrl: string): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
-  const headers = { Accept: 'application/json', 'User-Agent': 'NexusWatchdog/1.0' };
 
-  // Discover listing
-  try {
-    const { value: res, ms } = await timed(() =>
-      fetch(`${baseUrl}/api/characters`, { headers, redirect: 'manual', signal: AbortSignal.timeout(20_000) }),
-    );
-    if (res.status >= 500) {
-      out.push({
-        id: 'discover_api',
-        status: 'fail',
-        critical: true,
-        detail: `Discover API HTTP ${res.status}`,
-        ms,
-      });
-    } else if (res.status >= 300 && res.status < 400) {
-      out.push({
-        id: 'discover_api',
-        status: 'warn',
-        critical: false,
-        detail: `Discover API redirected (${res.status}) — auth wall or CDN. Body not checked.`,
-        ms,
-      });
-    } else {
-      const body = await res.json().catch(() => null);
-      const list = Array.isArray(body) ? body : null;
-      if (!list) {
-        out.push({
-          id: 'discover_api',
-          status: 'fail',
-          critical: true,
-          detail: `Discover API returned non-array body (HTTP ${res.status}).`,
-          ms,
-          meta: { bodyType: body && typeof body === 'object' ? Object.keys(body).slice(0, 5) : typeof body },
-        });
-      } else {
-        out.push({
-          id: 'discover_api',
-          status: 'pass',
-          critical: true,
-          detail: `Discover API ok — ${list.length} cards visible.`,
-          ms,
-          meta: { visible: list.length },
-        });
-        if (list.length === 0) {
-          out.push({
-            id: 'discover_zero_cards',
-            status: 'fail',
-            critical: true,
-            detail: 'Discover returned 0 cards while the endpoint responded 200.',
-            ms,
-          });
-        } else {
-          out.push({
-            id: 'discover_zero_cards',
-            status: 'pass',
-            critical: true,
-            detail: `Discover has ${list.length} card(s).`,
-          });
-        }
-      }
-    }
-  } catch (err) {
+  const discover = await probeEndpoint(baseUrl, {
+    id: 'discover_api',
+    path: '/api/characters?nsfw=false',
+    critical: true,
+    expect: { kind: 'array' },
+    validate: (body) => {
+      const list = body as unknown[];
+      return {
+        ok: true,
+        detail: `HTTP 200 on /api/characters?nsfw=false — ${list.length} cards visible.`,
+        meta: { visible: list.length },
+      };
+    },
+  });
+  out.push(discover);
+
+  if (discover.status === 'pass') {
+    const visible = Number((discover.meta as { visible?: number } | undefined)?.visible ?? 0);
     out.push({
-      id: 'discover_api',
+      id: 'discover_zero_cards',
+      status: visible === 0 ? 'fail' : 'pass',
+      critical: true,
+      detail: visible === 0
+        ? 'HTTP 200 on /api/characters?nsfw=false but catalog array is empty (0 cards).'
+        : `Discover catalog has ${visible} card(s).`,
+      meta: {
+        endpoint: '/api/characters?nsfw=false',
+        status: 200,
+        payload: `visible=${visible}`,
+      },
+    });
+  } else if (discover.status === 'fail') {
+    out.push({
+      id: 'discover_zero_cards',
       status: 'fail',
       critical: true,
-      detail: err instanceof Error ? err.message : 'Discover fetch failed.',
+      detail: `Skipped card-count validation because Discover probe failed: ${discover.detail}`,
+      meta: discover.meta,
     });
   }
 
-  // Health endpoint (profile/server data path proxy — always public)
-  try {
-    const { value: res, ms } = await timed(() =>
-      fetch(`${baseUrl}/api/health`, { headers, redirect: 'manual', signal: AbortSignal.timeout(20_000) }),
-    );
-    if (res.status >= 500) {
-      out.push({
-        id: 'profile_path',
-        status: 'fail',
-        critical: true,
-        detail: `Health/profile data path HTTP ${res.status}`,
-        ms,
-      });
-    } else if (res.status >= 300 && res.status < 400) {
-      out.push({
-        id: 'profile_path',
-        status: 'warn',
-        critical: false,
-        detail: `Health endpoint redirected (${res.status}).`,
-        ms,
-      });
-    } else {
-      const body = await res.json().catch(() => null) as { status?: string; db?: string } | null;
-      const down = body?.status === 'down' || body?.db === 'unavailable' || res.status >= 500;
-      out.push({
-        id: 'profile_path',
-        status: down ? 'fail' : 'pass',
-        critical: true,
+  out.push(await probeEndpoint(baseUrl, {
+    id: 'api_health',
+    path: '/api/health',
+    critical: true,
+    expect: { kind: 'object' },
+    validate: (body) => {
+      const obj = body as { status?: string; db?: string };
+      const down = obj.status === 'down' || obj.db === 'unavailable';
+      return {
+        ok: !down,
         detail: down
-          ? `Health reports down (${JSON.stringify(body).slice(0, 160)})`
-          : `Health ok (HTTP ${res.status}).`,
-        ms,
-        meta: body ?? undefined,
-      });
-    }
-  } catch (err) {
+          ? `Health reports down/unavailable (${clipPayload(obj)})`
+          : `Health ok (status=${obj.status ?? 'ok'}).`,
+        meta: { health: obj },
+      };
+    },
+  }));
+
+  // Back-compat alias used by older reports / SMS fingerprints.
+  const health = out.find((c) => c.id === 'api_health');
+  if (health) {
     out.push({
+      ...health,
       id: 'profile_path',
-      status: 'fail',
-      critical: true,
-      detail: err instanceof Error ? err.message : 'Health fetch failed.',
+      detail: health.detail.replace('/api/health', 'health/profile data path'),
     });
   }
 
-  // Optional known profile username probe (HTML/RSC — 5xx only)
+  out.push(await probeEndpoint(baseUrl, {
+    id: 'api_live',
+    path: '/api/live',
+    critical: true,
+    expect: { kind: 'object', requireKeys: ['ok'] },
+    validate: (body) => {
+      const obj = body as { ok?: unknown; revision?: unknown };
+      const ok = obj.ok === true;
+      return {
+        ok,
+        detail: ok
+          ? `Live revision stamp ok (revision=${String(obj.revision ?? '')}).`
+          : `Live endpoint missing ok:true (${clipPayload(obj)})`,
+        meta: { live: obj },
+      };
+    },
+  }));
+
   const probeUser = process.env.NEXUS_HEALTHCHECK_PROFILE_USER?.trim();
   if (probeUser) {
     try {
+      const profilePath = `/u/${encodeURIComponent(probeUser)}`;
       const { value: res, ms } = await timed(() =>
-        fetch(`${baseUrl}/u/${encodeURIComponent(probeUser)}`, {
-          headers: { 'User-Agent': 'NexusWatchdog/1.0' },
+        fetch(`${baseUrl}${profilePath}`, {
+          headers: { 'User-Agent': 'NexusWatchdog/2.0' },
           redirect: 'manual',
           signal: AbortSignal.timeout(25_000),
         }),
       );
+      const text = await res.text().catch(() => '');
       if (res.status >= 500) {
         out.push({
           id: 'profile_page',
           status: 'fail',
           critical: true,
-          detail: `Profile /u/${probeUser} HTTP ${res.status}`,
+          detail: `HTTP ${res.status} on ${profilePath} — payload: ${clipPayload(text)}`,
           ms,
+          meta: { endpoint: profilePath, status: res.status, payload: clipPayload(text) },
         });
       } else {
         out.push({
           id: 'profile_page',
           status: res.status === 404 ? 'warn' : 'pass',
           critical: false,
-          detail: `Profile /u/${probeUser} HTTP ${res.status}`,
+          detail: `HTTP ${res.status} on ${profilePath}`,
           ms,
+          meta: { endpoint: profilePath, status: res.status },
         });
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       out.push({
         id: 'profile_page',
         status: 'fail',
         critical: true,
-        detail: err instanceof Error ? err.message : 'Profile page fetch failed.',
+        detail: isTimeoutError(err)
+          ? `TIMEOUT on /u/${probeUser} — ${message}`
+          : `Request failed on /u/${probeUser} — ${message}`,
+        meta: {
+          endpoint: `/u/${probeUser}`,
+          status: isTimeoutError(err) ? 'timeout' : 'network_error',
+          payload: message.slice(0, 280),
+        },
       });
     }
   }
@@ -387,13 +568,99 @@ async function checkHttp(baseUrl: string): Promise<CheckResult[]> {
   return out;
 }
 
+async function checkSupabaseRest(): Promise<CheckResult> {
+  const origin = supabaseProjectUrl();
+  const anon = supabaseAnonKey();
+  if (!origin) {
+    return {
+      id: 'supabase_rest',
+      status: 'skip',
+      critical: false,
+      detail: 'NEXT_PUBLIC_SUPABASE_URL unset — skipping direct Supabase REST probe.',
+    };
+  }
+  if (!anon) {
+    return {
+      id: 'supabase_rest',
+      status: 'skip',
+      critical: false,
+      detail: 'Supabase anon key unset — skipping direct REST probe (app /api/health still covers DB).',
+    };
+  }
+
+  const endpoint = '/rest/v1/';
+  const url = `${origin}${endpoint}`;
+  try {
+    const { value: res, ms } = await timed(() =>
+      fetch(url, {
+        method: 'GET',
+        headers: {
+          apikey: anon,
+          Authorization: `Bearer ${anon}`,
+          Accept: 'application/json',
+          'User-Agent': 'NexusWatchdog/2.0',
+        },
+        signal: AbortSignal.timeout(15_000),
+      }),
+    );
+    const { json, text } = await readResponsePayload(res);
+    const payload = clipPayload(json ?? text);
+    if (res.status >= 500) {
+      return {
+        id: 'supabase_rest',
+        status: 'fail',
+        critical: true,
+        detail: `HTTP ${res.status} on Supabase ${endpoint} — payload: ${payload || '(empty)'}`,
+        ms,
+        meta: { endpoint: `${origin}${endpoint}`, status: res.status, payload },
+      };
+    }
+    // PostgREST root often returns 200 HTML/JSON or 404 OpenAPI — treat 2xx/404 as reachable.
+    if (res.status >= 200 && res.status < 500) {
+      return {
+        id: 'supabase_rest',
+        status: 'pass',
+        critical: true,
+        detail: `Supabase REST reachable (HTTP ${res.status} on ${endpoint}).`,
+        ms,
+        meta: { endpoint: `${origin}${endpoint}`, status: res.status, payload: payload || null },
+      };
+    }
+    return {
+      id: 'supabase_rest',
+      status: 'fail',
+      critical: true,
+      detail: `Unexpected HTTP ${res.status} on Supabase ${endpoint} — payload: ${payload || '(empty)'}`,
+      ms,
+      meta: { endpoint: `${origin}${endpoint}`, status: res.status, payload },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      id: 'supabase_rest',
+      status: 'fail',
+      critical: true,
+      detail: isTimeoutError(err)
+        ? `TIMEOUT on Supabase ${endpoint} — ${message}`
+        : `Supabase REST request failed — ${message}`,
+      meta: {
+        endpoint: url,
+        status: isTimeoutError(err) ? 'timeout' : 'network_error',
+        payload: message.slice(0, 280),
+      },
+    };
+  }
+}
+
 function printHuman(report: Report): void {
   console.log(`Nexus watchdog @ ${report.time}`);
-  console.log(`baseUrl=${report.baseUrl ?? '(none — DB checks only)'}`);
+  console.log(`baseUrl=${report.baseUrl ?? '(none — DB / Supabase checks only)'}`);
   for (const check of report.checks) {
     const mark = check.status === 'pass' ? 'PASS' : check.status === 'warn' ? 'WARN' : check.status === 'skip' ? 'SKIP' : 'FAIL';
     const crit = check.critical && check.status === 'fail' ? ' [CRITICAL]' : '';
-    console.log(`  [${mark}]${crit} ${check.id}: ${check.detail}${check.ms != null ? ` (${check.ms}ms)` : ''}`);
+    const metaStatus = check.meta && 'status' in check.meta ? ` status=${String(check.meta.status)}` : '';
+    const metaPath = check.meta && 'endpoint' in check.meta ? ` endpoint=${String(check.meta.endpoint)}` : '';
+    console.log(`  [${mark}]${crit} ${check.id}: ${check.detail}${check.ms != null ? ` (${check.ms}ms)` : ''}${metaPath}${metaStatus}`);
   }
   if (report.sms) {
     console.log(`  SMS: sent=${report.sms.sent} skipped=${report.sms.skipped} reason=${report.sms.reason}`);
@@ -436,28 +703,40 @@ async function main(): Promise<void> {
       }
     }
 
+    checks.push(await checkSupabaseRest());
+
     if (baseUrl) {
-      checks.push(...await checkHttp(baseUrl));
+      checks.push(...await checkLiveApis(baseUrl));
     } else {
       checks.push({
         id: 'discover_api',
         status: 'skip',
         critical: false,
-        detail: 'Set NEXUS_HEALTHCHECK_BASE_URL or NEXT_PUBLIC_SITE_URL (GitHub secret / Vercel env) to probe HTTP endpoints.',
+        detail: 'Set NEXUS_HEALTHCHECK_BASE_URL or NEXT_PUBLIC_SITE_URL to probe live Discover/catalog APIs.',
+      });
+      checks.push({
+        id: 'api_health',
+        status: 'skip',
+        critical: false,
+        detail: 'HTTP base URL not configured — skipping /api/health probe.',
+      });
+      checks.push({
+        id: 'api_live',
+        status: 'skip',
+        critical: false,
+        detail: 'HTTP base URL not configured — skipping /api/live probe.',
       });
       checks.push({
         id: 'profile_path',
         status: 'skip',
         critical: false,
-        detail: 'HTTP base URL not configured — skipping live Discover/health probes.',
+        detail: 'HTTP base URL not configured — skipping live health/profile probes.',
       });
     }
   } finally {
     await prisma.$disconnect();
   }
 
-  const criticalFails = checks.filter((c) => c.critical && c.status === 'fail' && CRITICAL_IDS.has(c.id));
-  // Also treat any critical:true fail as alertable even if id set evolves.
   const alertable = checks.filter((c) => c.critical && c.status === 'fail');
   const report: Report = {
     ok: checks.every((c) => c.status === 'pass' || c.status === 'skip' || c.status === 'warn'),
@@ -468,7 +747,17 @@ async function main(): Promise<void> {
   };
 
   if (report.critical && !args.dryRun) {
-    const summary = alertable.map((c) => `${c.id}: ${c.detail}`).join(' | ').slice(0, 400);
+    const summary = alertable
+      .map((c) => {
+        const status = c.meta && 'status' in c.meta ? ` status=${String(c.meta.status)}` : '';
+        const endpoint = c.meta && 'endpoint' in c.meta ? ` ${String(c.meta.endpoint)}` : '';
+        const payload = c.meta && 'payload' in c.meta && c.meta.payload
+          ? ` payload=${clipPayload(c.meta.payload, 120)}`
+          : '';
+        return `${c.id}:${endpoint}${status}${payload} — ${c.detail}`;
+      })
+      .join(' | ')
+      .slice(0, 900);
     const sms = await sendCriticalSmsAlert({
       kind: 'healthcheck_critical',
       summary,
