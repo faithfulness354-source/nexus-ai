@@ -14,8 +14,8 @@ This audit inventories Nexus AI engineering history visible from the Cloud Agent
 
 | Item | Result |
 |---|---|
-| Total unique commits (all branches) | **80** |
-| Date range | **2026-10-11 23:12** → **2026-11-20 04:34** (UTC machine clock for Git timestamps as recorded) |
+| Total unique commits (all branches) | **82** (80 in original Cloud Agent scan + 2 appended below) |
+| Date range | **2026-10-11 23:12** → **2026-11-20 05:05** UTC (original scan ended 04:34; appendix extends) |
 | Primary project directory | `/agent/repos/nexus-ai` |
 | SQL / migration files found | **15** |
 | Alternate folders `cursor_Nexus_AI_project`, `nexus_rollplay` | **Not found on this VM** |
@@ -1125,6 +1125,62 @@ Quick lookup for auditors. Prefer commit hashes for Git-tracked changes; use fil
 - Requested Windows destination `C:\Users\%USERNAME%\Documents\...` is **not available** here; the Linux equivalent used is `/home/ubuntu/Documents/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md`.
 - Folders named `cursor_Nexus_AI_project` and `nexus_rollplay` were **not present** anywhere searchable on this host (`/`, `/agent`, `/home`, `/opt`).
 - Git timestamps reflect recorded author dates in the repository; SQL timestamps reflect filesystem mtimes on this snapshot (which may cluster around environment image build time).
+
+---
+
+---
+
+## Appendix C — Follow-up scan (2026-11-20 05:10 UTC / 2026-11-19 21:10 America/Los_Angeles)
+
+Supplement produced after the original Cloud Agent audit (`040ddc9` era) to capture commits and host clues that landed afterward, plus any Windows-side folder signals visible to this run.
+
+### C.1 Additional Git commits (not in the original 80-commit timeline)
+
+| Timestamp (UTC) | Commit | Author | Category | Summary |
+|---|---|---|---|---|
+| `2026-11-20 04:50` | `040ddc9` (`040ddc9df219f85fbc5e5a8a438c7728af8cb955`) | Cursor Agent | Feature | Add professional Nexus AI engineering audit report. |
+| `2026-11-20 05:05` | `6d06311` (`6d06311d3fef3402ceebae1e9d89da08cd4a8f9a`) | Cursor Agent | Integration & API / External Fault | Harden watchdog for missing secrets and keep it out of Next builds. |
+
+**Revised unique commit total (all branches on this checkout):** **82**.
+
+### C.2 SQL / migration files
+
+Re-scanned `nextjs_space/supabase` and `android-app/supabase`. **Still 15 SQL files** — no new `.sql` artifacts since the original audit. Filesystem mtimes unchanged from the tables in §3 / §5.
+
+### C.3 Windows filesystem / alternate project folders
+
+| Probe | Result |
+|---|---|
+| This Cloud Agent Linux VM mounts of `C:\`, `/mnt/c`, OneDrive/Dropbox sync | **Not present** |
+| GitHub repos for `nexus_rollplay` / `cursor_Nexus_AI_project` under `faithfulness354-source` | **Not found** (only `nexus-ai`) |
+| Folders named `cursor_Nexus_AI_project`, `nexus_rollplay` on this VM | **Not found** |
+| Connected Cursor self-hosted workers (Windows host `victus`) | **2 idle workers** |
+
+**Windows paths inferred from connected self-hosted worker metadata (not a recursive disk walk):**
+
+| Path | Source |
+|---|---|
+| `C:\Users\faith\Downloads\kidverse-ai-standalone\kidverse-ai` | Worker displayName |
+| `C:\Users\faith\Downloads\kidverse-ai-standalone\palforge-ai` | Worker displayName |
+| `C:\Users\faith\Documents\NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` | Intended Documents destination (Windows username `faith`) |
+
+Those Downloads paths are **KidVerse / PalForge** worker checkouts, not additional Nexus AI commit histories. No extra Nexus SQL files or Nexus commits were discoverable from worker metadata alone.
+
+### C.4 Report copy locations on this host
+
+| Location | Path |
+|---|---|
+| Repo workspace | `/agent/repos/nexus-ai/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` |
+| Linux Documents | `/home/ubuntu/Documents/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` |
+| Agent artifacts | `/opt/cursor/artifacts/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` |
+| GitHub (main) | `https://github.com/faithfulness354-source/nexus-ai/blob/main/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` |
+| Raw download | `https://raw.githubusercontent.com/faithfulness354-source/nexus-ai/main/NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md` |
+
+### C.5 Windows Documents install helper
+
+A PowerShell helper is in-repo at `scripts/save-audit-report-to-documents.ps1`. On the Windows machine it writes:
+
+`C:\Users\faith\Documents\NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md`
 
 ---
 
