@@ -3,12 +3,19 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 
-export type CardCoverKind = 'portrait' | 'wide';
+/** How the cover should fit a square card frame once natural dimensions are known. */
+export type CardCoverKind = 'square' | 'tall' | 'wide';
 
-/** Wide/banner or UI sheets need contain; square + portrait keep faces with cover-top. */
+/**
+ * Most Nexus cards are 1:1 portraits. Tall art keeps heads with cover-top;
+ * wide banners / UI sheets use contain + backdrop so labels are not clipped.
+ */
 export function classifyCardCover(width: number, height: number): CardCoverKind {
-  if (!width || !height) return 'portrait';
-  return width / height >= 1.35 ? 'wide' : 'portrait';
+  if (!width || !height) return 'square';
+  const ratio = width / height;
+  if (ratio >= 1.2) return 'wide';
+  if (ratio <= 0.9) return 'tall';
+  return 'square';
 }
 
 const DEFAULT_FOCUS = '50% 0%';
@@ -18,7 +25,7 @@ interface CardCoverImageProps {
   alt: string;
   /** Outer frame classes (include aspect-* / absolute inset-0 as needed). */
   className?: string;
-  /** CSS object-position for portrait/square cover. Defaults to top-center. */
+  /** CSS object-position for tall/square cover. Defaults to top-center. */
   focus?: string;
   blurPx?: number;
   imgKey?: string;
@@ -26,8 +33,8 @@ interface CardCoverImageProps {
 }
 
 /**
- * Card thumbnail that avoids chopping heads on portraits and clipping labels on wide sheets.
- * Container aspect is fixed by the parent; framing adapts after the image dimensions are known.
+ * Card thumbnail framing: no layout shift (parent owns aspect-square),
+ * faces stay in frame for tall art, and wide sheets letterbox on a dark blur.
  */
 export function CardCoverImage({
   src,
@@ -38,11 +45,11 @@ export function CardCoverImage({
   imgKey,
   onError,
 }: CardCoverImageProps) {
-  const [kind, setKind] = useState<CardCoverKind>('portrait');
+  const [kind, setKind] = useState<CardCoverKind>('square');
   const [seenSrc, setSeenSrc] = useState(src);
   if (src !== seenSrc) {
     setSeenSrc(src);
-    setKind('portrait');
+    setKind('square');
   }
 
   function applyNaturalSize(img: HTMLImageElement) {
@@ -51,6 +58,7 @@ export function CardCoverImage({
   }
 
   const wide = kind === 'wide';
+  const tall = kind === 'tall';
 
   return (
     <div
@@ -78,10 +86,10 @@ export function CardCoverImage({
         decoding="async"
         className={cn(
           'absolute inset-0 h-full w-full',
-          wide ? 'object-contain object-center' : 'object-cover',
+          wide ? 'object-contain object-center' : tall ? 'object-cover object-top' : 'object-cover object-center',
         )}
         style={{
-          objectPosition: wide ? 'center center' : focus,
+          objectPosition: wide ? 'center center' : tall ? focus : '50% 50%',
           filter: blurPx > 0 ? `blur(${blurPx}px)` : undefined,
         }}
         ref={(node) => {

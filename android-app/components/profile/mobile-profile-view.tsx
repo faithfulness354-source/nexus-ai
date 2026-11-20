@@ -171,7 +171,7 @@ function MobileCard({ item, canEdit }: { item: ProfileCharacter; canEdit: boolea
   return (
     <article className="overflow-hidden rounded-2xl bg-card ring-1 ring-white/10">
       <Link href={`/characters/${item.id}`} className="block">
-        <div className="relative aspect-[3/4] bg-secondary">
+        <div className="relative aspect-square bg-secondary">
           {cover ? (
             <CardCoverImage
               src={cover}

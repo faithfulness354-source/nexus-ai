@@ -71,8 +71,8 @@ export function CharacterCard({ id, name, title, summary, scenario, creator, tag
       {glitch && <BoxGlitchLayers />}
       <Link href={`/characters/${id}`} className="absolute inset-0 z-10 touch-manipulation" aria-label={`View ${name}`} />
 
-      {/* Portrait-friendly frame; CardCoverImage adapts cover-top vs contain for wide sheets. */}
-      <div className="relative aspect-[3/4] overflow-hidden bg-secondary">
+      {/* Square frame matches typical 1024² card art; CardCoverImage adapts tall/wide fits. */}
+      <div className="relative aspect-square overflow-hidden bg-secondary">
         {cover ? (
           <CardCoverImage
             src={cover}

@@ -46,7 +46,7 @@ export default async function CharacterDetailPage({ params }: { params: Promise<
       <AppHeader />
       <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-16">
         <article className="overflow-hidden rounded-2xl bg-card ring-1 ring-white/10">
-          <div className="relative aspect-[3/4] max-h-[28rem] bg-secondary sm:aspect-[16/10] sm:max-h-none">
+          <div className="relative mx-auto aspect-square w-full max-w-xl bg-secondary">
             {cover ? (
               <CardCoverImage
                 src={cover}
