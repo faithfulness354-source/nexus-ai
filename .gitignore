@@ -20,7 +20,8 @@ logs/
 **/data/watchdog-sms-cooldown.json
 **/data/watchdog-baseline.json
 
-.cursor/
+# Ignore Cursor local state, but keep shared project rules in git.
+.cursor/*
 !.cursor/rules/
 !.cursor/rules/**
 

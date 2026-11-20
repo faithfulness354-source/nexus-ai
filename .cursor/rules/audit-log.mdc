@@ -1,0 +1,38 @@
+---
+description: Auto-append Nexus AI audit entries after fixes, builds, and main pushes.
+alwaysApply: true
+---
+
+# Nexus AI professional audit log
+
+After you finish a **code fix**, **build verification**, or **push to `main`** in this repo, append a concise timestamped entry to **both** audit report paths — do this automatically without waiting to be asked.
+
+## Destinations (write the same entry to both)
+
+1. `C:\Users\faith\Documents\NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md`
+2. `[Environment]::GetFolderPath('MyDocuments')\NEXUS_AI_PROFESSIONAL_AUDIT_REPORT.md`  
+   (OneDrive Documents when redirected — currently `C:\Users\faith\OneDrive\Documents\...`)
+
+If a path is missing, create the file (or copy from the other path) then append. Never skip logging because one path failed; still update the other.
+
+## When to append
+
+- Local `npm run build` / project build script succeeds or fails after a fix
+- A commit lands on `main` (especially after `git push origin main` / `origin HEAD`)
+- A Vercel/deploy-related build break is diagnosed and fixed
+
+Skip chatter-only turns with no code, build, or push outcome.
+
+## Entry format
+
+Append under a running section (create `## Appendix — Agent activity log` before `*End of report.*` if needed):
+
+```markdown
+### YYYY-MM-DD HH:MM TZ — short title
+- **Commit:** `hash` (or `uncommitted` / `n/a`)
+- **Files:** comma-separated paths or `path (N files)`
+- **Build / deploy:** pass/fail + command or “pushed → Vercel retrigger”
+- **Summary:** one sentence on cause → fix → outcome
+```
+
+Keep each entry short. Prefer UTC or local wall time consistently. Do not dump full diffs or secrets.
