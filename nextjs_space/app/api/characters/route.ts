@@ -25,19 +25,62 @@ function tagList(tags: string) {
   return tags.split(',').map((tag) => tag.trim()).filter(Boolean);
 }
 
-type CharacterListRow = Awaited<ReturnType<typeof prisma.character.findMany>>[number] & {
+/** List projection — avoid loading huge VLM blobs on every Discover request. */
+const CHARACTER_LIST_SELECT = {
+  id: true,
+  name: true,
+  title: true,
+  summary: true,
+  personality: true,
+  scenario: true,
+  initialMessage: true,
+  tags: true,
+  avatar: true,
+  banner: true,
+  gallery: true,
+  audioUrl: true,
+  creator: true,
+  nsfw: true,
+  visibility: true,
+  moderated: true,
+  ownerId: true,
+  updatedAt: true,
+} as const;
+
+type CharacterListRow = {
+  id: string;
+  name: string;
+  title: string | null;
+  summary: string | null;
+  personality?: string | null;
+  scenario: string | null;
+  initialMessage?: string | null;
+  tags: string | null;
+  avatar: string | null;
+  banner: string | null;
+  gallery?: unknown;
+  audioUrl?: string | null;
+  creator: string | null;
+  nsfw: boolean | null;
+  visibility: string | null;
+  moderated: boolean | null;
+  ownerId: string | null;
+  updatedAt: Date;
   _count?: { sessions?: number };
 };
 
 async function loadCharacterRows(where: Record<string, unknown>, label: string): Promise<{ rows: CharacterListRow[]; degraded: boolean; detail?: string }> {
   try {
-    const rows = await withVisualColumnRetry(
-      () => prisma.character.findMany({
+    const rows = await withVisualColumnRetry<CharacterListRow[] | null>(
+      async () => prisma.character.findMany({
         where,
         orderBy: { updatedAt: 'desc' },
-        include: { _count: { select: { sessions: true } } },
-      }),
-      null as unknown as CharacterListRow[],
+        select: {
+          ...CHARACTER_LIST_SELECT,
+          _count: { select: { sessions: true } },
+        },
+      }) as Promise<CharacterListRow[]>,
+      null,
       label,
     );
     if (Array.isArray(rows)) return { rows, degraded: false };
@@ -46,12 +89,13 @@ async function loadCharacterRows(where: Record<string, unknown>, label: string):
   }
 
   try {
-    const rows = await withVisualColumnRetry(
-      () => prisma.character.findMany({
+    const rows = await withVisualColumnRetry<CharacterListRow[] | null>(
+      async () => prisma.character.findMany({
         where,
         orderBy: { updatedAt: 'desc' },
-      }),
-      null as unknown as CharacterListRow[],
+        select: CHARACTER_LIST_SELECT,
+      }) as Promise<CharacterListRow[]>,
+      null,
       `${label} no-count`,
     );
     if (Array.isArray(rows)) {
@@ -70,6 +114,18 @@ async function loadCharacterRows(where: Record<string, unknown>, label: string):
   return { rows: [], degraded: true, detail: 'Character catalog query returned no rows after schema heal.' };
 }
 
+function catalogHeaders(count: number, degraded?: boolean, detail?: string): HeadersInit {
+  const headers: Record<string, string> = {
+    'Cache-Control': 'no-store',
+    'X-Nexus-Characters-Count': String(count),
+  };
+  if (degraded) {
+    headers['X-Nexus-Characters-Degraded'] = '1';
+    if (detail) headers['X-Nexus-Characters-Error'] = detail.slice(0, 180);
+  }
+  return headers;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url);
@@ -79,12 +135,19 @@ export async function GET(request: NextRequest) {
     // Client preference (`nsfw=true|false`); adult entitlement still gates actual NSFW rows.
     // Missing param keeps prior behavior for entitled viewers (include NSFW when allowed).
     const nsfwParam = url.searchParams.get('nsfw');
-    const viewer = await getViewer();
+    let viewer: Awaited<ReturnType<typeof getViewer>> = null;
+    try {
+      viewer = await getViewer();
+    } catch (err) {
+      console.warn('GET /api/characters getViewer failed:', err instanceof Error ? err.message : err);
+      viewer = null;
+    }
+    if (mine && !viewer) return unauthorized();
+
     const entitledNsfw = await adultCardsEnabled(viewer).catch(() => false);
     const showNsfw = entitledNsfw && (nsfwParam === null ? true : nsfwParam === 'true');
     const filters: Record<string, unknown>[] = [];
-    if (mine) {
-      if (!viewer) return unauthorized();
+    if (mine && viewer) {
       await pullCloudLibrary(viewer.user, { force: url.searchParams.get('refresh') === '1' }).catch((err) => {
         console.warn('pullCloudLibrary skipped', err instanceof Error ? err.message : err);
       });
@@ -126,55 +189,46 @@ export async function GET(request: NextRequest) {
     }
 
     const payload = characters.flatMap((c) => {
-      const flagged = c.nsfw === true || characterBrowseImpliesNsfw(c);
-      if (!showNsfw && flagged) return [];
-      const editable = !!viewer && canEditCharacter(viewer, c);
-      return [{
-        id: c.id,
-        name: c.name,
-        title: c.title ?? '',
-        summary: plainExcerpt(c.summary || c.scenario || ''),
-        creator: c.creator ?? 'Anonymous',
-        tags: tagList(typeof c.tags === 'string' ? c.tags : ''),
-        avatar: c.avatar ?? null,
-        banner: c.banner ?? null,
-        updatedAt: c.updatedAt,
-        nsfw: flagged,
-        chatCount: c._count?.sessions ?? 0,
-        ownerId: c.ownerId ?? null,
-        visibility: c.visibility ?? 'PRIVATE',
-        moderated: c.moderated === true,
-        audioUrl: editable ? (c.audioUrl ?? '') : '',
-      }];
+      try {
+        const flagged = c.nsfw === true || characterBrowseImpliesNsfw(c);
+        if (!showNsfw && flagged) return [];
+        const editable = !!viewer && canEditCharacter(viewer, c as any);
+        return [{
+          id: c.id,
+          name: c.name,
+          title: c.title ?? '',
+          summary: plainExcerpt(c.summary || c.scenario || ''),
+          creator: c.creator ?? 'Anonymous',
+          tags: tagList(typeof c.tags === 'string' ? c.tags : ''),
+          avatar: c.avatar ?? null,
+          banner: c.banner ?? null,
+          updatedAt: c.updatedAt,
+          nsfw: flagged,
+          chatCount: c._count?.sessions ?? 0,
+          ownerId: c.ownerId ?? null,
+          visibility: c.visibility ?? 'PRIVATE',
+          moderated: c.moderated === true,
+          audioUrl: editable ? (c.audioUrl ?? '') : '',
+        }];
+      } catch (err) {
+        console.warn('Skipping catalog row', c?.id, err instanceof Error ? err.message : err);
+        return [];
+      }
     });
 
-    const headers: Record<string, string> = {};
-    if (degraded) {
-      headers['X-Nexus-Characters-Degraded'] = '1';
-      if (detail) headers['X-Nexus-Characters-Error'] = detail.slice(0, 180);
-    }
-    // Always return a JSON array for back-compat; errors ride on headers + optional trailer field
-    // is avoided so older clients keep working. Empty + degraded is called out by the gallery UI.
+    // Always HTTP 200 + JSON array so Discover never shows "Catalog request failed (5xx)".
     return NextResponse.json(payload, {
       status: 200,
-      headers: {
-        ...headers,
-        'X-Nexus-Characters-Count': String(payload.length),
-      },
+      headers: catalogHeaders(payload.length, degraded, detail),
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error('GET /api/characters error:', detail);
-    return NextResponse.json(
-      { error: 'Character catalog failed to load', detail: detail.slice(0, 240), characters: [] },
-      {
-        status: 503,
-        headers: {
-          'X-Nexus-Characters-Degraded': '1',
-          'X-Nexus-Characters-Error': detail.slice(0, 180),
-        },
-      },
-    );
+    // Prefer an empty public catalog over a hard 500/503 — gallery clients expect an array.
+    return NextResponse.json([], {
+      status: 200,
+      headers: catalogHeaders(0, true, detail),
+    });
   }
 }
 

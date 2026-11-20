@@ -101,7 +101,8 @@ export function GalleryPage() {
     mineParams.set('mine', 'true');
     if (refresh) mineParams.set('refresh', '1');
     try {
-      const errors: string[] = [];
+      let communityError = '';
+      let libraryError = '';
       const jobs: Promise<void>[] = [
         fetch(`/api/characters?${params.toString()}`, { cache: 'no-store' })
           .then(async (res) => {
@@ -109,7 +110,8 @@ export function GalleryPage() {
             if (seq !== loadSeq.current) return;
             const parsed = parseCharacterList(res, data);
             setCommunity(parsed.rows);
-            if (parsed.error) errors.push(parsed.error);
+            // Only surface Discover errors when the public catalog itself failed empty.
+            if (parsed.error && parsed.rows.length === 0) communityError = parsed.error;
           }),
       ];
       if (signedIn) {
@@ -120,7 +122,7 @@ export function GalleryPage() {
               if (seq !== loadSeq.current) return;
               const parsed = parseCharacterList(res, data);
               setLibrary(parsed.rows);
-              if (parsed.error && parsed.rows.length === 0) errors.push(`My cards: ${parsed.error}`);
+              if (parsed.error && parsed.rows.length === 0) libraryError = `My cards: ${parsed.error}`;
             }),
           fetch(`/api/personas${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' })
             .then(async (res) => {
@@ -134,7 +136,10 @@ export function GalleryPage() {
         setPersonas([]);
       }
       await Promise.all(jobs);
-      if (seq === loadSeq.current) setFeedError(errors.filter(Boolean)[0] || '');
+      if (seq === loadSeq.current) {
+        // Prefer the public Discover error; keep library issues secondary.
+        setFeedError(communityError || libraryError || '');
+      }
     } catch (err) {
       if (seq !== loadSeq.current) return;
       setCommunity([]);

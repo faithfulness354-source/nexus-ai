@@ -50,21 +50,26 @@ export interface Viewer {
 
 /** Loads the signed-in user from the DB, or null when signed out. Never trusts client-reported tier. */
 export async function getViewer(): Promise<Viewer | null> {
-  const session = await auth();
-  const id = session?.user?.id;
-  if (!id) return null;
-  let user = await prisma.user.findUnique({ where: { id } });
-  if (!user) return null;
-  // The creator whitelist keeps Ultimate access even if the role was cleared.
-  if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: { role: 'CREATOR_ADMIN', isWhitelisted: true },
-    });
+  try {
+    const session = await auth();
+    const id = session?.user?.id;
+    if (!id) return null;
+    let user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return null;
+    // The creator whitelist keeps Ultimate access even if the role was cleared.
+    if (isWhitelistedEmail(user.email) && (user.role !== 'CREATOR_ADMIN' || !user.isWhitelisted)) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { role: 'CREATOR_ADMIN', isWhitelisted: true },
+      });
+    }
+    const isAdmin = isAdminUser(user);
+    // Whitelisted creator admins get Ultimate features automatically, without any billing.
+    return { user, isAdmin, isCreatorAdmin: isCreatorAdminUser(user), tier: isAdmin ? 'ULTIMATE' : effectiveTier(user) };
+  } catch (error) {
+    console.warn('getViewer failed:', error instanceof Error ? error.message : error);
+    return null;
   }
-  const isAdmin = isAdminUser(user);
-  // Whitelisted creator admins get Ultimate features automatically, without any billing.
-  return { user, isAdmin, isCreatorAdmin: isCreatorAdminUser(user), tier: isAdmin ? 'ULTIMATE' : effectiveTier(user) };
 }
 
 /** Signed-in creator, or the error Response. Required before any provider key or proxy is read or written. */

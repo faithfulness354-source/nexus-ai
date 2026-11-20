@@ -59,9 +59,19 @@ export async function proxy(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const open = OPEN_API.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
-  if (!open && request.method !== 'OPTIONS') {
-    const session = await auth();
-    const id = session?.user?.id;
+  // Public Discover/catalog GETs must never hard-fail in middleware if auth/DB blips.
+  const publicCatalogGet =
+    request.method === 'GET'
+    && (path === '/api/characters' || path === '/api/health' || path === '/api/live');
+  if (!open && !publicCatalogGet && request.method !== 'OPTIONS') {
+    let id: string | undefined;
+    try {
+      const session = await auth();
+      id = session?.user?.id;
+    } catch (error) {
+      // Auth adapter / secret issues must not turn Discover into a platform 500.
+      console.warn(`API auth check skipped: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
     if (id) {
       try {
         const user = await prisma.user.findUnique({ where: { id }, select: { termsAcceptedAt: true } });
